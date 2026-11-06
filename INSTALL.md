@@ -18,7 +18,7 @@ uname -s; uname -r; echo "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}"
 ```
 
 - `Linux` with `microsoft` in the kernel release, or `WSL_DISTRO_NAME` set (it is empty in SSH sessions, so the kernel release is the reliable check): you are in WSL. Run the bash steps below directly.
-- Windows (PowerShell, Git Bash): the scripts must still run in WSL. Run bash steps with `wsl.exe -e bash -lc '<command>'`, and check `wsl.exe -l -v` first. If WSL is missing, stop and tell the user.
+- Windows (PowerShell, Git Bash): the scripts must still run in WSL. Run bash steps with `wsl.exe -e bash -lc '<command>'`, and check `wsl.exe -l -v` first. If WSL or a usable distribution is missing, distinguish a skill-only install from a full lab setup request. For an authorized lab setup, read the skill's `reference/install-new-pc.md` section 2 (`.claude/skills/vmware-wsl-lab/` for Claude Code, `.agents/skills/vmware-wsl-lab/` for Codex) and follow update, resource sizing and restart/resume before Bash steps; otherwise report the missing prerequisite and offer that path.
 - Anything else (macOS, plain Linux): this lab needs Windows + WSL2 + VMware Workstation. Stop and tell the user.
 
 ## 2. Find or clone the repository

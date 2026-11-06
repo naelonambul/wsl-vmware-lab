@@ -7,7 +7,7 @@ Use this document as an execution instruction for an agent with Windows terminal
 ## Contents
 - Objective and boundaries / Execution rules
 - 1. Discover the machine and create a checkpoint
-- 2. Install WSL and Ubuntu (mirrored `.wslconfig`)
+- 2. Update WSL, set resources, prepare Ubuntu, and resume after restart
 - 3. Configure Linux SSH and remote access (firewall, NAT portproxy, logon persistence)
 - 4. Install VMware Workstation Pro using computer use
 - 5. Configure and keep vmrest available
@@ -56,26 +56,65 @@ Prefer a supported Windows 11 release with mirrored WSL networking. Microsoft do
 
 Choose and record these non-secret parameters in a local installation checkpoint: distribution name, WSL username, project Windows path, corresponding WSL path, VM root directory, base name, unique test clone name, LAN subnet, chosen versions and current stage. Use `wslpath` for path conversion. Place VM files on a Windows drive, not the WSL ext4 filesystem.
 
-## 2. Install WSL and Ubuntu
+## 2. Update WSL, set resources, then prepare Ubuntu
 
-Run from elevated Windows PowerShell when absent:
+### 2.1. Update the WSL runtime
+
+After the read-only discovery above, begin initial setup with:
 
 ```powershell
-wsl --install -d Ubuntu-24.04
+wsl --update --web-download
+wsl --version
 ```
 
-If the installation requests a reboot, save the checkpoint and arrange user-approved reboot/resume. Launch Ubuntu using computer use if first-run setup is required; let the user establish the Linux account/password privately. Update WSL if needed with `wsl --update`. Verify `wsl --list --verbose` reports version 2 for the chosen distribution; convert only that distribution with `wsl --set-version <Distro> 2` if necessary.
+`--web-download` downloads updates from GitHub rather than the Microsoft Store; it is not a force/reinstall flag. Record the actual output, exit code and resulting version. An already-current result is successful. If WSL is absent and update cannot run, install the runtime with `wsl --install --no-distribution`, handle any requested restart below, then retry the update. Do not unregister distributions or uninstall WSL merely to update it.
 
-If firmware virtualization is disabled, explain the detected condition and use computer use to guide the user through the vendor firmware interface. Do not guess firmware menu coordinates or trigger a reboot without a resume path.
+### 2.2. Configure resources for this host
 
-For mirrored mode, merge the following into the existing `%USERPROFILE%\.wslconfig`; preserve unrelated settings:
-
-```ini
-[wsl2]
-networkingMode=mirrored
+```powershell
+Get-CimInstance Win32_ComputerSystem | Select-Object TotalPhysicalMemory,NumberOfLogicalProcessors
 ```
 
-Applying this requires `wsl --shutdown`, which terminates running WSL sessions. Schedule this before relying on remote WSL SSH, or use Windows-side access for recovery. Do not copy the old lab's memory/CPU limits to an unrelated machine.
+Inspect `%USERPROFILE%\.wslconfig` if present and back it up before editing. Merge `memory`, `processors` and `swap` into its existing `[wsl2]` section without duplicating sections or removing unrelated settings. Choose limits based on the actual PC, existing workloads and planned VMware guests; explain the chosen values. WSL runs the automation tools while VMware guests also consume Windows resources. Do not reuse another machine's limits as universal defaults.
+
+For example, on a roughly 32 GiB / 16 logical CPU host, 8GB memory, 4 processors and 4GB swap can be an initial allocation when leaving capacity for Windows and VMware. This is a sizing example, not a verified setting for every workload.
+
+For supported mirrored mode, merge `networkingMode=mirrored` into the same section when configuring the lab network; otherwise use the NAT branch in section 3.
+
+A resource/configuration change normally needs only `wsl --shutdown` and a new WSL start. This stops all running distributions: inspect `wsl --list --running`, coordinate active work, and keep Windows-side recovery access. A shutdown does not replace a Windows restart explicitly requested by an installer.
+
+### 2.3. Prepare Ubuntu
+
+Reuse a compatible installed distribution and its existing user account. When the target distribution is absent, run:
+
+```powershell
+wsl --install -d Ubuntu-24.04 --no-launch --web-download
+```
+
+If the command requests a Windows restart, follow section 2.4 before launching or claiming installation success. On first launch of a new distribution, let the user establish the Linux account/password privately by default. If the user explicitly authorizes the agent to create a named account, check for it first, create only that account, set its password through standard input without logging or storing it, add sudo membership as requested, and use `wsl --manage <Distro> --set-default-user <User>` when supported. Use UTF-8 without a BOM and Linux LF line endings when piping password input from Windows: CRLF can become an unintended trailing carriage return in the password. Verify default `whoami`, group membership and password-authenticated sudo; never enable passwordless sudo as a shortcut. Verify `wsl --list --verbose` reports version 2 for the chosen distribution; convert only that distribution with `wsl --set-version <Distro> 2` if necessary.
+
+If virtualization is reported unavailable, also check `HyperVisorPresent` and actual WSL startup errors before concluding a firmware change is required. Do not diagnose a disabled BIOS setting from a single CIM flag. Explain confirmed blockers and arrange user participation for firmware changes; never guess firmware coordinates.
+
+### 2.4. Windows restart and resume
+
+Treat restart handling as part of setup, not an unrecorded interruption:
+
+1. Save a non-secret checkpoint outside the repository, for example under `%LOCALAPPDATA%\wsl-vmware-lab`. Include the repository path, target distribution, chosen resource values, config backup path (if any), exact command/output/exit code, current Windows boot time, completed stages, pending stages and next verification commands. Label the stage `pending-windows-restart`. Do not include passwords or private keys.
+2. Tell the user why Windows must restart and to save open work. Obtain explicit restart timing unless already authorized. Never use a forced restart to close unsaved applications. The user may restart manually; no automatic task or unattended continuation is implied.
+3. After reconnecting, read the checkpoint and compare `Get-CimInstance Win32_OperatingSystem | Select-Object LastBootUpTime` with the saved boot time. Check `wsl --version`, `wsl --status`, `wsl --list --verbose` and the existing `.wslconfig` again. A previous exit code 0 with restart-required output proves neither distribution readiness nor settings application.
+4. If Ubuntu is still absent, rerun the recorded distribution install command once after the restart and inspect the new result. If present, launch it and finish any first-run initialization; reuse an existing account. Inspect errors before retrying and never unregister as generic recovery.
+5. After a successful WSL2 launch, verify with `wsl -d <Distro> -- sh -lc 'uname -r; nproc; free -h; swapon --show'`. Compare CPU count, memory and swap with the chosen limits, allowing for kernel overhead. Mark the resource and distribution stages verified only from this fresh evidence. Proceed to SSH/VMware only within the requested scope.
+
+When handing off before restart, state what is complete, what is pending, the checkpoint location and the exact next action. Keep the full installation marked incomplete until its own acceptance tests pass.
+
+### Lessons from a real run
+
+- A distribution install that returns exit 0 with a restart requirement may still leave no distribution after the restart. Check `wsl --list --verbose`; rerunning the same install command once then succeeded.
+- Configured `.wslconfig` limits were confirmed only from inside the distribution (`nproc`, `free -h`, `swapon --show`), with memory slightly below the configured value because of kernel overhead.
+- A root-only probe does not prove first-run account setup is complete; verify the default user and sudo separately.
+- Files written from Windows for WSL scripts (such as `lab.env`) must use LF line endings; see pitfalls.
+
+This flow (update, resources, Ubuntu install, restart/resume, account, tools, vmrest, base, Terraform clone and Ansible) was verified on one host that already had VMware Workstation. A clean PC without VMware, pre-logon cold boot and external-machine SSH have not been tested.
 
 ## 3. Configure Linux SSH and remote access
 
@@ -233,6 +272,7 @@ Do not report the installation as verified unless the acceptance tests passed. T
 
 ## Official references
 
+- WSL commands and web update: https://learn.microsoft.com/en-us/windows/wsl/basic-commands
 - WSL installation: https://learn.microsoft.com/en-us/windows/wsl/install
 - WSL networking, mirrored mode and Hyper-V firewall: https://learn.microsoft.com/en-us/windows/wsl/networking
 - WSL configuration: https://learn.microsoft.com/en-us/windows/wsl/wsl-config

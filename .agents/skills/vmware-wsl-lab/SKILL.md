@@ -1,6 +1,6 @@
 ---
 name: vmware-wsl-lab
-description: Sets up and operates a Windows + WSL2 + VMware Workstation lab where Linux Terraform (elsudano/vmworkstation provider via the vmrest API) clones Ubuntu VMs and Ansible configures them over SSH, using the scripts in the wsl-vmware-lab repository, to build, test or deploy systems of one or more VMs (vms.tfvars + the user's own playbooks; the Ubuntu + nginx VM is only the example). Use when installing WSL SSH access, VMware Workstation, vmrest, Terraform or Ansible on a Windows PC; when creating, powering, configuring or destroying lab VMs; when editing lab.env; or when debugging vmrest port 8697, WSL mirrored networking, portproxy, cloud-init, DHCP-lease inventory or stale known_hosts errors.
+description: Sets up and operates a Windows + WSL2 + VMware Workstation lab where Linux Terraform (elsudano/vmworkstation provider via the vmrest API) clones Ubuntu VMs and Ansible configures them over SSH, using the scripts in the wsl-vmware-lab repository, to build, test or deploy systems of one or more VMs (vms.tfvars + the user's own playbooks; the Ubuntu + nginx VM is only the example). Use when installing or updating WSL, setting WSL resource limits, resuming setup after a reboot, installing WSL SSH access, VMware Workstation, vmrest, Terraform or Ansible on a Windows PC; when creating, powering, configuring or destroying lab VMs; when editing lab.env; or when debugging vmrest port 8697, WSL mirrored networking, portproxy, cloud-init, DHCP-lease inventory or stale known_hosts errors.
 ---
 
 # VMware Workstation + WSL lab
@@ -9,7 +9,9 @@ description: Sets up and operates a Windows + WSL2 + VMware Workstation lab wher
 
 Host name, Windows user, WSL user, distro and repository location differ on every machine. Discover them; never reuse values from examples or earlier sessions.
 
-## 0. Start every session with preflight
+## 0. Detect the environment, then run preflight
+
+On Windows, inspect `wsl --version` and `wsl --list --verbose` first. For initial WSL setup or a pending installation reboot, read [reference/install-new-pc.md](reference/install-new-pc.md), section 2, before attempting Bash preflight. The setup order is WSL web update, host-specific resource settings, then Ubuntu preparation. A reboot-required result is a checkpoint, not completed installation. Resume from recorded evidence after reboot; do not reset or reinstall an existing distribution. An explicit update/setup request follows this path even when WSL is already installed.
 
 If you are already in a WSL shell (for example over SSH), SSH works; do not spend time checking it. Find the repository, then run preflight:
 

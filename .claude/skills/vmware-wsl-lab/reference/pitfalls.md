@@ -17,6 +17,7 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 | Terraform 404 | endpoint missing `/api` | `http://127.0.0.1:8697/api` |
 | WSL cannot reach `127.0.0.1:8697` | WSL in NAT mode; vmrest bound to loopback | Use mirrored mode. Do not expose Basic-auth vmrest to the LAN |
 | VM missing from `/api/vms` | VMX/disk exist but not registered | `bash register-base.sh` (idempotent by path) |
+| `register-base.sh` gets HTTP 500; VMware log shows a VMX syntax error | `lab.env` written from Windows with CRLF line endings, so `\r` ends up in the VM name/`displayName` | `file lab.env` shows `CRLF`; rewrite it with LF (e.g. `sed -i 's/\r$//' lab.env`), regenerate the base VMX, then register again |
 | `vmrest -C` fails with piped password | requires interactive input | user types it interactively |
 | Unauthenticated 401 works, authenticated request also 401 (Terraform/provider auth errors) | secrets file (`%USERPROFILE%\.env` or `LAB_SECRETS_FILE`) differs from the vmrest API account (`vmrest.exe -C`, stored in `vmrest.cfg`; password not readable) | user corrects the file, or re-runs `vmrest.exe -C`, writes the same values and restarts vmrest. Never read or print the values |
 | preflight cannot find the account although one exists | it is in another file or under `VMWS_USER` instead of `VMWS_USERNAME` | both names are accepted; point `LAB_SECRETS_FILE` at the file |
