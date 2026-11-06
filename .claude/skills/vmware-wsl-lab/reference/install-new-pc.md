@@ -8,7 +8,7 @@ Use this document as an execution instruction for an agent with Windows terminal
 - Objective and boundaries / Execution rules
 - 1. Discover the machine and create a checkpoint
 - 2. Update WSL, set resources, prepare Ubuntu, and resume after restart
-- 3. Configure Linux SSH and remote access (firewall, NAT portproxy, start at boot)
+- 3. Configure Linux SSH and remote access (firewall, NAT portproxy, start at boot, keep the PC awake)
 - 4. Install VMware Workstation Pro using computer use
 - 5. Configure and keep vmrest available
 - 6. Install Linux automation tools
@@ -162,6 +162,10 @@ wsl.exe -d <Distro> -u root -- /bin/sh -c 'systemctl stop ssh.socket ssh.service
 ```
 
 This takes ownership of SSH startup in that distribution; do not run a competing daemon on port 22. Register it with a boot trigger and S4U (run whether or not the user is logged on, without storing a password), plus a logon trigger, like the vmrest task. This repository's `wsl2-ssh-forward.ps1 InstallTask` does this and starts it once immediately. A task registered but not started leaves WSL to shut down when idle, taking sshd with it, until the next trigger fires. Confirm the `sshd -D -e` process keeps running (its `etime` grows across checks) before asking the user to test. Configure no execution time limit, ignore duplicate instances, and record the exact task name/action. Elevated privileges are needed for firewall/portproxy setup, not necessarily for the long-running user task. In NAT mode maintain a separate forwarding-refresh task. Verify with a real reboot: before anyone logs on (`quser` shows no users), log in over SSH from another LAN PC. Keep a recovery console available. A logon-only trigger is not acceptable for unattended use.
+
+### Keep the PC awake
+
+Sleep or hibernation stops WSL, sshd, vmrest and the VMs; from another PC this looks exactly like a broken SSH setup (port 22 timeout). Display-off timeouts are harmless. `bash preflight.sh` reads the active power plan through `windows/configure-power.ps1 -Machine` and warns when, on AC power, Windows sleeps or hibernates after a timeout or the lid action is not "do nothing" (and separately for battery on PCs that have one). Show the current values with `windows/configure-power.ps1` (no arguments, read only), then, with the user's OK, have the user run `-Action Apply` in Windows PowerShell (`-IncludeBattery` to cover battery too; `-WhatIf` to preview). Apply saves the original values once to `%LOCALAPPDATA%\wsl-vmware-lab\power-backup.json`; `-Action Restore` puts them back. Only the active plan changes, and a Group Policy power setting overrides it. Acceptance: preflight shows `[OK] power (plugged in)`.
 
 ## 4. Install VMware Workstation Pro using computer use
 

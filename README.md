@@ -73,7 +73,7 @@ bash wsl-vmware-lab/preflight.sh
 | `terraform/` | `main.tf`, `variables.tf` (provider `elsudano/vmworkstation` 2.0.1 고정) |
 | `ansible/` | `configure-guest.yml`(nginx 예제), `check-lab.yml`(모든 VM 동작 확인) |
 | `vms.tfvars.example` | 여러 VM 시스템용 VM 목록 예시. `vms.tfvars`로 복사해서 사용 |
-| `windows/` | Windows에서 실행: SSH 포워딩(1편), vmrest 자동 실행(2편) |
+| `windows/` | Windows에서 실행: SSH 포워딩(1편), vmrest 자동 실행(2편), 절전 방지 전원 설정(`configure-power.ps1`) |
 | `extras/` | 진단·호환용 스크립트와 예전 NAT 방식 브리지. 실습에는 필요 없음 |
 | `.claude/skills/vmware-wsl-lab/` | Claude Code용 설치·운영 스킬 (원본. 여기서 고침) |
 | `.agents/skills/vmware-wsl-lab/` | Codex용 같은 스킬. `bash tools/sync-agent-skills.sh`로 복사하고, CI가 두 사본이 같은지 확인 |
@@ -176,7 +176,7 @@ bash preflight.sh                 # 점검만 하고 아무것도 바꾸지 않�
 bash preflight.sh --start-vmrest  # vmrest가 꺼져 있으면 'VMware vmrest API' 작업을 시작하고 최대 30초 대기
 ```
 
-실제로 감지한 값(저장소 위치, WSL 사용자·배포판, Windows 프로필, mirrored 여부)과 설정 파일 유무, 도구 설치 상태, vmrest 응답을 보여 줍니다. 비밀번호 값은 출력하지 않습니다. vmrest가 Windows에서는 실행 중인데 WSL에서 닿지 않으면, 새로 켜지 않고 endpoint와 네트워크 설정을 확인하라고 안내합니다.
+실제로 감지한 값(저장소 위치, WSL 사용자·배포판, Windows 프로필, mirrored 여부)과 설정 파일 유무, 도구 설치 상태, vmrest 응답, 절전·최대 절전·덮개 닫기 전원 설정(읽기만 함)을 보여 줍니다. 비밀번호 값은 출력하지 않습니다. vmrest가 Windows에서는 실행 중인데 WSL에서 닿지 않으면, 새로 켜지 않고 endpoint와 네트워크 설정을 확인하라고 안내합니다.
 
 ## 블로그 원본과 달라진 점
 
@@ -192,6 +192,15 @@ bash preflight.sh --start-vmrest  # vmrest가 꺼져 있으면 'VMware vmrest AP
 
 - **검증 범위:** 2026-11-06 한 PC(VMware Workstation 기설치, 미러드 네트워크, Windows·Hyper-V 방화벽 꺼짐)에서 이 저장소판으로 WSL 설치부터 베이스 VM, Terraform 복제, Ansible 2회(두 번째 `changed=0`), 정리, 재부팅 후 로그온 전 vmrest·SSH까지 확인했습니다. VMware가 없는 새 PC, NAT 모드, 방화벽이 켜진 PC는 아직 확인하지 않았습니다. 처음 쓸 때는 결과를 단계마다 확인하세요.
 - **SSH는 부팅 때 시작:** `wsl2-ssh-forward.ps1 InstallTask`는 vmrest처럼 Windows 부팅 시 로그온 없이(S4U) WSL sshd를 켜고, 로그온 때도 한 번 더 실행합니다. 등록 직후에도 sshd 유지 작업을 바로 실행하고 22번이 열렸는지 확인합니다. sshd는 이 유지 작업 하나만 띄웁니다. 블로그 1편의 원래 스크립트는 로그온 시점에만 실행됩니다. 예전에 등록한 PC는 관리자 PowerShell에서 `InstallTask`를 다시 실행하세요.
+- **절전하면 접속이 끊김:** Windows가 절전이나 최대 절전으로 들어가면 WSL SSH, vmrest, VM이 모두 멈춥니다. 다른 PC에서는 22번 포트 타임아웃으로 보여서 SSH 설정 문제와 헷갈리기 쉽습니다. 화면 끄기는 상관없습니다. `preflight.sh`가 전원 설정을 읽어 경고하고, 아래 스크립트로 바꿀 수 있습니다. 바꾸기 전 값은 `%LOCALAPPDATA%\wsl-vmware-lab\power-backup.json`에 저장되고 `-Action Restore`로 되돌립니다. 지금 쓰는 전원 계획에만 적용되며, 그룹 정책이 전원 설정을 관리하면 그쪽이 우선합니다.
+  ```powershell
+  cd <저장소>\windows
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\configure-power.ps1                  # 현재 값 보기(바꾸지 않음)
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\configure-power.ps1 -Action Apply    # 전원 연결 시: 절전·최대 절전 안 함, 덮개 닫아도 동작 없음
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\configure-power.ps1 -Action Apply -IncludeBattery   # 배터리일 때도 같게
+  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\configure-power.ps1 -Action Restore  # 원래 값으로
+  ```
+  `-WhatIf`를 붙이면 바꿀 내용만 보여 줍니다. 노트북을 실습 호스트로 쓰면 전원을 연결해 두세요.
 - **올리면 안 되는 파일:** `lab.env`, `%USERPROFILE%\.env`, SSH 개인키, `*.tfstate`, `inventory.json`, VM 디스크·ISO는 `.gitignore`에 들어 있습니다. 커밋하지 마세요.
 - **비공식 provider:** `elsudano/vmworkstation`은 HashiCorp나 Broadcom이 아닌 커뮤니티 provider입니다. 버전을 올리기 전에 스키마를 확인하세요(`terraform providers schema -json`).
 - **진단 스크립트:** `extras/diagnose-terraform.sh`는 베이스 VM을 끄고 `power_state=off`를 적용합니다. 실행 전에 내용을 읽어 보세요.

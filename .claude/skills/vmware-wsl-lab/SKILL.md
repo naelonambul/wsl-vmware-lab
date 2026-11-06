@@ -42,6 +42,8 @@ When preflight fails at vmrest:
 | `no vmrest.cfg` warning | API account never set up for this Windows user | The user runs `vmrest.exe -C` |
 | `startup task ... absent`, `disabled` or `does not start vmrest at boot` | vmrest will not come back at boot | vmrest must start at **boot, without logon**. Offer `windows/install-vmrest-task.ps1` (elevated): boot trigger, S4U, restart on failure |
 | `other enabled task(s) also start vmrest` | two launchers (for example one made by another tool) | Ask the user, then disable the other task (do not delete it) so `VMware vmrest API` is the only launcher |
+| `power (plugged in): sleep after N min` (or hibernate / lid) | Windows will sleep and drop SSH, vmrest and the VMs | Show `windows/configure-power.ps1` (read only); with the user's OK they run `-Action Apply` (undo `-Action Restore`). Not a vmrest failure; preflight still exits 0 |
+| `power (on battery): ...` | only matters when unplugged | Tell the user; `-Action Apply -IncludeBattery` if the PC runs on battery |
 | `no interop` | WSL cannot run Windows programs | The user checks vmrest on Windows |
 
 Do not run Terraform until preflight exits 0.
