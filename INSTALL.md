@@ -65,7 +65,7 @@ mv -- "$dest.new" "$dest"
 head -4 "$dest/SKILL.md"                        # must show: name: vmware-wsl-lab
 ```
 
-Codex alternative for the skill only (the repository is still needed, step 2): in Codex run `$skill-installer install https://github.com/naelonambul/wsl-vmware-lab/tree/main/.agents/skills/vmware-wsl-lab`.
+Codex alternative for the skill only (the repository is still needed, step 2): in Codex run `$skill-installer install https://github.com/naelonambul/wsl-vmware-lab/tree/main/.agents/skills/vmware-wsl-lab`. It installs into `$CODEX_HOME/skills/vmware-wsl-lab` (default `~/.codex/skills`), which Codex also reads; that folder is outside the workspace, so the session needs write access there (the default sandbox refuses it). Do not install both there and in `~/.agents/skills`: Codex would list the skill twice.
 
 A replaced skill is kept as `vmware-wsl-lab.bak.<time>`; tell the user, and delete it only if they ask.
 

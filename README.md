@@ -23,7 +23,7 @@ WSL Ansible --SSH--> 테스트 VM (nginx 설치, 페이지 배포, HTTP 확인)
 | 에이전트 | 저장소 안 위치 | 설치 위치(모든 프로젝트) | 부르는 법 |
 |---|---|---|---|
 | Claude Code | `.claude/skills/vmware-wsl-lab` | `~/.claude/skills/vmware-wsl-lab` | `/vmware-wsl-lab` |
-| Codex | `.agents/skills/vmware-wsl-lab` | `~/.agents/skills/vmware-wsl-lab` | `$vmware-wsl-lab` (또는 `/skills`) |
+| Codex | `.agents/skills/vmware-wsl-lab` | `~/.agents/skills/vmware-wsl-lab` (`$skill-installer`로 설치하면 `~/.codex/skills/vmware-wsl-lab`) | `$vmware-wsl-lab` (또는 `/skills`) |
 
 요청 내용이 스킬 설명과 맞으면 두 에이전트 모두 알아서 스킬을 씁니다. 저장소 폴더 안에서 에이전트를 실행하면 설치하지 않아도 스킬이 보입니다.
 
@@ -39,7 +39,7 @@ https://github.com/naelonambul/wsl-vmware-lab/blob/main/INSTALL.md 를 읽고 �
 3. 자기 에이전트의 설치 위치에 스킬을 복사합니다. 기존 스킬이 있으면 `.bak`으로 보관합니다.
 4. `preflight.sh`로 점검합니다.
 
-Codex는 스킬만 따로 설치할 수도 있습니다. 이 경우에도 저장소는 받아 둬야 합니다.
+Codex는 스킬만 따로 설치할 수도 있습니다. 이 경우에도 저장소는 받아 둬야 합니다. 이렇게 설치하면 `~/.codex/skills/vmware-wsl-lab`(`$CODEX_HOME/skills`)에 들어가고, Codex는 이 위치도 읽습니다. 작업 폴더 밖에 쓰는 것이라 Codex가 쓰기 권한을 물을 수 있습니다. `~/.agents/skills`에 복사한 것과 중복 설치하지는 마세요(목록에 두 번 나옵니다).
 
 ```text
 $skill-installer install https://github.com/naelonambul/wsl-vmware-lab/tree/main/.agents/skills/vmware-wsl-lab
