@@ -1,0 +1,41 @@
+---
+- name: Configure software inside the Ubuntu test VM
+  hosts: demo
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Wait for guest SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 180
+
+    - name: Wait for cloud-init to complete
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+
+    - name: Install nginx
+      ansible.builtin.apt:
+        name: nginx
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Deploy the demo page
+      ansible.builtin.copy:
+        dest: /var/www/html/index.html
+        content: "WSL Terraform creates the VM; Ansible configures Ubuntu.\n"
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Enable and start nginx
+      ansible.builtin.service:
+        name: nginx
+        state: started
+        enabled: true
+
+    - name: Test the deployed page inside the guest
+      ansible.builtin.uri:
+        url: http://127.0.0.1/
+        return_content: true
+      register: page_response
+      failed_when: "page_response.status != 200 or 'Ansible configures Ubuntu.' not in page_response.content"
