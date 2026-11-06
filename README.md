@@ -2,6 +2,8 @@
 
 Windows PC에서 **WSL2 Ubuntu의 Terraform**으로 **VMware Workstation** VM을 만들고, **Ansible**로 그 VM 안의 Ubuntu를 설정하는 실습 스크립트 모음입니다.
 
+게스트 이미지는 **Ubuntu 클라우드 이미지(기본 24.04 noble)만 지원**합니다. 게스트가 VMware guestinfo로 자기 사용자 이름을 알려 주는데, 이때 이미지에 들어 있는 `open-vm-tools`가 필요하기 때문입니다(Debian 12 클라우드 이미지 등에는 없습니다).
+
 블로그 연재의 첨부 스크립트를 한곳에 모았습니다. 개인 환경에 묶인 값은 설정 파일(`lab.env`)로, vmrest 계정은 Windows 사용자 폴더의 `.env`로 분리했습니다.
 
 - 1편: [WSL2 SSH를 Windows 22번 포트로 포워딩하기](https://naelonambul.tistory.com/207)

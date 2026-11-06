@@ -39,7 +39,8 @@ vmrun = str(Path(os.environ.get('VMWARE_DIR', '/mnt/c/Program Files/VMware/VMwar
 guest_user = subprocess.run([vmrun, '-T', 'ws', 'readVariable', vm['path'], 'guestVar',
                              'wsl-vmware-lab.guest_user'], capture_output=True, text=True).stdout.strip()
 if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', guest_user):
-    raise SystemExit('Guest has not reported its default user through guestinfo yet; retry after boot')
+    raise SystemExit('Guest has not reported its default user through guestinfo yet; retry after boot '
+                     '(needs open-vm-tools in the guest; Ubuntu cloud images ship it)')
 private = Path(os.environ.get('LAB_PRIVATE_DIR', str(Path.home() / '.config/wsl-vmware-lab')))
 key = Path(os.environ.get('LAB_SSH_KEY', str(private / 'lab_ed25519')))
 if not key.is_file():

@@ -5,7 +5,8 @@
 # user. On every boot a small unit reports the name of the user that holds the
 # lab key through VMware guestinfo, so WSL can read it with
 #   vmrun readVariable <vmx> guestVar wsl-vmware-lab.guest_user
-# instead of assuming a name.
+# instead of assuming a name. This needs open-vm-tools (vmware-rpctool) in the
+# guest: Ubuntu cloud images ship it, which is why only they are supported.
 
 LAB_GUESTINFO_USER_VAR=wsl-vmware-lab.guest_user
 

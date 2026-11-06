@@ -71,6 +71,7 @@ Terraform owns VM existence and power. Ansible owns guest software. They do not 
 All bash scripts source `lib/config.sh`, which reads optional settings from `lab.env` (gitignored; template `lab.env.example`) or the file named in `LAB_ENV_FILE`, and the vmrest account from the secrets file (`%USERPROFILE%\.env`).
 
 - Windows-side paths default from the logged-in Windows user profile (`%USERPROFILE%\Documents\Virtual Machines\<clone>\...`).
+- Guest images: Ubuntu cloud images only (default 24.04 noble). Guest-user detection needs `open-vm-tools` inside the guest, which Ubuntu cloud images ship (checked: 22.04, 24.04 manifests) and Debian 12 cloud images do not. For another distribution, stop and ask the user; do not swap images silently.
 - Guest VM user (inside the VM) is not configured: cloud-init keeps the image's default user (`ubuntu` on Ubuntu images) and the guest reports its name through VMware guestinfo on every boot (`lib/cloud-config.sh`, read by `guest-inventory.py`). The WSL user is separate: the account the user SSHes into this PC as (the `User` of their SSH config entry); scripts run as it and never set it.
 - Private files live in `~/.config/wsl-vmware-lab/` (`LAB_PRIVATE_DIR`).
 - Windows scripts take parameters instead: `wsl2-ssh-forward.ps1 -AllowedRemoteAddress <LAN/24> -Distro <name>`, `start-vmrest.ps1 -VmrestPath <exe>`, `install-vmrest-task.ps1 -User <DOMAIN\user>`.
