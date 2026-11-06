@@ -54,14 +54,14 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 |---|---|---|
 | `ssh <user>@<windows-lan-ip>` refused or times out on a newly set up PC; WSL `ss -lnt` shows no `:22` | openssh-server never installed (WSL install/update and tools steps do not include it; preflight does not check it) | install-new-pc section 3: install `openssh-server`, enable it, then set up firewall and tasks |
 | SSH drops, "The system will power off now!" | WSL exits when no foreground process | scheduled task `WSL2 SSH Service Start` running `sshd -D -e` |
-| External SSH works briefly after setup, then fails; sshd `etime` keeps resetting | WSL idles out; `WSL2 SSH Service Start` was registered but triggers only at the next logon | `Start-ScheduledTask -TaskName 'WSL2 SSH Service Start'` once now; check `sshd -D -e` stays up |
+| External SSH works briefly after setup, then fails; sshd `etime` keeps resetting | WSL idles out; `WSL2 SSH Service Start` is registered but has not run since registration | `Start-ScheduledTask -TaskName 'WSL2 SSH Service Start'` once now (current `InstallTask` does this); check `sshd -D -e` stays up |
 | `Test-NetConnection <own LAN IP> -Port 22` from Windows fails in mirrored mode | Windows itself has no `:22` listener; a same-host test is not representative | test from another LAN PC and read `/var/log/auth.log` for its address |
 | portproxy rule points at itself in mirrored mode | NAT-era rule left over | remove it; mirrored mode needs no portproxy |
 | Port 22 conflict | Windows OpenSSH Server owns 22 | choose deliberately; do not stop unrelated services silently |
 | `.wslconfig` ignored | saved as `.wslconfig.txt` | rename |
 | PowerShell 5.1 task aborts on systemctl message | stderr + `ErrorActionPreference=Stop` | judge by exit code and LISTEN state |
 | `WSL2 SSH Port Forward Refresh` last result `1`; log shows `wsl: Failed to start the systemd user session` | `wsl.exe` prints this warning on stderr and the task reports failure (seen in mirrored mode; root cause not confirmed) | judge by a real SSH login from another PC; in mirrored mode no portproxy is needed anyway |
-| SSH unreachable after reboot before logon | SSH tasks from `wsl2-ssh-forward.ps1` trigger at logon | needs a boot-time WSL/SSH start; not covered by this repository yet |
+| SSH unreachable after reboot before logon | SSH tasks registered by an older `wsl2-ssh-forward.ps1` trigger only at logon | re-run `wsl2-ssh-forward.ps1 InstallTask` (elevated): boot trigger + S4U, plus logon. Verified: external SSH worked before anyone logged on |
 | vmrest down after reboot until someone logs on | vmrest started by a logon task | re-run `windows/install-vmrest-task.ps1` (elevated): boot trigger + S4U. Verified: vmrest answered with no user logged on |
 
 Do not restart WSL or edit scheduled tasks during an active remote session without a recovery path (Windows console).

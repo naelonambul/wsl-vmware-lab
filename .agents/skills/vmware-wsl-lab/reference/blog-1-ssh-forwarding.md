@@ -63,7 +63,7 @@ wsl.exe -d Ubuntu-24.04 -u root -- /bin/sh -c 'systemctl stop ssh.socket ssh.ser
 ```
 
 - Holding `sshd -D` keeps WSL alive. `systemctl enable --now ssh` alone lets WSL shut down when the command ends, dropping SSH.
-- Trigger is Windows **logon**, not boot.
+- The post's trigger is Windows **logon**, not boot. This repository's `InstallTask` now registers both tasks with a boot trigger and S4U (runs as the user without logon) plus a logon trigger, so SSH comes up before anyone logs on.
 - After a manual `wsl --shutdown`, run `Refresh` again.
 
 ## Step 4: verify from another PC

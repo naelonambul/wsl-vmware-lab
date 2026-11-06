@@ -15,8 +15,9 @@
 .STRUCTURE
   NAT: Windows 0.0.0.0:22 -> current WSL IPv4:22 -> sshd
   Mirrored: Windows and WSL share an IP; sshd is reached directly and no portproxy is used.
-  InstallTask creates logon tasks for this Windows account: one refreshes forwarding
-  and one starts the WSL ssh service. No sleep process is used.
+  InstallTask creates tasks for this Windows account that run at boot without logon (S4U)
+  and again at logon: one refreshes forwarding and one starts the WSL ssh service.
+  No sleep process is used.
   This script manages TCP 22 only and does not change RDP's TCP 3306 settings.
 
 .NOTES
@@ -542,10 +543,16 @@ function Install-SshServiceTask {
     $distroArg = $Distro.Replace('"', '""')
     $arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $scriptPath + '" StartSsh -Distro "' + $distroArg + '"'
     $action = New-ScheduledTaskAction -Execute $powershellExe -Argument $arguments
-    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
-    $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Limited
+    # Boot trigger + S4U: WSL and sshd start before anyone logs on, without storing a password.
+    # The logon trigger restarts it if WSL was shut down; IgnoreNew keeps a single instance.
+    $trigger = @(
+        (New-ScheduledTaskTrigger -AtStartup),
+        (New-ScheduledTaskTrigger -AtLogOn -User $currentUser)
+    )
+    $principal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType S4U -RunLevel Limited
     $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
-        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew `
+        -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1)
 
     $oldTask = Get-ScheduledTask -TaskName $script:KeepaliveTaskName -ErrorAction SilentlyContinue
     if ($oldTask) {
@@ -558,9 +565,9 @@ function Install-SshServiceTask {
 
     Register-ScheduledTask -TaskName $script:SshStartTaskName -Action $action -Trigger $trigger `
         -Principal $principal -Settings $settings `
-        -Description "Start the WSL SSH service at $currentUser logon." -Force | Out-Null
+        -Description "Start the WSL SSH service at boot (S4U, no logon needed) and at $currentUser logon." -Force | Out-Null
     Write-Ok "Scheduled Task created: $($script:SshStartTaskName)"
-    Write-Host "       Trigger: $currentUser logs on"
+    Write-Host "       Trigger: Windows boot (runs as $currentUser without logon, S4U) and $currentUser logon"
     Write-Host "       Action: $powershellExe $arguments"
 }
 
@@ -582,15 +589,18 @@ function Install-RefreshTask {
     $arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $scriptPath + '" Refresh -Distro "' + $distroArg + '" -AllowedRemoteAddress "' + $script:AllowedRemoteAddress.Replace('"', '""') + '"'
 
     $taskAction = New-ScheduledTaskAction -Execute $powershellExe -Argument $arguments
-    $taskTrigger = New-ScheduledTaskTrigger -AtLogOn -User $currentUser
-    $taskPrincipal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType Interactive -RunLevel Highest
+    $taskTrigger = @(
+        (New-ScheduledTaskTrigger -AtStartup),
+        (New-ScheduledTaskTrigger -AtLogOn -User $currentUser)
+    )
+    $taskPrincipal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType S4U -RunLevel Highest
     $taskSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
         -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
     Register-ScheduledTask -TaskName $script:TaskName -Action $taskAction -Trigger $taskTrigger `
-        -Principal $taskPrincipal -Settings $taskSettings -Description 'Refresh the WSL2 SSH TCP 22 portproxy at user logon.' -Force | Out-Null
+        -Principal $taskPrincipal -Settings $taskSettings -Description 'Refresh the WSL2 SSH TCP 22 portproxy at boot and at user logon.' -Force | Out-Null
 
     Write-Ok "Scheduled Task created: $($script:TaskName)"
-    Write-Host "       Trigger: $currentUser logs on"
+    Write-Host "       Trigger: Windows boot (S4U) and $currentUser logon"
     Write-Host "       Action: $powershellExe $arguments"
     Install-SshServiceTask
     Start-ScheduledTask -TaskName $script:TaskName -ErrorAction Stop

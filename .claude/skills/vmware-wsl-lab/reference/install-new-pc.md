@@ -115,7 +115,7 @@ When handing off before restart, state what is complete, what is pending, the ch
 - Files written from Windows for WSL scripts (such as `lab.env`) must use LF line endings; see pitfalls.
 - The update/install flow left no SSH server: external `ssh` failed until openssh-server was installed (section 3). After registering the logon tasks, SSH still failed because WSL idled out; starting the keep-alive task immediately fixed it. The firewall profiles were disabled on that host, so firewall rules were not the cause.
 
-This flow (update, resources, Ubuntu install, restart/resume, account, tools, vmrest, base, Terraform clone and Ansible) was verified on one host that already had VMware Workstation. External SSH from another LAN PC was then verified in a logged-on session. A clean PC without VMware and SSH after a pre-logon cold boot have not been tested.
+This flow (update, resources, Ubuntu install, restart/resume, account, tools, vmrest, base, Terraform clone and Ansible) was verified on one host that already had VMware Workstation. External SSH from another LAN PC was then verified, including after a reboot before anyone logged on, once the SSH tasks used a boot trigger and S4U. A clean PC without VMware has not been tested.
 
 ## 3. Configure Linux SSH and remote access
 
@@ -153,7 +153,7 @@ ssh -o BatchMode=yes -o ConnectTimeout=10 <wsl-user>@<windows-lan-ip> 'id; uname
 
 Compare the host key through the Windows/WSL local console before accepting it. Save a client SSH alias only after this succeeds.
 
-### Persist SSH across Windows user logon
+### Persist SSH from boot, without logon
 
 A one-shot `systemctl start ssh` command was insufficient to keep WSL reachable in the existing lab. Implement a Windows scheduled task under the correct interactive Windows user that starts the selected distribution as root and keeps the SSH daemon attached:
 
@@ -161,7 +161,7 @@ A one-shot `systemctl start ssh` command was insufficient to keep WSL reachable 
 wsl.exe -d <Distro> -u root -- /bin/sh -c 'systemctl stop ssh.socket ssh.service; mkdir -p /run/sshd; exec /usr/sbin/sshd -D -e'
 ```
 
-This takes ownership of SSH startup in that distribution; do not run a competing daemon on port 22. A logon-triggered task does not run when it is registered: start it once right away (`Start-ScheduledTask -TaskName 'WSL2 SSH Service Start'` for this repository's `wsl2-ssh-forward.ps1 InstallTask`). Otherwise WSL shuts down when idle a short time later, sshd disappears with it, and external SSH fails until the next logon. Confirm the `sshd -D -e` process keeps running (its `etime` grows across checks) before asking the user to test. Configure no execution time limit, ignore duplicate instances, and record the exact task name/action. Elevated privileges are needed for firewall/portproxy setup, not necessarily for the long-running user task. In NAT mode maintain a separate forwarding-refresh task. Test logon persistence with a recovery console available. A logon-triggered task is not evidence of pre-logon unattended boot availability.
+This takes ownership of SSH startup in that distribution; do not run a competing daemon on port 22. Register it with a boot trigger and S4U (run whether or not the user is logged on, without storing a password), plus a logon trigger, like the vmrest task. This repository's `wsl2-ssh-forward.ps1 InstallTask` does this and starts it once immediately. A task registered but not started leaves WSL to shut down when idle, taking sshd with it, until the next trigger fires. Confirm the `sshd -D -e` process keeps running (its `etime` grows across checks) before asking the user to test. Configure no execution time limit, ignore duplicate instances, and record the exact task name/action. Elevated privileges are needed for firewall/portproxy setup, not necessarily for the long-running user task. In NAT mode maintain a separate forwarding-refresh task. Verify with a real reboot: before anyone logs on (`quser` shows no users), log in over SSH from another LAN PC. Keep a recovery console available. A logon-only trigger is not acceptable for unattended use.
 
 ## 4. Install VMware Workstation Pro using computer use
 

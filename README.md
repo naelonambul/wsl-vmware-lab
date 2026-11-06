@@ -189,7 +189,7 @@ bash preflight.sh --start-vmrest  # vmrest가 꺼져 있으면 'VMware vmrest AP
 ## 주의
 
 - **검증 범위:** 블로그의 검증 결과는 원본 스크립트로 얻은 것입니다. 이 저장소의 설정 분리판은 아직 실제 VMware 호스트에서 처음부터 끝까지 실행해 보지 않았습니다. 처음 쓸 때는 결과를 단계마다 확인하세요.
-- **SSH는 아직 로그온 후 시작:** `wsl2-ssh-forward.ps1`의 예약 작업은 블로그대로 로그온 시점에 실행됩니다. vmrest와 달리 부팅 시 시작은 아직 이 저장소에서 다루지 않습니다.
+- **SSH는 부팅 때 시작:** `wsl2-ssh-forward.ps1 InstallTask`는 vmrest처럼 Windows 부팅 시 로그온 없이(S4U) WSL sshd를 켜고, 로그온 때도 한 번 더 실행합니다. 블로그 1편의 원래 스크립트는 로그온 시점에만 실행됩니다. 예전에 등록한 PC는 관리자 PowerShell에서 `InstallTask`를 다시 실행하세요.
 - **올리면 안 되는 파일:** `lab.env`, `%USERPROFILE%\.env`, SSH 개인키, `*.tfstate`, `inventory.json`, VM 디스크·ISO는 `.gitignore`에 들어 있습니다. 커밋하지 마세요.
 - **비공식 provider:** `elsudano/vmworkstation`은 HashiCorp나 Broadcom이 아닌 커뮤니티 provider입니다. 버전을 올리기 전에 스키마를 확인하세요(`terraform providers schema -json`).
 - **진단 스크립트:** `extras/diagnose-terraform.sh`는 베이스 VM을 끄고 `power_state=off`를 적용합니다. 실행 전에 내용을 읽어 보세요.

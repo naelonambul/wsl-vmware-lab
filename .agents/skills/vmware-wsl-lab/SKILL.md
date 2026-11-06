@@ -131,7 +131,7 @@ Several VMs: `cp vms.tfvars.example vms.tfvars`, edit, then `terraform-vm.sh on`
 - [ ] (new or changed host) after a reboot with nobody logged on (`quser`: no users), preflight.sh exits 0
 ```
 
-Verified end to end on a second, freshly prepared PC: download/verify → base VM → clone on → Ansible ×2 (`changed=0` on the second run) → off → destroy with cleanup, plus a no-logon reboot. Not yet verified: vmrest restart after it crashes (task restart policy), and SSH start before logon with this repository's `wsl2-ssh-forward.ps1` (its tasks still trigger at logon).
+Verified end to end on a second, freshly prepared PC: download/verify → base VM → clone on → Ansible ×2 (`changed=0` on the second run) → off → destroy with cleanup, plus a no-logon reboot. SSH before logon was verified on 2026-11-06 after `wsl2-ssh-forward.ps1 InstallTask` moved its tasks to boot + S4U: an external LAN PC logged in over SSH before anyone logged on to Windows. Not yet verified: vmrest restart after it crashes (task restart policy).
 
 ## 7. Report format
 

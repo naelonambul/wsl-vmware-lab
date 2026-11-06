@@ -121,7 +121,7 @@ Lessons from running such a deployment:
 - Recreating the same clone path can reuse VM ID and IP → stale host key. Verify the clone by API path and management MAC/lease, then remove only that clone's entry with `ssh-keygen -f <clone-known-hosts> -R <ip>`.
 - Default Ansible privilege-escalation wait (12 s) intermittently timed out; `ANSIBLE_TIMEOUT=60` fixed it. Root cause of the latency was not confirmed.
 - After a reboot vmrest may be absent (HTTP 000). Start the `VMware vmrest API` task before retrying Terraform; `0 destroyed` with vmrest down is not success.
-- SSH scheduled tasks trigger at Windows logon, not boot. Do not restart WSL or edit those tasks during an active remote session without console access.
+- SSH scheduled tasks start at boot without logon (S4U) and again at logon when registered by the current `wsl2-ssh-forward.ps1 InstallTask`; hosts set up earlier may still have logon-only tasks. Do not restart WSL or edit those tasks during an active remote session without console access.
 
 ## Evidence rules
 
