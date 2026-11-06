@@ -228,6 +228,43 @@ if $interop; then
   elif [[ "$extra" == *"cfg=True"* ]]; then
     ok "vmrest account file present in the Windows user profile (not read)"
   fi
+
+  # Sleep or hibernation stops WSL SSH, vmrest and the VMs; from another PC it
+  # looks like an SSH timeout on port 22. Read only here: values come from
+  # windows/configure-power.ps1 (by GUID, so localized powercfg output is fine).
+  power="$("$PS" -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+    -File "$(wslpath -w "$LAB_PROJECT_DIR/windows/configure-power.ps1")" -Machine 2>/dev/null | tr -d '\r')"
+  power_value() { tr ' ' '\n' <<<"$power" | sed -n "s/^$1=//p"; }
+  # Prints what makes the PC stop answering, or nothing when the value is safe.
+  power_risk() {
+    local v="$2"
+    [[ -z "$v" || "$v" == n/a || "$v" == 0 ]] && return
+    if [[ "$1" == lid ]]; then
+      case "$v" in 1) echo "closing the lid sleeps" ;; 2) echo "closing the lid hibernates" ;;
+                   3) echo "closing the lid shuts down" ;; *) echo "lid action $v" ;; esac
+      return
+    fi
+    (( v >= 31536000 )) && return   # a year or more never fires in practice
+    echo "$1 after $(( (v + 59) / 60 )) min"
+  }
+  power_fix="windows/configure-power.ps1 -Action Apply in Windows PowerShell (no -Action: show only; -Action Restore: undo)"
+  if [[ "$power" != *sleep_ac=* ]]; then
+    warn "power settings could not be read; make sure Windows does not sleep while the lab is used remotely"
+  else
+    ac_risks=() dc_risks=()
+    for k in sleep hibernate lid; do
+      r="$(power_risk "$k" "$(power_value "${k}_ac")")"; [[ -n "$r" ]] && ac_risks+=("$r")
+      r="$(power_risk "$k" "$(power_value "${k}_dc")")"; [[ -n "$r" ]] && dc_risks+=("$r")
+    done
+    if (( ${#ac_risks[@]} )); then
+      warn "power (plugged in): $(printf '%s; ' "${ac_risks[@]}")SSH, vmrest and the VMs stop while Windows sleeps. Fix: $power_fix"
+    else
+      ok "power (plugged in): no sleep or hibernation timeout, closing the lid (if any) does nothing"
+    fi
+    if [[ "$(power_value battery)" == True ]] && (( ${#dc_risks[@]} )); then
+      warn "power (on battery): $(printf '%s; ' "${dc_risks[@]}")keep the PC plugged in, or add -IncludeBattery to the fix above"
+    fi
+  fi
 fi
 
 if ! $have_creds; then
