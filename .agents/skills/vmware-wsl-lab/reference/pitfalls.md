@@ -24,6 +24,8 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 | Account stored in Windows Credential Manager not visible from WSL over SSH | WSL started at boot without logon runs in a batch (S4U) session, where the Credential Manager vault stays locked | use the secrets file; this repository no longer uses Credential Manager |
 | Account worked before, now 401 | vmrest restarted under another Windows user (other profile, other `vmrest.cfg`), or `-C` was re-run without updating the stored copy | check which user runs vmrest (logon task principal); keep one account in sync |
 | `inspect-base.sh` fails on `listRegisteredVM` | unsupported command | use `api-status.sh` |
+| Downloads or file writes under `C:\Users\...` are blocked (git clone, image download, VM disks) | antivirus blocks writes in the user profile | keep the repository and VM root outside the profile (e.g. `C:\wsl-vmware-lab`, `LAB_VM_ROOT_WIN='C:\VMs'` in `lab.env`); after a move re-register the base and re-run the task installers |
+| Scheduled task fails after moving the repository | tasks store the old script path | re-run `windows/install-vmrest-task.ps1` and `wsl2-ssh-forward.ps1 InstallTask` (elevated) from the new folder |
 
 ## Terraform provider
 

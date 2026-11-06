@@ -54,7 +54,7 @@ Some commands fail normally on a machine without WSL; distinguish missing softwa
 
 Prefer a supported Windows 11 release with mirrored WSL networking. Microsoft documents mirrored mode for Windows 11 22H2 and later. For a host without that capability, use the NAT branch below and verify its different API/SSH routes explicitly.
 
-Choose and record these non-secret parameters in a local installation checkpoint: distribution name, WSL username, project Windows path, corresponding WSL path, VM root directory, base name, unique test clone name, LAN subnet, chosen versions and current stage. Use `wslpath` for path conversion. Place VM files on a Windows drive, not the WSL ext4 filesystem.
+Choose and record these non-secret parameters in a local installation checkpoint: distribution name, WSL username, project Windows path, corresponding WSL path, VM root directory, base name, unique test clone name, LAN subnet, chosen versions and current stage. Use `wslpath` for path conversion. Place VM files on a Windows drive, not the WSL ext4 filesystem. If antivirus blocks downloads or writes under the Windows user profile, as on one host, put the repository and the VM root outside it (for example `C:\wsl-vmware-lab` and `LAB_VM_ROOT_WIN='C:\VMs'` in `lab.env`). After moving an existing repository, re-register the base VM with `register-base.sh`, re-run `windows/install-vmrest-task.ps1` and `wsl2-ssh-forward.ps1 InstallTask` (elevated) so the tasks point at the new path, then run preflight.
 
 ## 2. Update WSL, set resources, then prepare Ubuntu
 
