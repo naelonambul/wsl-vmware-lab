@@ -18,7 +18,7 @@ Use this when the lab is already installed and you are in a WSL shell on it (loc
 
 1. Run preflight as described in SKILL.md section 0, and continue only when it exits 0.
 2. `bash terraform-vm.sh status`: inspect the current state and report only non-secret findings.
-3. Read the repository `README.md` if settings in `lab.env` look unusual.
+3. Read the repository `README.md` if settings look unusual.
 4. Preserve the base VM and any existing clone unless the user explicitly authorizes changes.
 
 The shell is Bash inside WSL2, not PowerShell. Run Windows commands through `powershell.exe -NoProfile -Command ...`.
@@ -52,7 +52,7 @@ Preflight reports whether `.wslconfig` uses mirrored networking. Do not change `
 
 ## Credentials and private artifacts
 
-- `lab.env` (or the file in `LAB_ENV_FILE`) holds `VMWS_USERNAME`, `VMWS_PASSWORD`, optional `VMWS_ENDPOINT`. Terraform receives `TF_VAR_vmrest_*` from `lib/config.sh`.
+- vmrest account: Windows Credential Manager generic credential `wsl-vmware-lab/vmrest` (`windows/vmrest-credential.ps1 Set|Test|Remove`), read into memory by `lib/config.sh`. `VMWS_USERNAME`/`VMWS_PASSWORD` in `lab.env` (or `LAB_ENV_FILE`) override it. Terraform receives `TF_VAR_vmrest_*` from `lib/config.sh`.
 - Private files: `lab_ed25519` key pair, `inventory.json`, `known_hosts-<vm-id>`, `seed-<vm-id>/` under `LAB_PRIVATE_DIR`.
 - Never print or copy credentials, keys, Terraform state or inventory into chat, logs, commits or docs. Never enable `set -x` around config loading.
 - `LAB_GUEST_USER` (default `ubuntu`) sets both the cloud-init user and the Ansible user.

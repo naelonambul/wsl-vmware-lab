@@ -50,10 +50,49 @@ if [[ -z "${LAB_CLONE_VMX_WIN:-}" ]]; then
 fi
 export LAB_CLONE_VMX_WIN="${LAB_CLONE_VMX_WIN:-}"
 
-lab_require_credentials() {
-  : "${VMWS_USERNAME:?Set VMWS_USERNAME in lab.env (see lab.env.example)}"
-  : "${VMWS_PASSWORD:?Set VMWS_PASSWORD in lab.env (see lab.env.example)}"
+# vmrest account lookup order: environment / lab.env, then Windows Credential
+# Manager (generic credential LAB_CREDENTIAL_TARGET, stored by
+# windows/vmrest-credential.ps1 Set). Values stay in this process's memory.
+export LAB_CREDENTIAL_TARGET="${LAB_CREDENTIAL_TARGET:-wsl-vmware-lab/vmrest}"
+VMWS_CREDENTIAL_SOURCE="${VMWS_CREDENTIAL_SOURCE:-}"
+
+# Returns 0 and sets VMWS_USERNAME/VMWS_PASSWORD when found; 3 = no entry;
+# other non-zero = Credential Manager unreachable (no interop, or this logon
+# session cannot read the user's credentials).
+lab_load_windows_credential() {
+  local ps=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe out rc
+  [[ -x "$ps" ]] || return 2
+  # No pipe here: the exit code must come from powershell.exe itself.
+  out="$("$ps" -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+    -File "$(wslpath -w "$LAB_PROJECT_DIR/windows/vmrest-credential.ps1")" Get \
+    -Target "$LAB_CREDENTIAL_TARGET" 2>/dev/null)" && rc=0 || rc=$?
+  [[ $rc -eq 0 ]] || return "$rc"
+  out="${out//$'\r'/}"
+  VMWS_USERNAME="$(sed -n 1p <<<"$out" | base64 -d)"
+  VMWS_PASSWORD="$(sed -n 2p <<<"$out" | base64 -d)"
+  [[ -n "$VMWS_USERNAME" ]] || return 4
+  VMWS_CREDENTIAL_SOURCE="Windows Credential Manager ($LAB_CREDENTIAL_TARGET)"
   export VMWS_USERNAME VMWS_PASSWORD
+}
+
+lab_require_credentials() {
+  if [[ -n "${VMWS_USERNAME:-}" && -n "${VMWS_PASSWORD:-}" ]]; then
+    VMWS_CREDENTIAL_SOURCE="${VMWS_CREDENTIAL_SOURCE:-environment or settings file}"
+  else
+    local rc=0
+    lab_load_windows_credential || rc=$?
+    if [[ $rc -ne 0 ]]; then
+      if [[ $rc -eq 3 ]]; then
+        echo "vmrest account not found. Store it once on Windows:" >&2
+      else
+        echo "vmrest account: Windows Credential Manager not readable here (code $rc)." >&2
+      fi
+      echo "  powershell.exe -NoProfile -File \"$(wslpath -w "$LAB_PROJECT_DIR/windows/vmrest-credential.ps1" 2>/dev/null)\" Set" >&2
+      echo "  (or set VMWS_USERNAME / VMWS_PASSWORD in lab.env)" >&2
+      return 1
+    fi
+  fi
+  export VMWS_USERNAME VMWS_PASSWORD VMWS_CREDENTIAL_SOURCE
 }
 
 lab_terraform_env() {

@@ -2,7 +2,7 @@
 # Session preflight for the WSL + VMware lab. Run inside WSL, from anywhere:
 #   bash <repo>/preflight.sh                 # report only, changes nothing
 #   bash <repo>/preflight.sh --start-vmrest  # also start vmrest if it is down
-# Exit code 0 = vmrest reachable AND lab.env credentials accepted; 1 = not ready.
+# Exit code 0 = vmrest reachable AND the stored vmrest account accepted; 1 = not ready.
 # Never prints secrets.
 set -uo pipefail
 
@@ -59,14 +59,16 @@ if [[ -f "$LAB_ENV_FILE" ]]; then
 elif [[ -n "${VMWS_CREDENTIALS_FILE:-}" && -f "$VMWS_CREDENTIALS_FILE" ]]; then
   ok "settings file: none; legacy credentials file: $VMWS_CREDENTIALS_FILE"
 else
-  warn "no settings file at $LAB_ENV_FILE (copy lab.env.example to lab.env, or set LAB_ENV_FILE)"
+  ok "settings file: none (defaults; optional lab.env from lab.env.example)"
 fi
 have_creds=false
-if [[ -n "${VMWS_USERNAME:-}" && -n "${VMWS_PASSWORD:-}" ]]; then
+cred_msg="$(lab_require_credentials 2>&1 >/dev/null)"
+if lab_require_credentials 2>/dev/null; then
   have_creds=true
-  ok "vmrest credentials: set (values not shown)"
+  ok "vmrest account: from ${VMWS_CREDENTIAL_SOURCE} (values not shown)"
 else
-  warn "vmrest credentials: VMWS_USERNAME / VMWS_PASSWORD not set"
+  warn "vmrest account: not available"
+  sed 's/^/       /' <<<"$cred_msg"
 fi
 ok "guest user: $LAB_GUEST_USER  base: $LAB_BASE_NAME  clone: $LAB_CLONE_NAME"
 if [[ -n "$LAB_CLONE_VMX_WIN" ]]; then ok "clone VMX: $LAB_CLONE_VMX_WIN"; else warn "clone VMX path unknown (LAB_CLONE_VMX_WIN)"; fi
@@ -90,7 +92,7 @@ windows_vmrest_state() {
     $p = [bool](Get-Process vmrest -ErrorAction SilentlyContinue)
     $t = Get-ScheduledTask -TaskName "VMware vmrest API" -ErrorAction SilentlyContinue
     $l = [bool](Get-NetTCPConnection -State Listen -LocalPort 8697 -ErrorAction SilentlyContinue)
-    "process=$p listener8697=$l logonTask=$(if ($t) { $t.State } else { "absent" })"' 2>/dev/null | tr -d '\r'
+    "process=$p listener8697=$l startupTask=$(if ($t) { $t.State } else { "absent" })"' 2>/dev/null | tr -d '\r'
 }
 start_it() {
   $interop || { fail "cannot start vmrest without Windows interop"; return 1; }
@@ -101,8 +103,8 @@ start_it() {
   else
     local launcher
     launcher="$(wslpath -w "$LAB_PROJECT_DIR/windows/start-vmrest.ps1")"
-    warn "logon task absent; running windows/start-vmrest.ps1 once (install it with windows/install-vmrest-task.ps1)"
-    "$PS" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$launcher" -VmrestPath "$(wslpath -w "$VMWARE_DIR/vmrest.exe")" \
+    warn "startup task absent; running windows/start-vmrest.ps1 once (install the task with windows/install-vmrest-task.ps1)"
+    "$PS" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$launcher" -NoWait -VmrestPath "$(wslpath -w "$VMWARE_DIR/vmrest.exe")" \
       || { fail "start-vmrest.ps1 failed; check %LOCALAPPDATA%\\WSL-VMware\\vmrest-error.log"; return 1; }
   fi
 }
@@ -138,15 +140,26 @@ esac
 # vmrest.cfg (written by `vmrest.exe -C`) holds the API account; observed in
 # %USERPROFILE% of the Windows user running vmrest. Only its presence is checked.
 if $interop; then
+  # vmrest must come up at BOOT, before any logon: the task needs a boot
+  # trigger and S4U (run whether the user is logged on or not).
   extra="$("$PS" -NoProfile -NonInteractive -Command '
     $t = Get-ScheduledTask -TaskName "VMware vmrest API" -ErrorAction SilentlyContinue
     $c = Test-Path (Join-Path $env:USERPROFILE "vmrest.cfg")
-    "task=$(if ($t) { $t.State } else { "absent" }) cfg=$c"' 2>/dev/null | tr -d '\r')"
+    $boot = [bool]($t.Triggers | Where-Object { $_.CimClass.CimClassName -eq "MSFT_TaskBootTrigger" })
+    $others = (Get-ScheduledTask | Where-Object { $_.TaskName -ne "VMware vmrest API" -and $_.Settings.Enabled -and
+      ($_.Actions | Where-Object { "$($_.Execute) $($_.Arguments)" -match "vmrest" }) }).TaskName -join ";"
+    "task=$(if ($t) { $(if ($t.Settings.Enabled) { "enabled" } else { "disabled" }) } else { "absent" }) boot=$boot logon=$($t.Principal.LogonType) cfg=$c others=[$others]"' 2>/dev/null | tr -d '\r')"
+  others="$(sed -nE 's/.*others=\[([^]]*)\].*/\1/p' <<<"$extra")"
   if [[ "$extra" == *"task=absent"* ]]; then
-    warn "logon task 'VMware vmrest API' absent: vmrest will not start after a reboot (install with windows/install-vmrest-task.ps1)"
+    warn "startup task 'VMware vmrest API' absent: vmrest will not start at boot (install with windows/install-vmrest-task.ps1, elevated)"
+  elif [[ "$extra" == *"task=disabled"* ]]; then
+    warn "startup task 'VMware vmrest API' is disabled: vmrest will not start at boot"
+  elif [[ "$extra" == *"boot=True logon=S4U"* ]]; then
+    ok "startup task 'VMware vmrest API': boot trigger, runs without logon (S4U)"
   elif [[ -n "$extra" ]]; then
-    ok "logon task 'VMware vmrest API' present"
+    warn "task 'VMware vmrest API' does not start vmrest at boot without logon; re-run windows/install-vmrest-task.ps1 (elevated)"
   fi
+  [[ -n "$others" ]] && warn "other enabled task(s) also start vmrest: ${others} (keep one launcher; disable the others)"
   if [[ "$extra" == *"cfg=False"* ]]; then
     warn "no vmrest.cfg in the Windows user profile: the API account may not be set up (the user runs vmrest.exe -C)"
   elif [[ "$extra" == *"cfg=True"* ]]; then
@@ -155,19 +168,21 @@ if $interop; then
 fi
 
 if ! $have_creds; then
-  fail "cannot verify the vmrest account: VMWS_USERNAME / VMWS_PASSWORD not set"
-  echo "       The user puts the account created with vmrest.exe -C into lab.env (see lab.env.example)."
+  fail "cannot verify the vmrest account: none stored"
+  echo "       The user stores the account created with vmrest.exe -C, on Windows:"
+  echo "       powershell.exe -NoProfile -File windows\\vmrest-credential.ps1 Set"
   exit 1
 fi
 auth_code="$(curl --connect-timeout 3 --max-time 8 -s -o /dev/null -w '%{http_code}' -K - "${VMWS_ENDPOINT%/}/vms" \
   <<<"user = \"${VMWS_USERNAME}:${VMWS_PASSWORD}\"")"
 if [[ "$auth_code" == 200 ]]; then
-  ok "authenticated GET /vms: HTTP 200 (lab.env matches the vmrest account)"
+  ok "authenticated GET /vms: HTTP 200 (stored account matches vmrest)"
 elif [[ "$auth_code" == 401 ]]; then
-  fail "authenticated GET /vms: HTTP 401 - lab.env does not match the vmrest account"
-  echo "       vmrest keeps its own account (vmrest.exe -C); the password is not stored in readable form."
-  echo "       The user either corrects lab.env, or re-runs vmrest.exe -C, updates lab.env to match"
-  echo "       and restarts vmrest. Also check that vmrest runs as the same Windows user."
+  fail "authenticated GET /vms: HTTP 401 - stored account (${VMWS_CREDENTIAL_SOURCE}) does not match vmrest"
+  echo "       vmrest keeps its own account (vmrest.exe -C, vmrest.cfg); its password is not readable."
+  echo "       The user re-stores the right values (windows/vmrest-credential.ps1 Set), or re-runs"
+  echo "       vmrest.exe -C, stores the same values and restarts vmrest. Also check that vmrest runs"
+  echo "       as the same Windows user."
   exit 1
 else
   fail "authenticated GET /vms: HTTP $auth_code"

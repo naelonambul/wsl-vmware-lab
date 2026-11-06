@@ -18,8 +18,8 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 | WSL cannot reach `127.0.0.1:8697` | WSL in NAT mode; vmrest bound to loopback | Use mirrored mode. Do not expose Basic-auth vmrest to the LAN |
 | VM missing from `/api/vms` | VMX/disk exist but not registered | `bash register-base.sh` (idempotent by path) |
 | `vmrest -C` fails with piped password | requires interactive input | user types it interactively |
-| Unauthenticated 401 works, authenticated request also 401 (Terraform/provider auth errors) | `lab.env` username/password differ from the vmrest API account (`vmrest.exe -C`, stored in `vmrest.cfg` in the Windows user profile; password not readable) | user corrects `lab.env`, or re-runs `vmrest.exe -C`, matches `lab.env` and restarts vmrest. Never read or print the values |
-| Account worked before, now 401 | vmrest restarted under another Windows user (other profile, other `vmrest.cfg`), or `-C` was re-run without updating `lab.env` | check which user runs vmrest (logon task principal); keep one account in sync |
+| Unauthenticated 401 works, authenticated request also 401 (Terraform/provider auth errors) | stored account (Credential Manager `wsl-vmware-lab/vmrest`, or `lab.env` override) differs from the vmrest API account (`vmrest.exe -C`, stored in `vmrest.cfg` in the Windows user profile; password not readable) | user re-runs `windows/vmrest-credential.ps1 Set`, or re-runs `vmrest.exe -C`, stores the same values and restarts vmrest. Never read or print the values |
+| Account worked before, now 401 | vmrest restarted under another Windows user (other profile, other `vmrest.cfg`), or `-C` was re-run without updating the stored copy | check which user runs vmrest (logon task principal); keep one account in sync |
 | `inspect-base.sh` fails on `listRegisteredVM` | unsupported command | use `api-status.sh` |
 
 ## Terraform provider
@@ -37,6 +37,7 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `sha256sum -c SHA256SUMS`: `no file was verified` | OVA saved under the old blog name; Ubuntu lists `noble-server-cloudimg-amd64.ova` | `bash download-ubuntu-image.sh` (official name, signature + checksum) |
 | VM crashes on boot | hand-written VMX lacks PCIe slot for `e1000e` | use `e1000` |
 | `REMOTE HOST IDENTIFICATION HAS CHANGED` | clone first exposes base host key, or recreated clone reuses VM ID/IP | verify clone via API path + mgmt MAC/lease, then `ssh-keygen -f <clone-specific-known-hosts> -R <guest-IP>` only. Never disable host checking globally |
 | `Timeout (12s) waiting for privilege escalation prompt` | short default become wait (latency source unconfirmed; sudo itself verified passwordless) | `ANSIBLE_TIMEOUT=60` |
@@ -54,7 +55,8 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 | `.wslconfig` ignored | saved as `.wslconfig.txt` | rename |
 | PowerShell 5.1 task aborts on systemctl message | stderr + `ErrorActionPreference=Stop` | judge by exit code and LISTEN state |
 | `WSL2 SSH Port Forward Refresh` last result `1`; log shows `wsl: Failed to start the systemd user session` | `wsl.exe` prints this warning on stderr and the task reports failure (seen in mirrored mode; root cause not confirmed) | judge by a real SSH login from another PC; in mirrored mode no portproxy is needed anyway |
-| Unreachable after reboot before logon | tasks trigger at logon, not boot | expected; needs user logon |
+| SSH unreachable after reboot before logon | SSH tasks from `wsl2-ssh-forward.ps1` trigger at logon | needs a boot-time WSL/SSH start; not covered by this repository yet |
+| vmrest down after reboot until someone logs on | vmrest started by a logon task | re-run `windows/install-vmrest-task.ps1` (elevated): boot trigger + S4U. Verified: vmrest answered with no user logged on |
 
 Do not restart WSL or edit scheduled tasks during an active remote session without a recovery path (Windows console).
 

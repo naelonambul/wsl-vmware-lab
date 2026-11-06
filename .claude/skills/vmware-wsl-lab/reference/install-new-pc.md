@@ -2,7 +2,7 @@
 
 Use this document as an execution instruction for an agent with Windows terminal access, browser/computer-use tools, and an external SSH client. Written 2026-11-05. Read the entire document before making changes.
 
-> Implementation: the scripts in this repository (wsl-vmware-lab). Configure them through `lab.env` (template `lab.env.example`); see `README.md`.
+> Implementation: the scripts in this repository (wsl-vmware-lab). Optional settings go in `lab.env` (template `lab.env.example`); the vmrest account goes in Windows Credential Manager (`windows/vmrest-credential.ps1 Set`). See `README.md`.
 
 ## Contents
 - Objective and boundaries / Execution rules
@@ -141,7 +141,9 @@ HTTP 401 demonstrates reachability and an authentication requirement. HTTP 000/t
 
 For NAT WSL, do not assume localhost reaches Windows. Discover the Windows-facing route and implement the narrowest necessary API bridge/bind/firewall configuration, documenting its authentication and exposure. Never apply a broad LAN rule to an unauthenticated endpoint.
 
-Create a Windows startup/logon mechanism for vmrest using flags verified against the installed executable. Record its account, exact action, working directory, logs and restart policy. Verify it stays running after the launching terminal closes. Test WSL API reachability after logon/restart separately from SSH persistence. The old lab passed installation but later lacked vmrest, so this is a mandatory acceptance check.
+vmrest must start at Windows **boot, before any logon**. Install it with `windows/install-vmrest-task.ps1` from an elevated PowerShell: task `VMware vmrest API`, boot trigger, S4U as the Windows user who ran `vmrest.exe -C`, no time limit, restart 5 times 1 minute apart; `start-vmrest.ps1` stays running while vmrest runs so the restart policy applies. If another tool already registered a vmrest task, disable it (do not delete) so only one launcher remains. Acceptance: reboot, then confirm with nobody logged on (`quser` reports no users) that `curl` from WSL gets HTTP 401. A logon-triggered start is not acceptable.
+
+Store the scripts' copy of the vmrest account in Windows Credential Manager: the user runs `powershell.exe -NoProfile -File <repo>\windows\vmrest-credential.ps1 Set` and types the same username and password given to `vmrest.exe -C`. Never type these values for the user. `bash preflight.sh` then confirms authenticated HTTP 200.
 
 ## 6. Install Linux automation tools
 
@@ -159,7 +161,7 @@ These commands assume the package repositories have already been prepared; Terra
 
 ## 7. Prepare portable project files and a base VM
 
-Use this repository as the source. Copy `lab.env.example` to `lab.env`, set the vmrest credentials and any non-default values, and review each script before first use. Never copy credentials, private keys, state, inventory or VM disks from another host as installation assets.
+Use this repository as the source. Store the vmrest account with `windows/vmrest-credential.ps1 Set`, copy `lab.env.example` to `lab.env` only if a default must change, and review each script before first use. Never copy credentials, private keys, state, inventory or VM disks from another host as installation assets.
 
 The repository implements the following artifacts. If you rebuild them elsewhere, keep this behavior:
 
