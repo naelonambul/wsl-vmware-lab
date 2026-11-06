@@ -4,7 +4,7 @@ Windows PC 한 대에서 **Terraform + Ansible로 시스템을 구성하고 시�
 
 게스트 이미지는 **Ubuntu 클라우드 이미지(기본 24.04 noble)만 지원**합니다. 게스트가 VMware guestinfo로 자기 사용자 이름을 알려 주는데, 이때 이미지에 들어 있는 `open-vm-tools`가 필요하기 때문입니다(Debian 12 클라우드 이미지 등에는 없습니다).
 
-블로그 연재의 첨부 스크립트를 한곳에 모았습니다. 개인 환경에 묶인 값은 설정 파일(`lab.env`)로, vmrest 계정은 Windows 사용자 폴더의 `.env`로 분리했습니다.
+블로그 연재의 첨부 스크립트를 한곳에 모았습니다.
 
 - 0편: [WSL 업데이트·사양 설정·Ubuntu 설치, 재부팅 후 이어가기](https://naelonambul.tistory.com/210)
 - 1편: [WSL2 SSH를 Windows 22번 포트로 포워딩하기](https://naelonambul.tistory.com/207)
@@ -95,7 +95,7 @@ VMWS_PASSWORD=<그 비밀번호>
 
 ## 개인 설정: `lab.env` (선택)
 
-블로그 원본은 작성자 PC의 경로와 사용자 이름이 스크립트 안에 들어 있었습니다. 이 저장소에서는 그런 값을 모두 설정으로 뺐습니다. 기본값을 바꿀 때만 만듭니다(계정은 넣지 않습니다).
+기본값을 바꿀 때만 만듭니다(계정은 넣지 않습니다).
 
 ```bash
 cp lab.env.example lab.env
@@ -178,20 +178,10 @@ bash preflight.sh --start-vmrest  # vmrest가 꺼져 있으면 'VMware vmrest AP
 
 실제로 감지한 값(저장소 위치, WSL 사용자·배포판, Windows 프로필, mirrored 여부)과 설정 파일 유무, 도구 설치 상태, vmrest 응답, 절전·최대 절전·덮개 닫기 전원 설정(읽기만 함)을 보여 줍니다. 비밀번호 값은 출력하지 않습니다. vmrest가 Windows에서는 실행 중인데 WSL에서 닿지 않으면, 새로 켜지 않고 endpoint와 네트워크 설정을 확인하라고 안내합니다.
 
-## 블로그 원본과 달라진 점
-
-- 하드코딩된 경로·사용자(`/mnt/c/Users/<작성자>/...`, `/home/<작성자>`, 게스트 사용자, VMX 경로, VM ID)를 `lab.env`와 자동 감지로 바꿨습니다.
-- 게스트 사용자를 정하지 않습니다. cloud-init은 `users: [default]`로 이미지 기본 사용자를 그대로 두고 SSH 키만 넣습니다. 게스트가 부팅할 때마다 키를 받은 사용자 이름을 VMware guestinfo(`wsl-vmware-lab.guest_user`)에 적고, WSL은 `vmrun readVariable`로 읽어 Ansible inventory에 씁니다. WSL 사용자와는 별개입니다.
-- 개인 파일 폴더 이름이 `~/.config/vmware-workstation-demo` → `~/.config/wsl-vmware-lab`, SSH 키 이름이 `demo_ed25519` → `lab_ed25519`로 바뀌었습니다. 예전 `vmrest.env`도 `VMWS_CREDENTIALS_FILE`로 지정하면 계속 읽습니다.
-- `api-status.sh`, `check-power.sh`, `terraform-vm.sh`의 `curl`은 비밀번호를 명령줄 인자 대신 표준입력으로 넘깁니다(`ps`에 노출되지 않도록).
-- Ubuntu가 지금 쓰는 파일 이름은 `noble-server-cloudimg-amd64.ova`입니다. 블로그의 `ubuntu-24.04-server-cloudimg-amd64.ova`로 저장하면 `sha256sum -c SHA256SUMS`가 확인할 파일을 찾지 못합니다. `download-ubuntu-image.sh`가 공식 이름으로 받아 확인합니다.
-- `check-power.sh`는 VM ID를 인자로 받거나 Terraform 출력에서 읽습니다.
-- `wsl2-ssh-forward.ps1`의 방화벽 허용 대역, `start-vmrest.ps1`의 실행 파일 경로, `extras/` 브리지의 주소를 매개변수로 바꿨습니다.
-
 ## 주의
 
 - **검증 범위:** 2026-11-06 한 PC(VMware Workstation 기설치, 미러드 네트워크, Windows·Hyper-V 방화벽 꺼짐)에서 이 저장소판으로 WSL 설치부터 베이스 VM, Terraform 복제, Ansible 2회(두 번째 `changed=0`), 정리, 재부팅 후 로그온 전 vmrest·SSH까지 확인했습니다. VMware가 없는 새 PC, NAT 모드, 방화벽이 켜진 PC는 아직 확인하지 않았습니다. 처음 쓸 때는 결과를 단계마다 확인하세요.
-- **SSH는 부팅 때 시작:** `wsl2-ssh-forward.ps1 InstallTask`는 vmrest처럼 Windows 부팅 시 로그온 없이(S4U) WSL sshd를 켜고, 로그온 때도 한 번 더 실행합니다. 등록 직후에도 sshd 유지 작업을 바로 실행하고 22번이 열렸는지 확인합니다. sshd는 이 유지 작업 하나만 띄웁니다. 블로그 1편의 원래 스크립트는 로그온 시점에만 실행됩니다. 예전에 등록한 PC는 관리자 PowerShell에서 `InstallTask`를 다시 실행하세요.
+- **SSH는 부팅 때 시작:** `wsl2-ssh-forward.ps1 InstallTask`는 vmrest처럼 Windows 부팅 시 로그온 없이(S4U) WSL sshd를 켜고, 로그온 때도 한 번 더 실행합니다. 등록 직후에도 sshd 유지 작업을 바로 실행하고 22번이 열렸는지 확인합니다. sshd는 이 유지 작업 하나만 띄웁니다. 예전에 등록한 PC는 관리자 PowerShell에서 `InstallTask`를 다시 실행하세요.
 - **절전하면 접속이 끊김:** Windows가 절전이나 최대 절전으로 들어가면 WSL SSH, vmrest, VM이 모두 멈춥니다. 다른 PC에서는 22번 포트 타임아웃으로 보여서 SSH 설정 문제와 헷갈리기 쉽습니다. 화면 끄기는 상관없습니다. `preflight.sh`가 전원 설정을 읽어 경고하고, 아래 스크립트로 바꿀 수 있습니다. 바꾸기 전 값은 `%LOCALAPPDATA%\wsl-vmware-lab\power-backup.json`에 저장되고 `-Action Restore`로 되돌립니다. 지금 쓰는 전원 계획에만 적용되며, 그룹 정책이 전원 설정을 관리하면 그쪽이 우선합니다.
   ```powershell
   cd <저장소>\windows
