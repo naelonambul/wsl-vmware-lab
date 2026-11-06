@@ -16,6 +16,33 @@ WSL Terraform --> Windows vmrest http://127.0.0.1:8697/api --> VMware Workstatio
 WSL Ansible --SSH--> 테스트 VM (nginx 설치, 페이지 배포, HTTP 확인)
 ```
 
+## Claude Code 스킬 설치
+
+이 저장소에는 실습을 대신 운영하는 Claude Code 스킬(`.claude/skills/vmware-wsl-lab`)이 들어 있습니다. Claude Code에게 이렇게 말하면 설치됩니다.
+
+```text
+https://github.com/naelonambul/wsl-vmware-lab/blob/main/INSTALL.md 를 읽고 설치해 줘
+```
+
+Claude가 [INSTALL.md](INSTALL.md) 순서대로 진행합니다. 경로를 바꾸거나 설치하기 전에는 먼저 물어봅니다.
+1. 실행 환경이 WSL인지 확인합니다.
+2. 저장소를 찾거나, 없으면 Windows 사용자 폴더 아래에 받습니다.
+3. 스킬을 `~/.claude/skills/vmware-wsl-lab`에 복사합니다. 기존 스킬이 있으면 `.bak`으로 보관합니다.
+4. `preflight.sh`로 점검합니다.
+
+vmrest 비밀번호는 묻지도, 읽지도 않습니다. `%USERPROFILE%\.env`는 직접 만드세요(아래 "vmrest 계정").
+
+직접 설치하려면 WSL에서 아래 명령을 실행합니다(Claude Code를 Windows에서 쓰면 복사 위치를 `%USERPROFILE%\.claude\skills\`로 바꾸세요).
+
+```bash
+# 저장소는 Windows 드라이브(사용자 폴더)에 둡니다. 베이스 VM 파일이 저장소 안에 만들어지기 때문입니다.
+profile=$(/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -Command '[Environment]::GetFolderPath("UserProfile")' </dev/null | tr -d '\r')
+cd "$(wslpath -u "$profile")" && pwd    # 사용자 폴더가 출력되는지 확인한 뒤 다음 줄로
+git clone https://github.com/naelonambul/wsl-vmware-lab.git
+mkdir -p ~/.claude/skills && cp -r wsl-vmware-lab/.claude/skills/vmware-wsl-lab ~/.claude/skills/
+bash wsl-vmware-lab/preflight.sh
+```
+
 ## 폴더 구성
 
 | 경로 | 내용 |
@@ -31,6 +58,7 @@ WSL Ansible --SSH--> 테스트 VM (nginx 설치, 페이지 배포, HTTP 확인)
 | `windows/` | Windows에서 실행: SSH 포워딩(1편), vmrest 자동 실행(2편) |
 | `extras/` | 진단·호환용 스크립트와 예전 NAT 방식 브리지. 실습에는 필요 없음 |
 | `.claude/skills/vmware-wsl-lab/` | AI 에이전트(Claude Code 등)용 설치·운영 스킬 |
+| `INSTALL.md` | Claude가 읽고 따라 하는 스킬 설치 절차 |
 
 ## vmrest 계정: `%USERPROFILE%\.env`
 
