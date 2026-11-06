@@ -6,6 +6,7 @@ Windows PC 한 대에서 **Terraform + Ansible로 시스템을 구성하고 시�
 
 블로그 연재의 첨부 스크립트를 한곳에 모았습니다. 개인 환경에 묶인 값은 설정 파일(`lab.env`)로, vmrest 계정은 Windows 사용자 폴더의 `.env`로 분리했습니다.
 
+- 0편: [WSL 업데이트·사양 설정·Ubuntu 설치, 재부팅 후 이어가기](https://naelonambul.tistory.com/210)
 - 1편: [WSL2 SSH를 Windows 22번 포트로 포워딩하기](https://naelonambul.tistory.com/207)
 - 2편: [VMware 실습 도구 설치와 베이스 VM API 등록](https://naelonambul.tistory.com/208)
 - 3편: [Terraform으로 VM 만들고 Ansible로 Ubuntu 설정하기](https://naelonambul.tistory.com/209)
