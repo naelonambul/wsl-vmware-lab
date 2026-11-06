@@ -19,9 +19,9 @@ repo=<the one path printed>     # several printed: ask the user which one
 bash "$repo/preflight.sh"
 ```
 
-If nothing is printed, ask the user where the repository is, or whether to clone https://github.com/naelonambul/wsl-vmware-lab. Preflight reports the discovered repository, WSL user, distro, Windows profile, networking mode, where the vmrest account was found (values hidden), tools and vmrest state. Exit code 0 means vmrest is reachable **and** the stored vmrest account is accepted.
+If nothing is printed, ask the user where the repository is, or whether to clone https://github.com/naelonambul/wsl-vmware-lab. Preflight reports the discovered repository, WSL user, distro, Windows profile, networking mode, which secrets file holds the vmrest account (values hidden) and whether other users can read it, tools and vmrest state. Exit code 0 means vmrest is reachable **and** the stored vmrest account is accepted.
 
-vmrest has its own API account: a username and password set with `vmrest.exe -C`, kept by vmrest in `vmrest.cfg` in the Windows user profile, with the password not stored readably. It is separate from the Windows and Ubuntu logins. The scripts' copy of that account lives in **Windows Credential Manager** as the generic credential `wsl-vmware-lab/vmrest`, written once by the user with `windows/vmrest-credential.ps1 Set` and read into memory at run time. `VMWS_USERNAME`/`VMWS_PASSWORD` in `lab.env` override it only when Credential Manager cannot be used. When authentication fails, a mismatch between the stored copy and vmrest's account is the first suspect. Never read, print or guess the values. The user fixes them.
+vmrest has its own API account: a username and password set with `vmrest.exe -C`, kept by vmrest in `vmrest.cfg` in the Windows user profile, with the password not stored readably. It is separate from the Windows and Ubuntu logins. The scripts' copy of that account lives in a **secrets file in the Windows user folder**, `%USERPROFILE%\.env` by default (`LAB_SECRETS_FILE` to change it), as `VMWS_USERNAME=` (or `VMWS_USER=`) and `VMWS_PASSWORD=` lines. The file is parsed, never executed, so other tools may keep their own lines in it. It is readable at boot with nobody logged on; Windows Credential Manager was tried and is not (it stays locked without a logon). The user writes the file; when authentication fails, a mismatch between it and vmrest's account is the first suspect. Never read, print or guess the values.
 
 When preflight fails at vmrest:
 
@@ -30,9 +30,9 @@ When preflight fails at vmrest:
 | `HTTP 000` and `process=False` | vmrest is not running | Ask the user, then `bash "$repo/preflight.sh" --start-vmrest` (starts the `VMware vmrest API` startup task, or runs `windows/start-vmrest.ps1 -NoWait` once) |
 | `HTTP 000` but `process=True listener8697=True` | vmrest runs; WSL cannot reach it | Check `VMWS_ENDPOINT` and mirrored networking. Do not start a second vmrest |
 | `HTTP 404` | endpoint lacks `/api` | Fix `VMWS_ENDPOINT` |
-| `vmrest account not found` | nothing stored yet | First look for an existing plain-text copy (for example `%USERPROFILE%\.env`, `~/.env`, an old `vmrest.env`; check variable **names** only, such as `VMWS_USER` vs `VMWS_USERNAME`). If one exists, ask the user to run `vmrest-credential.ps1 Import -EnvFile <path>`; otherwise `vmrest-credential.ps1 Set`. The user runs either on Windows; leave the old file for the user to delete |
-| `Credential Manager not readable here` | no interop, or this Windows session cannot read the user's credentials | Report it; fall back to `lab.env` only if the user agrees |
-| authenticated `HTTP 401` | stored account does not match vmrest | The user re-runs `vmrest-credential.ps1 Set`, or re-runs `vmrest.exe -C`, stores the same values and restarts vmrest. Also check vmrest runs as the same Windows user (another user has another `vmrest.cfg`) |
+| `... .env not found` / `lacks VMWS_USERNAME` | no usable secrets file | Look for an existing copy first (another `.env`, an old `vmrest.env`; check variable **names** only). Then ask the user to write `VMWS_USERNAME=` and `VMWS_PASSWORD=` into `%USERPROFILE%\.env`, or point `LAB_SECRETS_FILE` at the existing file |
+| `secrets file readable by ...` warning | other Windows users can read it | Ask the user to restrict it: `icacls <file> /inheritance:r /grant:r %USERNAME%:F` |
+| authenticated `HTTP 401` | secrets file does not match vmrest | The user corrects the file, or re-runs `vmrest.exe -C`, writes the same values and restarts vmrest. Also check vmrest runs as the same Windows user (another user has another `vmrest.cfg`) |
 | `no vmrest.cfg` warning | API account never set up for this Windows user | The user runs `vmrest.exe -C` |
 | `startup task ... absent`, `disabled` or `does not start vmrest at boot` | vmrest will not come back at boot | vmrest must start at **boot, without logon**. Offer `windows/install-vmrest-task.ps1` (elevated): boot trigger, S4U, restart on failure |
 | `other enabled task(s) also start vmrest` | two launchers (for example one made by another tool) | Ask the user, then disable the other task (do not delete it) so `VMware vmrest API` is the only launcher |
@@ -68,7 +68,7 @@ Terraform owns VM existence and power. Ansible owns guest software. They do not 
 
 ## 3. Configuration
 
-All bash scripts source `lib/config.sh`, which reads optional settings from `lab.env` (gitignored; template `lab.env.example`) or the file named in `LAB_ENV_FILE`, and the vmrest account from Windows Credential Manager.
+All bash scripts source `lib/config.sh`, which reads optional settings from `lab.env` (gitignored; template `lab.env.example`) or the file named in `LAB_ENV_FILE`, and the vmrest account from the secrets file (`%USERPROFILE%\.env`).
 
 - Windows-side paths default from the logged-in Windows user profile (`%USERPROFILE%\Documents\Virtual Machines\<clone>\...`).
 - WSL account and guest VM user default to `ubuntu` (`LAB_GUEST_USER`).
@@ -79,7 +79,7 @@ All bash scripts source `lib/config.sh`, which reads optional settings from `lab
 ## 4. Rules that always apply
 
 1. **User decides.** Propose options with trade-offs before changing a host, and run only what the user picks.
-2. **Secrets.** Never print, copy or commit `lab.env`, vmrest credentials, SSH private keys, Terraform state or generated `inventory.json`. Never type the vmrest password on the user's behalf; `vmrest.exe -C` and `vmrest-credential.ps1 Set` are interactive for the user. Do not enable `set -x` around config loading. New variables get a fake value in `lab.env.example`.
+2. **Secrets.** Never print, copy or commit `lab.env`, vmrest credentials, SSH private keys, Terraform state or generated `inventory.json`. Never type the vmrest password on the user's behalf: the user runs `vmrest.exe -C` and writes the secrets file. Do not enable `set -x` around config loading. New variables get a fake value in `lab.env.example`.
 3. **Preserve.** Never delete or re-prepare the base VM, reset WSL distributions, restore VMware network defaults, or overwrite an existing Terraform state unless the user explicitly asks.
 4. **Check before lifecycle commands.** `preflight.sh` must exit 0 in this session before any Terraform command (section 0).
 5. **One runner per state.** One checkout = one state, one clone, one inventory. Serialize work, or use a fully isolated checkout with its own `lab.env`.

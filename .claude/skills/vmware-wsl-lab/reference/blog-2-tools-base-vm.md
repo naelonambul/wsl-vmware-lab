@@ -2,7 +2,7 @@
 
 Summary of https://naelonambul.tistory.com/208 ("[WSL 자동화 2편] VMware 실습 도구 설치와 베이스 VM API 등록"). Re-read the post if exact wording matters.
 
-Repository differences from the post: the vmrest account goes in Windows Credential Manager (`windows/vmrest-credential.ps1 Set`) instead of `~/.config/vmware-workstation-demo/vmrest.env` (still read if `VMWS_CREDENTIALS_FILE` points to it); the vmrest task starts at boot without logon (S4U) instead of at logon; the guest user defaults to `ubuntu`; Windows scripts live in `windows/`; diagnostics live in `extras/`.
+Repository differences from the post: the vmrest account goes in `%USERPROFILE%\.env` instead of `~/.config/vmware-workstation-demo/vmrest.env` (still read if `VMWS_CREDENTIALS_FILE` points to it); the vmrest task starts at boot without logon (S4U) instead of at logon; the guest user defaults to `ubuntu`; Windows scripts live in `windows/`; diagnostics live in `extras/`.
 
 ## Contents
 - Environment and ports

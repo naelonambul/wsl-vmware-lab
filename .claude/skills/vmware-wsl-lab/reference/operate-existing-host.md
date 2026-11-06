@@ -52,7 +52,7 @@ Preflight reports whether `.wslconfig` uses mirrored networking. Do not change `
 
 ## Credentials and private artifacts
 
-- vmrest account: Windows Credential Manager generic credential `wsl-vmware-lab/vmrest` (`windows/vmrest-credential.ps1 Set|Test|Remove`), read into memory by `lib/config.sh`. `VMWS_USERNAME`/`VMWS_PASSWORD` in `lab.env` (or `LAB_ENV_FILE`) override it. Terraform receives `TF_VAR_vmrest_*` from `lib/config.sh`.
+- vmrest account: secrets file `%USERPROFILE%\.env` (`LAB_SECRETS_FILE`), lines `VMWS_USERNAME=`/`VMWS_USER=` and `VMWS_PASSWORD=`, parsed (not executed) by `lib/config.sh`. Environment variables or `lab.env` override it. Terraform receives `TF_VAR_vmrest_*` from `lib/config.sh`.
 - Private files: `lab_ed25519` key pair, `inventory.json`, `known_hosts-<vm-id>`, `seed-<vm-id>/` under `LAB_PRIVATE_DIR`.
 - Never print or copy credentials, keys, Terraform state or inventory into chat, logs, commits or docs. Never enable `set -x` around config loading.
 - `LAB_GUEST_USER` (default `ubuntu`) sets both the cloud-init user and the Ansible user.

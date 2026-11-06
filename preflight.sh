@@ -56,8 +56,6 @@ fi
 echo '== Configuration'
 if [[ -f "$LAB_ENV_FILE" ]]; then
   ok "settings file: $LAB_ENV_FILE"
-elif [[ -n "${VMWS_CREDENTIALS_FILE:-}" && -f "$VMWS_CREDENTIALS_FILE" ]]; then
-  ok "settings file: none; legacy credentials file: $VMWS_CREDENTIALS_FILE"
 else
   ok "settings file: none (defaults; optional lab.env from lab.env.example)"
 fi
@@ -66,6 +64,21 @@ cred_msg="$(lab_require_credentials 2>&1 >/dev/null)"
 if lab_require_credentials 2>/dev/null; then
   have_creds=true
   ok "vmrest account: from ${VMWS_CREDENTIAL_SOURCE} (values not shown)"
+  # The secrets file must not be readable by other Windows users. Checked by
+  # well-known SIDs so localized group names do not matter.
+  if $interop && [[ "$VMWS_CREDENTIAL_SOURCE" == "secrets file /mnt/"* ]]; then
+    acl="$("$PS" -NoProfile -NonInteractive -Command '
+      param($f)
+      $wide = "S-1-1-0","S-1-5-11","S-1-5-32-545"
+      $hit = (Get-Acl -LiteralPath $f).Access | Where-Object {
+        $_.AccessControlType -eq "Allow" -and
+        $wide -contains $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value }
+      if ($hit) { "open:" + (($hit.IdentityReference.Value | Select-Object -Unique) -join ",") } else { "private" }'       -f "$(wslpath -w "${VMWS_CREDENTIAL_SOURCE#secrets file }")" 2>/dev/null | tr -d '\r')"
+    case "$acl" in
+      private) ok "secrets file permissions: not readable by other Windows users" ;;
+      open:*)  warn "secrets file readable by ${acl#open:}; restrict it to your user (icacls <file> /inheritance:r /grant:r %USERNAME%:F)" ;;
+    esac
+  fi
 else
   warn "vmrest account: not available"
   sed 's/^/       /' <<<"$cred_msg"
@@ -168,21 +181,21 @@ if $interop; then
 fi
 
 if ! $have_creds; then
-  fail "cannot verify the vmrest account: none stored"
-  echo "       The user stores the account created with vmrest.exe -C, on Windows:"
-  echo "       powershell.exe -NoProfile -File windows\\vmrest-credential.ps1 Set"
+  fail "cannot verify the vmrest account: no secrets file with it"
+  echo "       The user writes the vmrest.exe -C account into ${LAB_SECRETS_FILE:-%USERPROFILE%\\.env}:"
+  echo "         VMWS_USERNAME=<account>"
+  echo "         VMWS_PASSWORD=<password>"
   exit 1
 fi
 auth_code="$(curl --connect-timeout 3 --max-time 8 -s -o /dev/null -w '%{http_code}' -K - "${VMWS_ENDPOINT%/}/vms" \
-  <<<"user = \"${VMWS_USERNAME}:${VMWS_PASSWORD}\"")"
+  < <(lab_curl_auth))"
 if [[ "$auth_code" == 200 ]]; then
   ok "authenticated GET /vms: HTTP 200 (stored account matches vmrest)"
 elif [[ "$auth_code" == 401 ]]; then
   fail "authenticated GET /vms: HTTP 401 - stored account (${VMWS_CREDENTIAL_SOURCE}) does not match vmrest"
   echo "       vmrest keeps its own account (vmrest.exe -C, vmrest.cfg); its password is not readable."
-  echo "       The user re-stores the right values (windows/vmrest-credential.ps1 Set), or re-runs"
-  echo "       vmrest.exe -C, stores the same values and restarts vmrest. Also check that vmrest runs"
-  echo "       as the same Windows user."
+  echo "       The user corrects the secrets file, or re-runs vmrest.exe -C, writes the same values"
+  echo "       there and restarts vmrest. Also check that vmrest runs as the same Windows user."
   exit 1
 else
   fail "authenticated GET /vms: HTTP $auth_code"

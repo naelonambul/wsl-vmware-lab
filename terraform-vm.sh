@@ -6,7 +6,7 @@ lab_terraform_env
 cd "$LAB_PROJECT_DIR/terraform"
 if [[ "${1:-status}" != status ]]; then
   if ! api_code=$(curl --connect-timeout 3 --max-time 8 -sS -o /dev/null -w '%{http_code}' \
-    -K - "${TF_VAR_vmrest_endpoint%/}/vms" <<<"user = \"${VMWS_USERNAME}:${VMWS_PASSWORD}\""); then
+    -K - "${TF_VAR_vmrest_endpoint%/}/vms" < <(lab_curl_auth)); then
     echo '[ERROR] vmrest API unreachable. Start vmrest on Windows and check the endpoint.' >&2
     exit 1
   fi

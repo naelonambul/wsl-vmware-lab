@@ -2,7 +2,7 @@
 
 Windows PC에서 **WSL2 Ubuntu의 Terraform**으로 **VMware Workstation** VM을 만들고, **Ansible**로 그 VM 안의 Ubuntu를 설정하는 실습 스크립트 모음입니다.
 
-블로그 연재의 첨부 스크립트를 한곳에 모았습니다. 개인 환경에 묶인 값은 설정 파일(`lab.env`)로, vmrest 계정은 Windows 자격 증명 관리자로 분리했습니다.
+블로그 연재의 첨부 스크립트를 한곳에 모았습니다. 개인 환경에 묶인 값은 설정 파일(`lab.env`)로, vmrest 계정은 Windows 사용자 폴더의 `.env`로 분리했습니다.
 
 - 1편: [WSL2 SSH를 Windows 22번 포트로 포워딩하기](https://naelonambul.tistory.com/207)
 - 2편: [VMware 실습 도구 설치와 베이스 VM API 등록](https://naelonambul.tistory.com/208)
@@ -30,28 +30,23 @@ WSL Ansible --SSH--> 테스트 VM (nginx 설치, 페이지 배포, HTTP 확인)
 | `extras/` | 진단·호환용 스크립트와 예전 NAT 방식 브리지. 실습에는 필요 없음 |
 | `.claude/skills/vmware-wsl-lab/` | AI 에이전트(Claude Code 등)용 설치·운영 스킬 |
 
-## vmrest 계정: Windows 자격 증명 관리자
+## vmrest 계정: `%USERPROFILE%\.env`
 
-vmrest에는 Windows·Ubuntu 로그인과 별개인 API 계정이 있습니다(`vmrest.exe -C`로 만듦). 스크립트가 쓸 이 계정은 파일에 적지 않고 **Windows 자격 증명 관리자**에 한 번 저장합니다. Windows가 해당 사용자 기준으로 암호화해 보관하고, 스크립트는 실행할 때만 메모리로 읽습니다.
+vmrest에는 Windows·Ubuntu 로그인과 별개인 API 계정이 있습니다(`vmrest.exe -C`로 만듦). 스크립트가 쓸 이 계정은 **Windows 사용자 폴더의 `.env`**(`C:\Users\<사용자>\.env`)에 적습니다.
 
-```powershell
-# Windows PowerShell, 저장소의 windows 폴더에서. vmrest.exe -C 에 입력한 값과 같게 직접 입력
-powershell.exe -NoProfile -File .\vmrest-credential.ps1 Set
-powershell.exe -NoProfile -File .\vmrest-credential.ps1 Test     # 있는지만 확인(값은 안 보임)
-powershell.exe -NoProfile -File .\vmrest-credential.ps1 Remove   # 삭제
-# 이미 .env(평문)에 계정이 있다면 옮겨 담기. VMWS_USERNAME 또는 VMWS_USER, VMWS_PASSWORD를 읽고 값은 출력하지 않음
-powershell.exe -NoProfile -File .\vmrest-credential.ps1 Import -EnvFile $env:USERPROFILE\.env
+```
+VMWS_USERNAME=<vmrest.exe -C 로 만든 계정>
+VMWS_PASSWORD=<그 비밀번호>
 ```
 
-`Import`는 원래 `.env`를 바꾸거나 지우지 않습니다. 다른 도구가 쓰지 않는다면 옮긴 뒤 직접 지우세요.
-
-'제어판 > 자격 증명 관리자 > Windows 자격 증명'에 `wsl-vmware-lab/vmrest`로 보입니다. 아무도 로그온하지 않은 PC에 SSH로 들어온 WSL 세션에서 시험용 항목을 쓰고 읽는 것까지 확인했습니다. 사용자가 콘솔에서 저장한 항목을 같은 방식으로 읽는 것은 아직 확인하지 않았습니다.
-
-자격 증명 관리자를 쓸 수 없는 환경이라면 `lab.env`에 `VMWS_USERNAME`/`VMWS_PASSWORD`를 넣을 수 있고, 이 값이 우선합니다.
+- `VMWS_USER`라고 적어도 인식합니다. 다른 도구가 같은 `.env`에 자기 줄을 두어도 됩니다. 스크립트는 파일을 실행하지 않고 `VMWS_*` 줄만 읽습니다.
+- 다른 파일을 쓰려면 `lab.env`에 `LAB_SECRETS_FILE=/mnt/c/...`를 지정합니다.
+- 이 파일은 본인 Windows 계정만 읽게 두세요. `preflight.sh`가 다른 사용자도 읽을 수 있으면 경고합니다. 제한하려면 `icacls %USERPROFILE%\.env /inheritance:r /grant:r %USERNAME%:F`를 실행합니다.
+- Windows 자격 증명 관리자도 시험했지만 쓰지 않습니다. 부팅 후 아무도 로그온하지 않은 상태에서 켜진 WSL에서는 자격 증명 관리자가 잠겨 있어 읽을 수 없었습니다.
 
 ## 개인 설정: `lab.env` (선택)
 
-블로그 원본은 작성자 PC의 경로와 사용자 이름이 스크립트 안에 들어 있었습니다. 이 저장소에서는 그런 값을 모두 설정으로 뺐습니다. 기본값을 바꿀 때만 만듭니다.
+블로그 원본은 작성자 PC의 경로와 사용자 이름이 스크립트 안에 들어 있었습니다. 이 저장소에서는 그런 값을 모두 설정으로 뺐습니다. 기본값을 바꿀 때만 만듭니다(계정은 넣지 않습니다).
 
 ```bash
 cp lab.env.example lab.env
@@ -126,7 +121,7 @@ bash preflight.sh --start-vmrest  # vmrest가 꺼져 있으면 'VMware vmrest AP
 
 - **검증 범위:** 블로그의 검증 결과는 원본 스크립트로 얻은 것입니다. 이 저장소의 설정 분리판은 아직 실제 VMware 호스트에서 처음부터 끝까지 실행해 보지 않았습니다. 처음 쓸 때는 결과를 단계마다 확인하세요.
 - **SSH는 아직 로그온 후 시작:** `wsl2-ssh-forward.ps1`의 예약 작업은 블로그대로 로그온 시점에 실행됩니다. vmrest와 달리 부팅 시 시작은 아직 이 저장소에서 다루지 않습니다.
-- **올리면 안 되는 파일:** `lab.env`, SSH 개인키, `*.tfstate`, `inventory.json`, VM 디스크·ISO는 `.gitignore`에 들어 있습니다. 커밋하지 마세요.
+- **올리면 안 되는 파일:** `lab.env`, `%USERPROFILE%\.env`, SSH 개인키, `*.tfstate`, `inventory.json`, VM 디스크·ISO는 `.gitignore`에 들어 있습니다. 커밋하지 마세요.
 - **비공식 provider:** `elsudano/vmworkstation`은 HashiCorp나 Broadcom이 아닌 커뮤니티 provider입니다. 버전을 올리기 전에 스키마를 확인하세요(`terraform providers schema -json`).
 - **진단 스크립트:** `extras/diagnose-terraform.sh`는 베이스 VM을 끄고 `power_state=off`를 적용합니다. 실행 전에 내용을 읽어 보세요.
 
