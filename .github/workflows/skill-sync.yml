@@ -1,0 +1,19 @@
+name: skill-sync
+
+# The Codex copy (.agents/skills) must match the Claude Code copy (.claude/skills).
+on:
+  push:
+    paths: [".claude/skills/**", ".agents/skills/**", "tools/sync-agent-skills.sh", ".github/workflows/skill-sync.yml"]
+  pull_request:
+    paths: [".claude/skills/**", ".agents/skills/**", "tools/sync-agent-skills.sh", ".github/workflows/skill-sync.yml"]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check that both skill copies match
+        run: bash tools/sync-agent-skills.sh --check

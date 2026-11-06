@@ -1,8 +1,8 @@
-# Install the `vmware-wsl-lab` skill (instructions for Claude)
+# Install the `vmware-wsl-lab` skill (instructions for Claude Code and Codex)
 
-> 사람용 요약: Claude Code에게 "https://github.com/naelonambul/wsl-vmware-lab/blob/main/INSTALL.md 를 읽고 설치해 줘"라고 말하면, Claude가 아래 절차대로 저장소를 받고 스킬을 설치한 뒤 `preflight.sh`로 점검합니다. 직접 하려면 같은 명령을 순서대로 실행하면 됩니다.
+> 사람용 요약: Claude Code나 Codex에게 "https://github.com/naelonambul/wsl-vmware-lab/blob/main/INSTALL.md 를 읽고 설치해 줘"라고 말하면, 아래 절차대로 저장소를 받고 스킬을 설치한 뒤 `preflight.sh`로 점검합니다. 직접 하려면 같은 명령을 순서대로 실행하면 됩니다.
 
-You are installing the `vmware-wsl-lab` skill and the repository it drives. The skill only works together with a checkout of this repository (it runs the repository's scripts), so install both. Follow the steps in order and keep the user informed.
+You are an AI coding agent (Claude Code or OpenAI Codex) installing the `vmware-wsl-lab` skill and the repository it drives. The skill only works together with a checkout of this repository (it runs the repository's scripts), so install both. Follow the steps in order and keep the user informed.
 
 ## Rules
 
@@ -44,23 +44,28 @@ git clone https://github.com/naelonambul/wsl-vmware-lab.git "$repo"
 
 ## 3. Install the skill
 
-Install it where the Claude Code that will use it looks for personal skills (`~/.claude/skills/<name>/SKILL.md`, all projects on that machine):
+The repository carries the same skill twice, kept identical by `tools/sync-agent-skills.sh`:
 
-- Claude Code runs inside WSL: `~/.claude/skills/vmware-wsl-lab`
-- Claude Code runs on Windows: `%USERPROFILE%\.claude\skills\vmware-wsl-lab` (from WSL: `$(wslpath -u "$profile")/.claude/skills/vmware-wsl-lab`)
+| Agent | Copy in the repository | Personal install folder (all projects) | Project-only folder |
+|---|---|---|---|
+| Claude Code | `.claude/skills/vmware-wsl-lab` | `~/.claude/skills/vmware-wsl-lab` | `<project>/.claude/skills/vmware-wsl-lab` |
+| Codex | `.agents/skills/vmware-wsl-lab` | `~/.agents/skills/vmware-wsl-lab` | `<project>/.agents/skills/vmware-wsl-lab` |
 
-The user may prefer a project install instead (`<project>/.claude/skills/vmware-wsl-lab`, only in that project). Ask if unclear.
+Install for the agent you are (ask whether the user also wants the other one). `~` is the home of the system the agent runs on: inside WSL, `$HOME`; on Windows, `%USERPROFILE%` (from WSL: `$(wslpath -u "$profile")`). Prefer the personal folder; ask if the user wants a project-only install. Inside a checkout of this repository both agents already see the skill without installing.
 
 ```bash
-dest="$HOME/.claude/skills/vmware-wsl-lab"     # or the Windows path above
+src="$repo/.claude/skills/vmware-wsl-lab"; dest="$HOME/.claude/skills/vmware-wsl-lab"   # Claude Code
+# src="$repo/.agents/skills/vmware-wsl-lab"; dest="$HOME/.agents/skills/vmware-wsl-lab" # Codex
 # Already installed: identical -> stop here (nothing to do); different -> show the list and ask before replacing.
-if [ -e "$dest" ]; then diff -rq "$repo/.claude/skills/vmware-wsl-lab" "$dest" && echo "already up to date"; fi
+if [ -e "$dest" ]; then diff -rq "$src" "$dest" && echo "already up to date"; fi
 mkdir -p "$(dirname "$dest")"
-rm -rf -- "$dest.new" && cp -r "$repo/.claude/skills/vmware-wsl-lab" "$dest.new"
+rm -rf -- "$dest.new" && cp -r "$src" "$dest.new"
 [ -e "$dest" ] && mv -- "$dest" "$dest.bak.$(date +%Y%m%d%H%M%S)"
 mv -- "$dest.new" "$dest"
 head -4 "$dest/SKILL.md"                        # must show: name: vmware-wsl-lab
 ```
+
+Codex alternative for the skill only (the repository is still needed, step 2): in Codex run `$skill-installer install https://github.com/naelonambul/wsl-vmware-lab/tree/main/.agents/skills/vmware-wsl-lab`.
 
 A replaced skill is kept as `vmware-wsl-lab.bak.<time>`; tell the user, and delete it only if they ask.
 
@@ -80,5 +85,6 @@ Installing the skill is done even when preflight fails; report both results sepa
 Report: where you run, the repository path, the skill path (and any `.bak` copy), and the preflight result. Then:
 
 - Claude Code watches existing skill folders and picks the new skill up in the running session. If the `skills` folder did not exist when the session started, run `/reload-skills` (or restart). It is invoked as `/vmware-wsl-lab`, or automatically when the request matches.
+- Codex detects new skills automatically; if it does not show up in `/skills`, restart Codex. It is invoked with `$vmware-wsl-lab`, or automatically when the request matches.
 - Update later: `git -C <repo> pull --ff-only`, then repeat step 3.
 - Remove: delete the skill folder from step 3 (ask first). The repository and any VMs are separate; remove VMs with `bash terraform-vm.sh destroy`, never by deleting folders.
