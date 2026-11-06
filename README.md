@@ -39,7 +39,11 @@ vmrest에는 Windows·Ubuntu 로그인과 별개인 API 계정이 있습니다(`
 powershell.exe -NoProfile -File .\vmrest-credential.ps1 Set
 powershell.exe -NoProfile -File .\vmrest-credential.ps1 Test     # 있는지만 확인(값은 안 보임)
 powershell.exe -NoProfile -File .\vmrest-credential.ps1 Remove   # 삭제
+# 이미 .env(평문)에 계정이 있다면 옮겨 담기. VMWS_USERNAME 또는 VMWS_USER, VMWS_PASSWORD를 읽고 값은 출력하지 않음
+powershell.exe -NoProfile -File .\vmrest-credential.ps1 Import -EnvFile $env:USERPROFILE\.env
 ```
+
+`Import`는 원래 `.env`를 바꾸거나 지우지 않습니다. 다른 도구가 쓰지 않는다면 옮긴 뒤 직접 지우세요.
 
 '제어판 > 자격 증명 관리자 > Windows 자격 증명'에 `wsl-vmware-lab/vmrest`로 보입니다. 아무도 로그온하지 않은 PC에 SSH로 들어온 WSL 세션에서 시험용 항목을 쓰고 읽는 것까지 확인했습니다. 사용자가 콘솔에서 저장한 항목을 같은 방식으로 읽는 것은 아직 확인하지 않았습니다.
 

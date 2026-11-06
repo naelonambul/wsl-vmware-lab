@@ -3,15 +3,21 @@
 #   Set  : powershell.exe -NoProfile -File .\vmrest-credential.ps1 Set      (prompts)
 #   Test : powershell.exe -NoProfile -File .\vmrest-credential.ps1 Test     (exists? no values)
 #   Remove: powershell.exe -NoProfile -File .\vmrest-credential.ps1 Remove
+#   Import: powershell.exe -NoProfile -File .\vmrest-credential.ps1 Import -EnvFile <path>
+#          moves an existing plain-text .env account into Credential Manager.
+#          Reads VMWS_USERNAME (or VMWS_USER) and VMWS_PASSWORD; prints no values.
+#          The .env file is left in place; delete it yourself once nothing else uses it.
 #   Get  : used by lib/config.sh; prints base64(username) and base64(password),
 #          one per line, to the calling process only. Never run it by hand.
 # The entry is visible in Control Panel > Credential Manager > Windows Credentials.
 #requires -Version 5.1
 param(
     [Parameter(Mandatory = $true, Position = 0)]
-    [ValidateSet('Set', 'Get', 'Test', 'Remove')]
+    [ValidateSet('Set', 'Get', 'Test', 'Remove', 'Import')]
     [string]$Action,
-    [string]$Target = 'wsl-vmware-lab/vmrest'
+    [string]$Target = 'wsl-vmware-lab/vmrest',
+    # For Import: the .env file holding the account, e.g. $env:USERPROFILE\.env
+    [string]$EnvFile
 )
 $ErrorActionPreference = 'Stop'
 
@@ -79,6 +85,29 @@ switch ($Action) {
         try { [LabCred]::Write($Target, $user, [Runtime.InteropServices.Marshal]::PtrToStringBSTR($bstr)) }
         finally { [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($bstr) }
         Write-Host "[OK] Stored in Windows Credential Manager as '$Target'."
+    }
+    'Import' {
+        if (-not $EnvFile) { throw 'Give -EnvFile <path to .env>.' }
+        if (-not (Test-Path -LiteralPath $EnvFile)) { throw "Not found: $EnvFile" }
+        $values = @{}
+        foreach ($line in Get-Content -LiteralPath $EnvFile) {
+            if ($line -match '^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$') {
+                $v = $Matches[2]
+                if ($v.Length -ge 2 -and (($v[0] -eq '"' -and $v[-1] -eq '"') -or ($v[0] -eq "'" -and $v[-1] -eq "'"))) {
+                    $v = $v.Substring(1, $v.Length - 2)
+                }
+                $values[$Matches[1]] = $v
+            }
+        }
+        $user = if ($values['VMWS_USERNAME']) { $values['VMWS_USERNAME'] } else { $values['VMWS_USER'] }
+        $secret = $values['VMWS_PASSWORD']
+        if (-not $user -or -not $secret) {
+            throw "$EnvFile needs VMWS_USERNAME (or VMWS_USER) and VMWS_PASSWORD."
+        }
+        [LabCred]::Write($Target, $user, $secret)
+        $secret = $null; $values.Clear()
+        Write-Host "[OK] Imported the vmrest account from $EnvFile into Credential Manager as '$Target' (values not shown)."
+        Write-Host '     The .env file was not changed. Remove it once no other tool needs it.'
     }
     'Get' {
         $c = [LabCred]::Read($Target)

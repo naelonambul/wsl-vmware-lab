@@ -19,6 +19,7 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 | VM missing from `/api/vms` | VMX/disk exist but not registered | `bash register-base.sh` (idempotent by path) |
 | `vmrest -C` fails with piped password | requires interactive input | user types it interactively |
 | Unauthenticated 401 works, authenticated request also 401 (Terraform/provider auth errors) | stored account (Credential Manager `wsl-vmware-lab/vmrest`, or `lab.env` override) differs from the vmrest API account (`vmrest.exe -C`, stored in `vmrest.cfg` in the Windows user profile; password not readable) | user re-runs `windows/vmrest-credential.ps1 Set`, or re-runs `vmrest.exe -C`, stores the same values and restarts vmrest. Never read or print the values |
+| preflight says `vmrest account not found` although an account exists | it lives in a plain-text `.env` under another variable name (seen: `VMWS_USER` in `%USERPROFILE%\.env`) | user runs `windows/vmrest-credential.ps1 Import -EnvFile <path>` (accepts `VMWS_USER` or `VMWS_USERNAME`) |
 | Account worked before, now 401 | vmrest restarted under another Windows user (other profile, other `vmrest.cfg`), or `-C` was re-run without updating the stored copy | check which user runs vmrest (logon task principal); keep one account in sync |
 | `inspect-base.sh` fails on `listRegisteredVM` | unsupported command | use `api-status.sh` |
 

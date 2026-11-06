@@ -30,7 +30,7 @@ When preflight fails at vmrest:
 | `HTTP 000` and `process=False` | vmrest is not running | Ask the user, then `bash "$repo/preflight.sh" --start-vmrest` (starts the `VMware vmrest API` startup task, or runs `windows/start-vmrest.ps1 -NoWait` once) |
 | `HTTP 000` but `process=True listener8697=True` | vmrest runs; WSL cannot reach it | Check `VMWS_ENDPOINT` and mirrored networking. Do not start a second vmrest |
 | `HTTP 404` | endpoint lacks `/api` | Fix `VMWS_ENDPOINT` |
-| `vmrest account not found` | nothing stored yet | The user runs `powershell.exe -NoProfile -File <repo>\windows\vmrest-credential.ps1 Set` on Windows and types the account themselves |
+| `vmrest account not found` | nothing stored yet | First look for an existing plain-text copy (for example `%USERPROFILE%\.env`, `~/.env`, an old `vmrest.env`; check variable **names** only, such as `VMWS_USER` vs `VMWS_USERNAME`). If one exists, ask the user to run `vmrest-credential.ps1 Import -EnvFile <path>`; otherwise `vmrest-credential.ps1 Set`. The user runs either on Windows; leave the old file for the user to delete |
 | `Credential Manager not readable here` | no interop, or this Windows session cannot read the user's credentials | Report it; fall back to `lab.env` only if the user agrees |
 | authenticated `HTTP 401` | stored account does not match vmrest | The user re-runs `vmrest-credential.ps1 Set`, or re-runs `vmrest.exe -C`, stores the same values and restarts vmrest. Also check vmrest runs as the same Windows user (another user has another `vmrest.cfg`) |
 | `no vmrest.cfg` warning | API account never set up for this Windows user | The user runs `vmrest.exe -C` |
