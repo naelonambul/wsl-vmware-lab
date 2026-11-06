@@ -113,10 +113,13 @@ When handing off before restart, state what is complete, what is pending, the ch
 - Configured `.wslconfig` limits were confirmed only from inside the distribution (`nproc`, `free -h`, `swapon --show`), with memory slightly below the configured value because of kernel overhead.
 - A root-only probe does not prove first-run account setup is complete; verify the default user and sudo separately.
 - Files written from Windows for WSL scripts (such as `lab.env`) must use LF line endings; see pitfalls.
+- The update/install flow left no SSH server: external `ssh` failed until openssh-server was installed (section 3). After registering the logon tasks, SSH still failed because WSL idled out; starting the keep-alive task immediately fixed it. The firewall profiles were disabled on that host, so firewall rules were not the cause.
 
-This flow (update, resources, Ubuntu install, restart/resume, account, tools, vmrest, base, Terraform clone and Ansible) was verified on one host that already had VMware Workstation. A clean PC without VMware, pre-logon cold boot and external-machine SSH have not been tested.
+This flow (update, resources, Ubuntu install, restart/resume, account, tools, vmrest, base, Terraform clone and Ansible) was verified on one host that already had VMware Workstation. External SSH from another LAN PC was then verified in a logged-on session. A clean PC without VMware and SSH after a pre-logon cold boot have not been tested.
 
 ## 3. Configure Linux SSH and remote access
+
+Section 2 does not install an SSH server, and `preflight.sh` does not check WSL sshd. When the user will reach this WSL from another PC, do this section before moving on to tools and VMware; do not assume SSH exists because WSL, tools and vmrest work.
 
 Inside Ubuntu:
 
@@ -134,6 +137,14 @@ For mirrored mode, inspect both Windows and Hyper-V firewall rules. Create an in
 
 For NAT mode, use Windows `netsh interface portproxy` to forward the chosen Windows listening port to the current WSL IPv4 and port 22. Restrict its Windows firewall rule to the approved subnet. WSL NAT addresses can change, so implement a refresh action that discovers the current distribution address. Do not install a NAT portproxy for the mirrored path just because an older tutorial does so.
 
+Diagnose a failed external login in this order, from read-only evidence, before changing firewall rules:
+
+1. In WSL, `ss -lntp | grep ':22 '` and `ps -eo pid,etime,args | grep [s]shd`. No listener means sshd is not installed or not running. A very small `etime` that keeps resetting means WSL is idling out (see the persistence subsection).
+2. Ask the user to try once, then read `/var/log/auth.log` (or `journalctl -u ssh`). An entry with the other PC's address means the network path works and the problem is authentication. No entry while sshd was running points to the network path.
+3. Only then inspect firewalls: `Get-NetFirewallProfile -PolicyStore ActiveStore` (a disabled profile is not blocking) and `Get-NetFirewallHyperVProfile` / `Get-NetFirewallHyperVVMSetting` for the WSL creator ID (default inbound is typically Block). Add scoped allow rules if a profile that applies is enabled.
+
+Connecting from Windows to its own LAN address on port 22 is not a valid test in mirrored mode: Windows has no `:22` listener and the attempt fails even when external access works.
+
 Verify from the external controlling machine, not only from localhost:
 
 ```bash
@@ -150,7 +161,7 @@ A one-shot `systemctl start ssh` command was insufficient to keep WSL reachable 
 wsl.exe -d <Distro> -u root -- /bin/sh -c 'systemctl stop ssh.socket ssh.service; mkdir -p /run/sshd; exec /usr/sbin/sshd -D -e'
 ```
 
-This takes ownership of SSH startup in that distribution; do not run a competing daemon on port 22. Configure no execution time limit, ignore duplicate instances, and record the exact task name/action. Elevated privileges are needed for firewall/portproxy setup, not necessarily for the long-running user task. In NAT mode maintain a separate forwarding-refresh task. Test logon persistence with a recovery console available. A logon-triggered task is not evidence of pre-logon unattended boot availability.
+This takes ownership of SSH startup in that distribution; do not run a competing daemon on port 22. A logon-triggered task does not run when it is registered: start it once right away (`Start-ScheduledTask -TaskName 'WSL2 SSH Service Start'` for this repository's `wsl2-ssh-forward.ps1 InstallTask`). Otherwise WSL shuts down when idle a short time later, sshd disappears with it, and external SSH fails until the next logon. Confirm the `sshd -D -e` process keeps running (its `etime` grows across checks) before asking the user to test. Configure no execution time limit, ignore duplicate instances, and record the exact task name/action. Elevated privileges are needed for firewall/portproxy setup, not necessarily for the long-running user task. In NAT mode maintain a separate forwarding-refresh task. Test logon persistence with a recovery console available. A logon-triggered task is not evidence of pre-logon unattended boot availability.
 
 ## 4. Install VMware Workstation Pro using computer use
 

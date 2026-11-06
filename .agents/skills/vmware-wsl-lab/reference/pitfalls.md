@@ -52,7 +52,10 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 
 | Symptom | Cause | Fix |
 |---|---|---|
+| `ssh <user>@<windows-lan-ip>` refused or times out on a newly set up PC; WSL `ss -lnt` shows no `:22` | openssh-server never installed (WSL install/update and tools steps do not include it; preflight does not check it) | install-new-pc section 3: install `openssh-server`, enable it, then set up firewall and tasks |
 | SSH drops, "The system will power off now!" | WSL exits when no foreground process | scheduled task `WSL2 SSH Service Start` running `sshd -D -e` |
+| External SSH works briefly after setup, then fails; sshd `etime` keeps resetting | WSL idles out; `WSL2 SSH Service Start` was registered but triggers only at the next logon | `Start-ScheduledTask -TaskName 'WSL2 SSH Service Start'` once now; check `sshd -D -e` stays up |
+| `Test-NetConnection <own LAN IP> -Port 22` from Windows fails in mirrored mode | Windows itself has no `:22` listener; a same-host test is not representative | test from another LAN PC and read `/var/log/auth.log` for its address |
 | portproxy rule points at itself in mirrored mode | NAT-era rule left over | remove it; mirrored mode needs no portproxy |
 | Port 22 conflict | Windows OpenSSH Server owns 22 | choose deliberately; do not stop unrelated services silently |
 | `.wslconfig` ignored | saved as `.wslconfig.txt` | rename |
