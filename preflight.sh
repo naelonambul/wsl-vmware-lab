@@ -42,7 +42,7 @@ profile="$(lab_windows_profile)"
 if [[ -n "$profile" ]]; then
   ok "Windows user profile: $profile"
 else
-  warn "Windows interop unavailable; set LAB_CLONE_VMX_WIN in lab.env and check vmrest on Windows yourself"
+  warn "Windows interop unavailable; set LAB_VM_ROOT_WIN in lab.env and check vmrest on Windows yourself"
 fi
 if [[ -n "$profile" ]]; then
   wslconfig="$(wslpath -u "$profile")/.wslconfig"
@@ -83,9 +83,15 @@ else
   warn "vmrest account: not available"
   sed 's/^/       /' <<<"$cred_msg"
 fi
-ok "guest user: image default, reported by the guest via guestinfo  base: $LAB_BASE_NAME  clone: $LAB_CLONE_NAME"
+ok "guest user: image default, reported by the guest via guestinfo  base: $LAB_BASE_NAME"
+if [[ -f "$LAB_VMS_FILE" ]]; then
+  ok "VM list: $LAB_VMS_FILE"
+else
+  ok "VM list: single VM $LAB_CLONE_NAME (${LAB_CLONE_CPUS} vCPU, ${LAB_CLONE_MEMORY_MB} MB); for several VMs copy vms.tfvars.example to vms.tfvars"
+fi
 [[ -n "${LAB_GUEST_USER:-}" ]] && warn "LAB_GUEST_USER is set but no longer used; the guest uses the image's default user"
-if [[ -n "$LAB_CLONE_VMX_WIN" ]]; then ok "clone VMX: $LAB_CLONE_VMX_WIN"; else warn "clone VMX path unknown (LAB_CLONE_VMX_WIN)"; fi
+if [[ -n "$LAB_VM_ROOT_WIN" ]]; then ok "VM folder: $LAB_VM_ROOT_WIN (one <name> folder per VM)"; else warn "VM folder unknown (LAB_VM_ROOT_WIN)"; fi
+[[ -n "${LAB_CLONE_VMX_WIN:-}" ]] && warn "LAB_CLONE_VMX_WIN is deprecated; set LAB_VM_ROOT_WIN instead (derived from it for now)"
 ok "private dir: $LAB_PRIVATE_DIR$([[ -d "$LAB_PRIVATE_DIR" ]] || echo ' (not created yet)')"
 
 echo '== Tools'

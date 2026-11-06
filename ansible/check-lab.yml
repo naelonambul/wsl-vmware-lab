@@ -1,0 +1,28 @@
+---
+# Smoke test for every lab VM (group "lab"): SSH, cloud-init done, sudo, OS.
+#   bash configure-guest.sh ansible/check-lab.yml
+# Use it before running your own playbooks against a new VM set.
+- name: Check that every lab VM is reachable and ready
+  hosts: lab
+  gather_facts: false
+  tasks:
+    - name: Wait for guest SSH
+      ansible.builtin.wait_for_connection:
+        timeout: 180
+
+    - name: Wait for cloud-init to complete
+      ansible.builtin.command: cloud-init status --wait
+      changed_when: false
+
+    - name: Gather OS facts
+      ansible.builtin.setup:
+        gather_subset: [min]
+
+    - name: Check sudo works without a password
+      ansible.builtin.command: "true"
+      become: true
+      changed_when: false
+
+    - name: Report host
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }}: {{ ansible_distribution }} {{ ansible_distribution_version }}, user {{ ansible_user_id }}, groups {{ group_names | join(',') }}"

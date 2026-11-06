@@ -1,0 +1,24 @@
+# Copy to vms.tfvars (gitignored) to build a system of several VMs:
+#   cp vms.tfvars.example vms.tfvars
+# terraform-vm.sh passes it with -var-file; without it, one VM comes from lab.env.
+#
+# Key = VM name (lowercase letters, digits, '-'): it becomes the Windows folder
+# <LAB_VM_ROOT_WIN>\<name>\<name>.vmx, the guest hostname and the Ansible host.
+# groups = Ansible groups for your playbooks. Every VM is also in group "lab".
+# Omitted values default to 2 vCPU, 2048 MB and groups ["demo"].
+#
+# Adding an entry and running `terraform-vm.sh on` creates only the new VM
+# (running VMs stay on). Removing an entry destroys that VM and cleans its files.
+
+vms = {
+  "web1" = {
+    processors = 2
+    memory_mb  = 2048
+    groups     = ["demo", "web"] # "demo" = the nginx example playbook
+  }
+  "db1" = {
+    processors = 2
+    memory_mb  = 2048
+    groups     = ["db"]
+  }
+}

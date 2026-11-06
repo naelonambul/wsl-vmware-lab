@@ -1,9 +1,11 @@
 ---
 name: vmware-wsl-lab
-description: Sets up and operates a Windows + WSL2 + VMware Workstation lab where Linux Terraform (elsudano/vmworkstation provider via the vmrest API) clones Ubuntu VMs and Ansible configures them over SSH, using the scripts in the wsl-vmware-lab repository. Use when installing WSL SSH access, VMware Workstation, vmrest, Terraform or Ansible on a Windows PC; when creating, powering, configuring or destroying lab VMs; when editing lab.env; or when debugging vmrest port 8697, WSL mirrored networking, portproxy, cloud-init, DHCP-lease inventory or stale known_hosts errors.
+description: Sets up and operates a Windows + WSL2 + VMware Workstation lab where Linux Terraform (elsudano/vmworkstation provider via the vmrest API) clones Ubuntu VMs and Ansible configures them over SSH, using the scripts in the wsl-vmware-lab repository, to build, test or deploy systems of one or more VMs (vms.tfvars + the user's own playbooks; the Ubuntu + nginx VM is only the example). Use when installing WSL SSH access, VMware Workstation, vmrest, Terraform or Ansible on a Windows PC; when creating, powering, configuring or destroying lab VMs; when editing lab.env; or when debugging vmrest port 8697, WSL mirrored networking, portproxy, cloud-init, DHCP-lease inventory or stale known_hosts errors.
 ---
 
 # VMware Workstation + WSL lab
+
+**Purpose.** This lab is a base for building, testing and deploying systems with Terraform + Ansible on one Windows PC: Terraform creates the VMs listed in `vms.tfvars` (one or many), Ansible runs the user's own playbooks against them. The single Ubuntu VM with nginx (`ubuntu24-demo`, `ansible/configure-guest.yml`) is only the example and smoke test. Guests are Ubuntu cloud images; what runs on them is up to the user's playbooks.
 
 Host name, Windows user, WSL user, distro and repository location differ on every machine. Discover them; never reuse values from examples or earlier sessions.
 
@@ -70,7 +72,8 @@ Terraform owns VM existence and power. Ansible owns guest software. They do not 
 
 All bash scripts source `lib/config.sh`, which reads optional settings from `lab.env` (gitignored; template `lab.env.example`) or the file named in `LAB_ENV_FILE`, and the vmrest account from the secrets file (`%USERPROFILE%\.env`).
 
-- Windows-side paths default from the logged-in Windows user profile (`%USERPROFILE%\Documents\Virtual Machines\<clone>\...`).
+- **VM set.** Without `vms.tfvars`, one VM `LAB_CLONE_NAME` (group `demo`). With `vms.tfvars` in the repository root (template `vms.tfvars.example`, gitignored; `LAB_VMS_FILE` to move it): `vms = { "<name>" = { processors, memory_mb, groups } }`. Each VM is `<LAB_VM_ROOT_WIN>\<name>\<name>.vmx` (default root `%USERPROFILE%\Documents\Virtual Machines`), its hostname and its Ansible host; `groups` become Ansible groups and every VM is also in `lab`. `terraform-vm.sh on` creates only new entries (running VMs stay on) and destroys plus cleans entries removed from the list.
+- **Playbooks.** `configure-guest.sh [PLAYBOOK] [ansible-playbook options]` runs any playbook, also from the user's own project folder (`LAB_PLAYBOOK` sets the default). `ansible/check-lab.yml` checks every VM (SSH, cloud-init, sudo, OS). Keep the user's playbooks and `vms.tfvars` out of this repository's git history unless they ask.
 - Guest images: Ubuntu cloud images only (default 24.04 noble). Guest-user detection needs `open-vm-tools` inside the guest, which Ubuntu cloud images ship (checked: 22.04, 24.04 manifests) and Debian 12 cloud images do not. For another distribution, stop and ask the user; do not swap images silently.
 - Guest VM user (inside the VM) is not configured: cloud-init keeps the image's default user (`ubuntu` on Ubuntu images) and the guest reports its name through VMware guestinfo on every boot (`lib/cloud-config.sh`, read by `guest-inventory.py`). The WSL user is separate: the account the user SSHes into this PC as (the `User` of their SSH config entry); scripts run as it and never set it.
 - Private files live in `~/.config/wsl-vmware-lab/` (`LAB_PRIVATE_DIR`).
@@ -83,7 +86,7 @@ All bash scripts source `lib/config.sh`, which reads optional settings from `lab
 2. **Secrets.** Never print, copy or commit `lab.env`, vmrest credentials, SSH private keys, Terraform state or generated `inventory.json`. Never type the vmrest password on the user's behalf: the user runs `vmrest.exe -C` and writes the secrets file. Do not enable `set -x` around config loading. New variables get a fake value in `lab.env.example`.
 3. **Preserve.** Never delete or re-prepare the base VM, reset WSL distributions, restore VMware network defaults, or overwrite an existing Terraform state unless the user explicitly asks.
 4. **Check before lifecycle commands.** `preflight.sh` must exit 0 in this session before any Terraform command (section 0).
-5. **One runner per state.** One checkout = one state, one clone, one inventory. Serialize work, or use a fully isolated checkout with its own `lab.env`.
+5. **One runner per state.** One checkout = one state, one VM set, one inventory. Serialize work, or use a fully isolated checkout with its own `lab.env`.
 6. **Destroy via the wrapper.** Use `bash terraform-vm.sh destroy` (runs cleanup), never bare `terraform destroy`. `0 destroyed` with vmrest down is not success.
 7. **Never disable host key checking globally.** Remove only the verified clone's stale entry.
 8. **Never disable Hyper-V / VBS / Secure Boot** to make VMware start; WSL2 needs them.
@@ -98,12 +101,17 @@ cd "$repo"
 bash preflight.sh                          # must exit 0 first
 bash api-status.sh                         # vmrest inventory (JSON; contains VM paths)
 bash terraform-vm.sh status                # state (contains details; report only non-secret findings)
-bash terraform-vm.sh on                    # OFF create -> bootstrap -> ON
-ANSIBLE_TIMEOUT=60 bash configure-guest.sh # nginx + HTTP assertions
+bash terraform-vm.sh on                    # new VMs: OFF create -> bootstrap -> ON; then all ON
+bash check-power.sh                        # power state of every VM (or: check-power.sh <name>)
+ANSIBLE_TIMEOUT=60 bash configure-guest.sh ansible/check-lab.yml   # every VM ready?
+ANSIBLE_TIMEOUT=60 bash configure-guest.sh # example: nginx + HTTP assertions on group demo
 ANSIBLE_TIMEOUT=60 bash configure-guest.sh # idempotence: expect changed=0 failed=0
+ANSIBLE_TIMEOUT=60 bash configure-guest.sh ~/my-system/site.yml    # the user's own playbook
 bash terraform-vm.sh off                   # Terraform apply, not a pure power command
-bash terraform-vm.sh destroy               # interactive; cleanup-aware
+bash terraform-vm.sh destroy               # interactive; cleanup-aware, every VM
 ```
+
+Several VMs: `cp vms.tfvars.example vms.tfvars`, edit, then `terraform-vm.sh on`. Changing the list later: edit and run `on` again.
 
 `ANSIBLE_TIMEOUT=60` avoids the known 12-second privilege-escalation prompt timeout.
 
@@ -111,7 +119,7 @@ bash terraform-vm.sh destroy               # interactive; cleanup-aware
 
 ```
 - [ ] preflight.sh exit 0 (vmrest 401 unauthenticated, 200 authenticated)
-- [ ] clone appears in API inventory and is poweredOn
+- [ ] every VM in the list appears in API inventory and is poweredOn (`check-power.sh`)
 - [ ] Ansible run 1: HTTP 200 + expected content, failed=0
 - [ ] Ansible run 2: changed=0 unreachable=0 failed=0
 - [ ] power-off confirmed by API, not only Terraform exit code

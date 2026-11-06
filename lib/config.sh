@@ -34,16 +34,26 @@ export LAB_NAT_VNET="${LAB_NAT_VNET:-VMnet8}"
 export LAB_MGMT_VNET="${LAB_MGMT_VNET:-VMnet1}"
 export LAB_BASE_NAME="${LAB_BASE_NAME:-ubuntu24-base}"
 export LAB_BASE_DIR="${LAB_BASE_DIR:-$LAB_PROJECT_DIR/base}"
+# Default VM set when no vms.tfvars exists: one VM with these values.
 export LAB_CLONE_NAME="${LAB_CLONE_NAME:-ubuntu24-demo}"
 export LAB_CLONE_CPUS="${LAB_CLONE_CPUS:-2}"
 export LAB_CLONE_MEMORY_MB="${LAB_CLONE_MEMORY_MB:-2048}"
+# Several VMs (a whole system): Terraform var file with `vms = { ... }`.
+LAB_VMS_FILE="${LAB_VMS_FILE:-$LAB_PROJECT_DIR/vms.tfvars}"
+[[ "$LAB_VMS_FILE" == /* ]] || LAB_VMS_FILE="$LAB_PROJECT_DIR/$LAB_VMS_FILE"
+export LAB_VMS_FILE
 
 LAB_WINDOWS_PROFILE="${LAB_WINDOWS_PROFILE:-$(lab_windows_profile)}"
 export LAB_WINDOWS_PROFILE
-if [[ -z "${LAB_CLONE_VMX_WIN:-}" && -n "$LAB_WINDOWS_PROFILE" ]]; then
-  LAB_CLONE_VMX_WIN="${LAB_WINDOWS_PROFILE}\\Documents\\Virtual Machines\\${LAB_CLONE_NAME}\\${LAB_CLONE_NAME}.vmx"
+# Windows folder holding one folder per clone (<root>\<name>\<name>.vmx).
+if [[ -z "${LAB_VM_ROOT_WIN:-}" && -n "${LAB_CLONE_VMX_WIN:-}" ]]; then
+  # Older lab.env: derive the root from the single clone's VMX path.
+  LAB_VM_ROOT_WIN="${LAB_CLONE_VMX_WIN%\\*}"; LAB_VM_ROOT_WIN="${LAB_VM_ROOT_WIN%\\*}"
 fi
-export LAB_CLONE_VMX_WIN="${LAB_CLONE_VMX_WIN:-}"
+if [[ -z "${LAB_VM_ROOT_WIN:-}" && -n "$LAB_WINDOWS_PROFILE" ]]; then
+  LAB_VM_ROOT_WIN="${LAB_WINDOWS_PROFILE}\\Documents\\Virtual Machines"
+fi
+export LAB_VM_ROOT_WIN="${LAB_VM_ROOT_WIN:-}"
 
 # Secrets file holding the vmrest account (the one created with vmrest.exe -C).
 # Default: .env in the Windows user folder, protected by that folder's NTFS
@@ -121,13 +131,16 @@ lab_curl_auth() {
 
 lab_terraform_env() {
   lab_require_credentials
-  : "${LAB_CLONE_VMX_WIN:?Could not detect the Windows profile; set LAB_CLONE_VMX_WIN in lab.env}"
+  : "${LAB_VM_ROOT_WIN:?Could not detect the Windows profile; set LAB_VM_ROOT_WIN in lab.env}"
   export TF_VAR_vmrest_endpoint="$VMWS_ENDPOINT"
   export TF_VAR_vmrest_username="$VMWS_USERNAME"
   export TF_VAR_vmrest_password="$VMWS_PASSWORD"
   export TF_VAR_base_name="$LAB_BASE_NAME"
-  export TF_VAR_clone_name="$LAB_CLONE_NAME"
-  export TF_VAR_clone_vmx_path="$LAB_CLONE_VMX_WIN"
-  export TF_VAR_clone_processors="$LAB_CLONE_CPUS"
-  export TF_VAR_clone_memory_mb="$LAB_CLONE_MEMORY_MB"
+  export TF_VAR_vm_root_win="$LAB_VM_ROOT_WIN"
+  # Default single VM; a vms.tfvars passed with -var-file overrides it.
+  TF_VAR_vms=$(printf '{"%s":{"processors":%d,"memory_mb":%d,"groups":["demo"]}}' \
+    "$LAB_CLONE_NAME" "$LAB_CLONE_CPUS" "$LAB_CLONE_MEMORY_MB")
+  export TF_VAR_vms
+  LAB_TF_VAR_ARGS=()
+  if [[ -f "$LAB_VMS_FILE" ]]; then LAB_TF_VAR_ARGS=(-var-file="$LAB_VMS_FILE"); fi
 }

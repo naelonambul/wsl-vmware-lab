@@ -31,24 +31,31 @@ variable "base_name" {
   type        = string
 }
 
-variable "clone_name" {
-  description = "Display name of the Terraform-managed clone"
+variable "vm_root_win" {
+  description = "Windows folder that holds one folder per clone, e.g. C:\\Users\\<you>\\Documents\\Virtual Machines"
   type        = string
 }
 
-variable "clone_vmx_path" {
-  description = "Windows path of the clone VMX, e.g. C:\\Users\\<you>\\Documents\\Virtual Machines\\<clone>\\<clone>.vmx"
-  type        = string
-}
+# Default: one VM from LAB_CLONE_NAME/LAB_CLONE_CPUS/LAB_CLONE_MEMORY_MB (lib/config.sh).
+# For a system of several VMs, write vms.tfvars in the repository root
+# (template: vms.tfvars.example); terraform-vm.sh passes it with -var-file.
+variable "vms" {
+  description = "Lab VMs to create: name => { processors, memory_mb, groups (Ansible groups) }"
+  type = map(object({
+    processors = optional(number, 2)
+    memory_mb  = optional(number, 2048)
+    groups     = optional(list(string), ["demo"])
+  }))
 
-variable "clone_processors" {
-  description = "vCPU count of the clone"
-  type        = number
-  default     = 2
-}
+  validation {
+    condition     = length(var.vms) > 0 && alltrue([for name in keys(var.vms) : can(regex("^[a-z0-9][a-z0-9-]{0,62}$", name))])
+    error_message = "vms needs at least one entry; names must be lowercase letters, digits and '-' (they become folder and host names)."
+  }
 
-variable "clone_memory_mb" {
-  description = "Memory of the clone in MB"
-  type        = number
-  default     = 2048
+  validation {
+    condition = alltrue(flatten([for spec in values(var.vms) : [
+      for g in spec.groups : can(regex("^[a-z_][a-z0-9_]*$", g))
+    ]]))
+    error_message = "Ansible group names must be lowercase letters, digits and '_' and must not start with a digit."
+  }
 }

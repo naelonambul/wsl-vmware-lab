@@ -28,8 +28,9 @@ The shell is Bash inside WSL2, not PowerShell. Run Windows commands through `pow
 | Component | Default | Override |
 | --- | --- | --- |
 | Repository | wherever it was cloned; preflight prints it | n/a |
-| Windows user profile | detected through Windows interop | `LAB_CLONE_VMX_WIN` |
-| Clone VMX | `%USERPROFILE%\Documents\Virtual Machines\<clone>\<clone>.vmx` | `LAB_CLONE_VMX_WIN` |
+| Windows user profile | detected through Windows interop | `LAB_VM_ROOT_WIN` |
+| VM list | `vms.tfvars` in the repository if present, else one VM `LAB_CLONE_NAME` | `LAB_VMS_FILE` |
+| Clone VMX (each VM) | `%USERPROFILE%\Documents\Virtual Machines\<name>\<name>.vmx` | `LAB_VM_ROOT_WIN` |
 | Base VMX | `base/ubuntu-base.vmx` in the repository | `LAB_BASE_DIR` |
 | Workstation tools | `/mnt/c/Program Files/VMware/VMware Workstation/` | `VMWARE_DIR` |
 | Private directory | `~/.config/wsl-vmware-lab/` | `LAB_PRIVATE_DIR` |
@@ -74,26 +75,29 @@ bash terraform-vm.sh destroy    # interactive; runs cleanup-guest.py afterwards
 
 | File | Behavior |
 | --- | --- |
-| `terraform/main.tf` | Pins `elsudano/vmworkstation` 2.0.1; data source for base `var.base_name`; resource `vmworkstation_virtual_machine.ubuntu_demo`; bootstrap via `terraform_data` |
-| `terraform/variables.tf` | endpoint, credentials (sensitive), names, VMX path, CPU/memory, validated `on`/`off` |
-| `terraform-vm.sh` | loads config, API precheck, OFF→bootstrap→ON, cleanup-aware destroy |
-| `bootstrap-guest.sh` | refuses a running clone; per-VM cloud-init seed; attaches ISO and management NIC |
-| `guest-inventory.py` | state VMX path + management MAC → DHCP lease → direct SSH or proxy → private inventory |
-| `configure-guest.sh` | retries inventory 30 times, then runs the playbook |
-| `ansible/configure-guest.yml` | wait SSH/cloud-init; nginx; page; service; HTTP 200 + content assertion |
+| `terraform/main.tf` | Pins `elsudano/vmworkstation` 2.0.1; data source for base `var.base_name`; `vmworkstation_virtual_machine.vm` and `terraform_data.guest_bootstrap` with `for_each = var.vms`; output `vms` (id, path, groups per name). Clone `description` must equal the base's (provider limitation) |
+| `terraform/variables.tf` | endpoint, credentials (sensitive), base name, `vm_root_win`, `vms` map (validated names/groups), validated `on`/`off` |
+| `vms.tfvars.example` | template for a multi-VM system (`web1` in `demo`+`web`, `db1` in `db`) |
+| `terraform-vm.sh` | loads config, API precheck, passes `vms.tfvars`; `on` creates new VMs off (targeted) → bootstrap → all ON; cleans VMs removed from the list; cleanup-aware destroy |
+| `bootstrap-guest.sh` | refuses a running clone; per-VM cloud-init seed (hostname = VM name); attaches ISO and management NIC |
+| `guest-inventory.py` | per VM: VMX management MAC → DHCP lease, guestinfo user, direct SSH or proxy → private inventory with groups + `lab` |
+| `configure-guest.sh` | `[PLAYBOOK] [ansible options]`; retries inventory 30 times (all VMs), then runs the playbook |
+| `ansible/configure-guest.yml` | example: wait SSH/cloud-init; nginx; page; service; HTTP 200 + content assertion (group `demo`) |
+| `ansible/check-lab.yml` | smoke test for group `lab`: SSH, cloud-init, sudo, OS facts |
+| `check-power.sh` | power state of every VM, or of one name/id |
 | `register-base.sh`, `register-vm.py` | idempotent `POST /api/vms/registration` |
 | `prepare-cloud-init.sh`, `create-base-template.sh`, `prepare-base.sh` | one-time base preparation |
 | `setup-wsl-tools.sh` | installs Terraform (HashiCorp apt), Ansible, image tools |
 
-The resource address `vmworkstation_virtual_machine.ubuntu_demo` is used by helper scripts; keep it if you rename the clone.
+Helper scripts read the Terraform output `vms`, not resource addresses. A state made by the older single-clone version (`vmworkstation_virtual_machine.ubuntu_demo`) is not migrated: destroy it with that version before upgrading, or the new version plans a second clone at the same path.
 
 ## Isolation for multiple agents
 
-One state, one clone and one inventory per checkout. Serialize work, or for an authorized experiment use a separate checkout with its own `lab.env` (`LAB_CLONE_NAME`, `LAB_CLONE_VMX_WIN`, `LAB_PRIVATE_DIR`, `LAB_INVENTORY`) and its own Terraform state. Never copy an existing state into a new experiment.
+One state, one VM set and one inventory per checkout. Serialize work, or for an authorized experiment use a separate checkout with its own `lab.env` (`LAB_VMS_FILE` or `LAB_CLONE_NAME`, `LAB_VM_ROOT_WIN`, `LAB_PRIVATE_DIR`, `LAB_INVENTORY`) and its own Terraform state. VM names must not collide with another checkout's VMs in the same `LAB_VM_ROOT_WIN`. Never copy an existing state into a new experiment.
 
 ## Optional: multi-VM application deployment (example topology)
 
-A lab can grow from the single demo clone into an application environment. Example layout (fill in your own addresses on `<LAN_SUBNET>`):
+A lab can grow from the single demo clone into an application environment: list the VMs in `vms.tfvars` with groups such as `web`, `api`, `db`, and target those groups from the user's own playbooks (`configure-guest.sh <playbook>`). The NAT/host-only clones made here get DHCP addresses; the bridged layout below came from a hand-built deployment. Example layout (fill in your own addresses on `<LAN_SUBNET>`):
 
 | Role | Address | Notes |
 | --- | --- | --- |

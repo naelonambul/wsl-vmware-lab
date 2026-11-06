@@ -28,7 +28,7 @@ pubkey=$(cat "$LAB_SSH_KEY.pub")
   echo 'runcmd:'
   lab_cloud_config_runcmd
 } > "$seed_dir/user-data"
-printf 'instance-id: %s\nlocal-hostname: %s\n' "$VM_ID" "$LAB_CLONE_NAME" > "$seed_dir/meta-data"
+printf 'instance-id: %s\nlocal-hostname: %s\n' "$VM_ID" "${VM_NAME:-$LAB_CLONE_NAME}" > "$seed_dir/meta-data"
 cat > "$seed_dir/network-config" <<'CFG'
 version: 2
 ethernets:

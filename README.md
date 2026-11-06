@@ -1,6 +1,6 @@
 # wsl-vmware-lab
 
-Windows PC에서 **WSL2 Ubuntu의 Terraform**으로 **VMware Workstation** VM을 만들고, **Ansible**로 그 VM 안의 Ubuntu를 설정하는 실습 스크립트 모음입니다.
+Windows PC 한 대에서 **Terraform + Ansible로 시스템을 구성하고 시험하고 배포하는** 실습 기반입니다. WSL2 Ubuntu의 Terraform이 **VMware Workstation**에 VM을 1대 또는 여러 대 만들고, Ansible이 그 VM들에 **여러분의 플레이북**을 실행합니다. 들어 있는 Ubuntu VM 1대 + nginx 설치는 **예제이자 동작 확인용**입니다.
 
 게스트 이미지는 **Ubuntu 클라우드 이미지(기본 24.04 noble)만 지원**합니다. 게스트가 VMware guestinfo로 자기 사용자 이름을 알려 주는데, 이때 이미지에 들어 있는 `open-vm-tools`가 필요하기 때문입니다(Debian 12 클라우드 이미지 등에는 없습니다).
 
@@ -54,7 +54,8 @@ bash wsl-vmware-lab/preflight.sh
 | `*.sh`, `*.py` (최상위) | WSL에서 실행하는 본 스크립트 (2·3편) |
 | `tcp-relay.ps1` | `guest-proxy.sh`가 호출하는 Windows SSH 중계 (3편) |
 | `terraform/` | `main.tf`, `variables.tf` (provider `elsudano/vmworkstation` 2.0.1 고정) |
-| `ansible/` | `configure-guest.yml` |
+| `ansible/` | `configure-guest.yml`(nginx 예제), `check-lab.yml`(모든 VM 동작 확인) |
+| `vms.tfvars.example` | 여러 VM 시스템용 VM 목록 예시. `vms.tfvars`로 복사해서 사용 |
 | `windows/` | Windows에서 실행: SSH 포워딩(1편), vmrest 자동 실행(2편) |
 | `extras/` | 진단·호환용 스크립트와 예전 NAT 방식 브리지. 실습에는 필요 없음 |
 | `.claude/skills/vmware-wsl-lab/` | AI 에이전트(Claude Code 등)용 설치·운영 스킬 |
@@ -86,13 +87,15 @@ cp lab.env.example lab.env
 
 | 항목 | 기본값 | 변수 |
 |---|---|---|
-| Windows 쪽 VM 경로 | 로그인한 Windows 사용자 프로필 기준 `%USERPROFILE%\Documents\Virtual Machines\<클론>\<클론>.vmx` | `LAB_CLONE_VMX_WIN` |
+| VM 목록 | `vms.tfvars`가 있으면 그 목록, 없으면 아래 이름으로 1대 | `LAB_VMS_FILE` |
+| Windows 쪽 VM 폴더 | 로그인한 Windows 사용자 프로필 기준 `%USERPROFILE%\Documents\Virtual Machines` (VM마다 `<이름>\<이름>.vmx`) | `LAB_VM_ROOT_WIN` |
+| 기본 플레이북 | `ansible/configure-guest.yml` (nginx 예제) | `LAB_PLAYBOOK` |
 | 게스트 VM 사용자 (VM 안) | 설정하지 않음. 이미지 기본 사용자(Ubuntu 이미지는 `ubuntu`)를 쓰고, 게스트가 부팅할 때마다 VMware guestinfo로 이름을 알려 줌 | 없음 |
 | WSL 사용자 | 설정하지 않음. 이 PC에 SSH로 접속하는 계정(SSH config의 `User`)으로 스크립트를 실행하면 그 계정을 씀 | 없음 |
 | 개인 파일(SSH 키, inventory, known_hosts) | `~/.config/wsl-vmware-lab/` | `LAB_PRIVATE_DIR` |
 | VMware 설치 경로 | `/mnt/c/Program Files/VMware/VMware Workstation` | `VMWARE_DIR` |
-| 베이스 / 클론 이름 | `ubuntu24-base` / `ubuntu24-demo` | `LAB_BASE_NAME` / `LAB_CLONE_NAME` |
-| 클론 CPU / 메모리 | 2 / 2048 MB | `LAB_CLONE_CPUS` / `LAB_CLONE_MEMORY_MB` |
+| 베이스 / 클론 이름 (`vms.tfvars` 없을 때) | `ubuntu24-base` / `ubuntu24-demo` | `LAB_BASE_NAME` / `LAB_CLONE_NAME` |
+| 클론 CPU / 메모리 (`vms.tfvars` 없을 때) | 2 / 2048 MB | `LAB_CLONE_CPUS` / `LAB_CLONE_MEMORY_MB` |
 | 네트워크 | NAT `VMnet8`, 관리용 host-only `VMnet1` | `LAB_NAT_VNET` / `LAB_MGMT_VNET` |
 
 Windows 스크립트는 설정 파일 대신 매개변수를 받습니다.
@@ -126,6 +129,23 @@ ANSIBLE_TIMEOUT=60 bash configure-guest.sh   # nginx 설치, HTTP 확인 (두 �
 bash terraform-vm.sh off
 bash terraform-vm.sh destroy                 # 삭제 + seed ISO/빈 폴더 정리
 ```
+
+## 내 시스템 올리기: 여러 VM + 내 플레이북
+
+예제 대신 자기 시스템을 구성할 때는 VM 목록과 플레이북만 바꿉니다. 스크립트는 고치지 않습니다.
+
+```bash
+cp vms.tfvars.example vms.tfvars             # VM 이름, CPU, 메모리, Ansible 그룹 (git에 올라가지 않음)
+bash terraform-vm.sh on                      # 목록대로 생성. 나중에 항목을 추가하면 새 VM만 만들고, 켜져 있는 VM은 그대로
+ANSIBLE_TIMEOUT=60 bash configure-guest.sh ansible/check-lab.yml   # 모든 VM 접속·cloud-init·sudo 확인
+ANSIBLE_TIMEOUT=60 bash configure-guest.sh ~/my-system/site.yml    # 내 플레이북 (다른 폴더에 둬도 됨)
+bash check-power.sh                          # VM별 전원 상태
+```
+
+- `vms.tfvars`의 키가 VM 이름입니다. Windows 폴더 이름, 게스트 hostname, Ansible 호스트 이름이 모두 이 이름이 됩니다.
+- `groups`에 적은 그룹이 Ansible 그룹이 되고, 모든 VM은 `lab` 그룹에도 들어갑니다. 플레이북에서 `hosts: web`, `hosts: db`처럼 씁니다.
+- 목록에서 항목을 지우고 `on`을 실행하면 그 VM이 삭제되고, seed ISO, known_hosts 같은 관련 파일도 정리됩니다.
+- `configure-guest.sh` 뒤에 붙인 옵션은 그대로 `ansible-playbook`에 넘어갑니다(예: `--limit web1`, `-e key=value`).
 
 자세한 설명과 함정은 블로그 글과 [`.claude/skills/vmware-wsl-lab/reference/pitfalls.md`](.claude/skills/vmware-wsl-lab/reference/pitfalls.md)를 참고하세요.
 
