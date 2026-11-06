@@ -33,12 +33,19 @@ try:
 except OSError:
     command = 'bash ' + shlex.quote(str(project / 'guest-proxy.sh')) + ' %h %p'
     proxy = ' -o ' + shlex.quote('ProxyCommand=' + command)
+# The guest user is the image's default user; the guest reports it through
+# VMware guestinfo on every boot (lib/cloud-config.sh).
+vmrun = str(Path(os.environ.get('VMWARE_DIR', '/mnt/c/Program Files/VMware/VMware Workstation')) / 'vmrun.exe')
+guest_user = subprocess.run([vmrun, '-T', 'ws', 'readVariable', vm['path'], 'guestVar',
+                             'wsl-vmware-lab.guest_user'], capture_output=True, text=True).stdout.strip()
+if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', guest_user):
+    raise SystemExit('Guest has not reported its default user through guestinfo yet; retry after boot')
 private = Path(os.environ.get('LAB_PRIVATE_DIR', str(Path.home() / '.config/wsl-vmware-lab')))
 key = Path(os.environ.get('LAB_SSH_KEY', str(private / 'lab_ed25519')))
 if not key.is_file():
     raise SystemExit('Missing lab SSH key: ' + str(key) + ' (run prepare-cloud-init.sh)')
 inventory = {'all': {'children': {'demo': {'hosts': {'ubuntu_demo': {
-    'ansible_host': address, 'ansible_user': os.getenv('LAB_GUEST_USER', 'ubuntu'),
+    'ansible_host': address, 'ansible_user': guest_user,
     'ansible_ssh_private_key_file': str(key),
     'ansible_python_interpreter': '/usr/bin/python3',
     'ansible_ssh_common_args': '-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=' +
@@ -47,5 +54,5 @@ inventory = {'all': {'children': {'demo': {'hosts': {'ubuntu_demo': {
 target = Path(os.environ.get('LAB_INVENTORY', str(private / 'inventory.json')))
 target.write_text(json.dumps(inventory, indent=2) + '\n')
 target.chmod(0o600)
-print('[OK] Guest IP: ' + address)
+print('[OK] Guest IP: ' + address + '  user (image default, from guestinfo): ' + guest_user)
 print('[OK] Inventory: ' + str(target))

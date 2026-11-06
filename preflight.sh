@@ -83,7 +83,8 @@ else
   warn "vmrest account: not available"
   sed 's/^/       /' <<<"$cred_msg"
 fi
-ok "guest user: $LAB_GUEST_USER  base: $LAB_BASE_NAME  clone: $LAB_CLONE_NAME"
+ok "guest user: image default, reported by the guest via guestinfo  base: $LAB_BASE_NAME  clone: $LAB_CLONE_NAME"
+[[ -n "${LAB_GUEST_USER:-}" ]] && warn "LAB_GUEST_USER is set but no longer used; the guest uses the image's default user"
 if [[ -n "$LAB_CLONE_VMX_WIN" ]]; then ok "clone VMX: $LAB_CLONE_VMX_WIN"; else warn "clone VMX path unknown (LAB_CLONE_VMX_WIN)"; fi
 ok "private dir: $LAB_PRIVATE_DIR$([[ -d "$LAB_PRIVATE_DIR" ]] || echo ' (not created yet)')"
 

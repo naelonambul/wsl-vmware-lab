@@ -33,7 +33,7 @@ The shell is Bash inside WSL2, not PowerShell. Run Windows commands through `pow
 | Base VMX | `base/ubuntu-base.vmx` in the repository | `LAB_BASE_DIR` |
 | Workstation tools | `/mnt/c/Program Files/VMware/VMware Workstation/` | `VMWARE_DIR` |
 | Private directory | `~/.config/wsl-vmware-lab/` | `LAB_PRIVATE_DIR` |
-| Guest user | `ubuntu` | `LAB_GUEST_USER` |
+| Guest VM user | image default, reported via guestinfo | none (`LAB_GUEST_USER` is ignored) |
 | DHCP leases | `/mnt/c/ProgramData/VMware/vmnetdhcp.leases` | `LAB_DHCP_LEASES` |
 
 Use `wslpath -w` for arguments passed to Windows tools and `wslpath -u` for paths read from Terraform. VM disks and ISO files must be on a Windows drive.
@@ -55,7 +55,7 @@ Preflight reports whether `.wslconfig` uses mirrored networking. Do not change `
 - vmrest account: secrets file `%USERPROFILE%\.env` (`LAB_SECRETS_FILE`), lines `VMWS_USERNAME=`/`VMWS_USER=` and `VMWS_PASSWORD=`, parsed (not executed) by `lib/config.sh`. Environment variables or `lab.env` override it. Terraform receives `TF_VAR_vmrest_*` from `lib/config.sh`.
 - Private files: `lab_ed25519` key pair, `inventory.json`, `known_hosts-<vm-id>`, `seed-<vm-id>/` under `LAB_PRIVATE_DIR`.
 - Never print or copy credentials, keys, Terraform state or inventory into chat, logs, commits or docs. Never enable `set -x` around config loading.
-- `LAB_GUEST_USER` (default `ubuntu`) sets both the cloud-init user and the Ansible user.
+- Guest user: cloud-init keeps the image's default user; a guest unit writes its name to guestinfo `wsl-vmware-lab.guest_user` on every boot and `guest-inventory.py` reads it with `vmrun readVariable ... guestVar`. Until the guest reports it, inventory generation retries.
 
 ## Routine commands
 
@@ -68,7 +68,7 @@ bash terraform-vm.sh off        # a Terraform apply; review state first
 bash terraform-vm.sh destroy    # interactive; runs cleanup-guest.py afterwards
 ```
 
-`destroy` saves state metadata, runs Terraform destroy, then removes only the generated seed ISO and an empty clone directory after verifying VMX/VMDK are gone. Bare `terraform destroy` skips this. It then removes that clone id's `known_hosts-<id>` and `seed-<id>/` (only the generated cloud-init files) under `LAB_PRIVATE_DIR`; other files are left.
+`destroy` saves state metadata, runs Terraform destroy, then removes only the generated seed ISO and an empty clone directory after verifying VMX/VMDK are gone. Bare `terraform destroy` skips this. It also removes a leftover `<clone>.vmxf` that names the clone's VMX, then that clone id's `known_hosts-<id>` and `seed-<id>/` (only the generated cloud-init files) under `LAB_PRIVATE_DIR`; other files are left and reported.
 
 ## File guide
 

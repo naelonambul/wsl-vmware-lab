@@ -57,7 +57,8 @@ cp lab.env.example lab.env
 | 항목 | 기본값 | 변수 |
 |---|---|---|
 | Windows 쪽 VM 경로 | 로그인한 Windows 사용자 프로필 기준 `%USERPROFILE%\Documents\Virtual Machines\<클론>\<클론>.vmx` | `LAB_CLONE_VMX_WIN` |
-| WSL 계정 / 게스트 VM 사용자 | `ubuntu` | `LAB_GUEST_USER` |
+| 게스트 VM 사용자 (VM 안) | 설정하지 않음. 이미지 기본 사용자(Ubuntu 이미지는 `ubuntu`)를 쓰고, 게스트가 부팅할 때마다 VMware guestinfo로 이름을 알려 줌 | 없음 |
+| WSL 사용자 | 설정하지 않음. 이 PC에 SSH로 접속하는 계정(SSH config의 `User`)으로 스크립트를 실행하면 그 계정을 씀 | 없음 |
 | 개인 파일(SSH 키, inventory, known_hosts) | `~/.config/wsl-vmware-lab/` | `LAB_PRIVATE_DIR` |
 | VMware 설치 경로 | `/mnt/c/Program Files/VMware/VMware Workstation` | `VMWARE_DIR` |
 | 베이스 / 클론 이름 | `ubuntu24-base` / `ubuntu24-demo` | `LAB_BASE_NAME` / `LAB_CLONE_NAME` |
@@ -110,7 +111,7 @@ bash preflight.sh --start-vmrest  # vmrest가 꺼져 있으면 'VMware vmrest AP
 ## 블로그 원본과 달라진 점
 
 - 하드코딩된 경로·사용자(`/mnt/c/Users/<작성자>/...`, `/home/<작성자>`, 게스트 사용자, VMX 경로, VM ID)를 `lab.env`와 자동 감지로 바꿨습니다.
-- 게스트 사용자 기본값이 `ubuntu`입니다. Ubuntu 클라우드 이미지의 기본 사용자와 같아서, 이때는 cloud-init의 `default` 항목을 따로 넣지 않습니다.
+- 게스트 사용자를 정하지 않습니다. cloud-init은 `users: [default]`로 이미지 기본 사용자를 그대로 두고 SSH 키만 넣습니다. 게스트가 부팅할 때마다 키를 받은 사용자 이름을 VMware guestinfo(`wsl-vmware-lab.guest_user`)에 적고, WSL은 `vmrun readVariable`로 읽어 Ansible inventory에 씁니다. WSL 사용자와는 별개입니다.
 - 개인 파일 폴더 이름이 `~/.config/vmware-workstation-demo` → `~/.config/wsl-vmware-lab`, SSH 키 이름이 `demo_ed25519` → `lab_ed25519`로 바뀌었습니다. 예전 `vmrest.env`도 `VMWS_CREDENTIALS_FILE`로 지정하면 계속 읽습니다.
 - `api-status.sh`, `check-power.sh`, `terraform-vm.sh`의 `curl`은 비밀번호를 명령줄 인자 대신 표준입력으로 넘깁니다(`ps`에 노출되지 않도록).
 - Ubuntu가 지금 쓰는 파일 이름은 `noble-server-cloudimg-amd64.ova`입니다. 블로그의 `ubuntu-24.04-server-cloudimg-amd64.ova`로 저장하면 `sha256sum -c SHA256SUMS`가 확인할 파일을 찾지 못합니다. `download-ubuntu-image.sh`가 공식 이름으로 받아 확인합니다.

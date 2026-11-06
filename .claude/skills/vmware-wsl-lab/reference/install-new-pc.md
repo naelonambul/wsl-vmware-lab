@@ -33,7 +33,7 @@ This is an agent workflow, not a bundled unattended installer. It tells the exec
 - Never disable Hyper-V, Virtual Machine Platform, virtualization-based security or Secure Boot merely to make VMware start: WSL2 depends on the Windows virtualization stack. Diagnose compatibility for the installed Workstation version first.
 - Use official downloads. Ask the user to complete account credentials, MFA and CAPTCHA themselves. Do not bypass these controls.
 - Keep secret values in a private `.env` outside the shared project; create `.env.example` with fake placeholders for every introduced environment variable. Do not log secret values or copy private keys, generated inventories or Terraform state into a repository.
-- This repository reads `lab.env` (or `LAB_ENV_FILE`). A legacy `vmrest.env` is still read when `VMWS_CREDENTIALS_FILE` points to it. Paths and usernames from the original lab are examples, never defaults for a new machine; the defaults here are the Windows user profile and the `ubuntu` WSL/guest user.
+- This repository reads `lab.env` (or `LAB_ENV_FILE`). A legacy `vmrest.env` is still read when `VMWS_CREDENTIALS_FILE` points to it. Paths and usernames from the original lab are examples, never defaults for a new machine; the defaults here are the Windows user profile; the guest VM user is the image's default user (reported via guestinfo), and the WSL user is whoever the user SSHes in as (their SSH config `User`), never set by scripts.
 - Record chosen package versions in an installation manifest. Pin Terraform providers. Do not silently install an unbounded latest version and describe it as reproduced.
 
 ## 1. Discover the machine and create a checkpoint
@@ -179,7 +179,7 @@ The repository implements the following artifacts. If you rebuild them elsewhere
 
 Download Ubuntu cloud images only from the official Ubuntu cloud-image service. Verify SHA256 against the official manifest; verify the manifest signature when tooling permits. A checksum downloaded from an unrelated mirror is not evidence of provenance.
 
-Create an unencrypted SSH key only if appropriate for this local automation scope; protect its private file and directory permissions. Cloud-init must create the selected guest user, authorize the public key, disable root/password SSH as intended, and enable DHCP. For the guest NIC type, the tested older VMX used `e1000`; do not assume `e1000e` fits an incompatible virtual PCI layout.
+Create an unencrypted SSH key only if appropriate for this local automation scope; protect its private file and directory permissions. Cloud-init must keep the image's default user (`users: [default]`), authorize the public key for it, disable root/password SSH as intended, and enable DHCP. For the guest NIC type, the tested older VMX used `e1000`; do not assume `e1000e` fits an incompatible virtual PCI layout.
 
 Prepare the base on Windows-accessible storage, register it through vmrest, boot it via the supported CLI, verify initialization completion and shut it down before cloning. Do not treat a fixed sleep as proof of cloud-init completion. Avoid embedding per-clone instance IDs in the reusable base. Record the base API ID and preserve it during later cleanup.
 

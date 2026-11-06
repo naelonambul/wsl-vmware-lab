@@ -68,5 +68,8 @@ Do not restart WSL or edit scheduled tasks during an active remote session witho
 |---|---|---|
 | Seed ISO left after destroy | provider does not delete it | use `terraform-vm.sh destroy` (runs `cleanup-guest.py`); bare `terraform destroy` skips it |
 | `0 destroyed` | vmrest was off, nothing found | not success; start vmrest and recheck API + files |
+| `Guest has not reported its default user through guestinfo yet` | guest still booting, or `open-vm-tools` / the `wsl-vmware-lab-guestinfo` unit missing in the guest | `configure-guest.sh` retries; if it persists, check the image ships `open-vm-tools` and the unit's result |
+| `cloud-init status --wait` never returns after a reboot | a unit ordered `After=cloud-final.service` and wanted by `multi-user.target` forms a cycle; systemd drops cloud-final | do not order guest units after cloud-final (see `lib/cloud-config.sh`) |
+| `on` fails with HTTP 409 / Code 108 right after destroy | destroying a running clone can leave `<clone>.vmxf` in the clone folder | current `cleanup-guest.py` removes a `.vmxf` that names the clone's VMX; otherwise check the folder before recreating |
 | Old `verify-lifecycle.sh` | uses bare destroy, predates cleanup flow | read its results; do not rerun as the preferred entry point |
 | `REMOTE HOST IDENTIFICATION HAS CHANGED` in Ansible after re-creating the clone | vmrest derives the VM id from the VMX path, so a clone re-created at the same path reuses the id and its old `known_hosts-<id>` | current `bootstrap-guest.sh` resets `known_hosts-<id>` for each fresh clone, and `terraform-vm.sh destroy` removes it; on older checkouts `git pull` and re-run `on`. Never disable host key checking |

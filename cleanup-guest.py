@@ -25,11 +25,15 @@ seed = parent / ('cloud-init-' + vm['id'] + '.iso')
 if seed.exists():
     seed.unlink()
     print('[OK] Removed generated cloud-init ISO')
-if parent.is_dir():
-    if any(parent.iterdir()):
-        raise SystemExit('Other files remain; directory was left intact: ' + str(parent))
-    parent.rmdir()
-    print('[OK] Removed empty clone directory')
+# Workstation can leave the VM's .vmxf metadata behind (seen when a running clone
+# is destroyed). Remove it only if it names this clone's VMX.
+vmxf = parent / (vmx.stem + '.vmxf')
+if vmxf.is_file():
+    if re.search(r'<vmxPathName[^>]*>' + re.escape(vmx.name) + r'</vmxPathName>', vmxf.read_text(errors='replace')):
+        vmxf.unlink()
+        print('[OK] Removed leftover .vmxf of the destroyed clone')
+    else:
+        print('[WARN] ' + str(vmxf) + ' does not name ' + vmx.name + '; left intact')
 
 # WSL-side files for this clone id. vmrest derives the id from the VMX path, so a
 # clone recreated at the same path reuses it; stale host keys would block SSH.
@@ -48,3 +52,10 @@ if seed_dir.is_dir():
         print('[OK] Removed WSL seed directory for the destroyed clone')
     else:
         print('[WARN] Unexpected files in ' + str(seed_dir) + '; left intact')
+
+if parent.is_dir():
+    left = sorted(x.name for x in parent.iterdir())
+    if left:
+        raise SystemExit('Other files remain; directory was left intact: ' + str(parent) + ' ' + str(left))
+    parent.rmdir()
+    print('[OK] Removed empty clone directory')

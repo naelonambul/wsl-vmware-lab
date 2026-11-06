@@ -3,6 +3,7 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 source lib/config.sh
+source lib/cloud-config.sh
 if "${VMWARE_DIR}/vmrun.exe" -T ws list | tr -d '\r' | grep -Fxq "$VMX_WIN"; then
   echo 'Power the clone off with Terraform before bootstrap; use terraform-vm.sh on.' >&2
   exit 1
@@ -20,22 +21,13 @@ if [[ -e "$known_hosts" ]]; then
   echo '[OK] Reset known_hosts for the recreated clone id'
 fi
 pubkey=$(cat "$LAB_SSH_KEY.pub")
-# The image's "default" user is already "ubuntu"; list it only for other names.
-default_entry=""
-[[ "$LAB_GUEST_USER" != ubuntu ]] && default_entry="  - default"
-cat > "$seed_dir/user-data" <<CFG
-#cloud-config
-users:
-${default_entry}
-  - name: ${LAB_GUEST_USER}
-    groups: [sudo]
-    shell: /bin/bash
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    ssh_authorized_keys:
-      - $pubkey
-ssh_pwauth: false
-disable_root: true
-CFG
+# Guest user = the image's default user (see lib/cloud-config.sh).
+{
+  echo '#cloud-config'
+  lab_cloud_config_users "$pubkey"
+  echo 'runcmd:'
+  lab_cloud_config_runcmd
+} > "$seed_dir/user-data"
 printf 'instance-id: %s\nlocal-hostname: %s\n' "$VM_ID" "$LAB_CLONE_NAME" > "$seed_dir/meta-data"
 cat > "$seed_dir/network-config" <<'CFG'
 version: 2
