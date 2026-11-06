@@ -5,24 +5,29 @@
 
 .USAGE
   .\wsl2-ssh-forward.ps1 Install [-Distro Ubuntu-24.04] [-AllowedRemoteAddress 192.168.0.0/24]
-  .\wsl2-ssh-forward.ps1 Refresh [-Distro Ubuntu-24.04]
-  .\wsl2-ssh-forward.ps1 Status [-Distro Ubuntu-24.04]
-  .\wsl2-ssh-forward.ps1 Remove [-Distro Ubuntu-24.04]
+  .\wsl2-ssh-forward.ps1 Refresh
+  .\wsl2-ssh-forward.ps1 Status
+  .\wsl2-ssh-forward.ps1 Remove
   .\wsl2-ssh-forward.ps1 InstallTask [-Distro Ubuntu-24.04] [-AllowedRemoteAddress 192.168.0.0/24]
   .\wsl2-ssh-forward.ps1 RemoveTask
   StartSsh is an internal Scheduled Task action.
+  Install and InstallTask save -Distro and -AllowedRemoteAddress; later runs without them
+  reuse the saved values (%ProgramData%\wsl2-ssh-forward\settings.json).
 
 .STRUCTURE
   NAT: Windows 0.0.0.0:22 -> current WSL IPv4:22 -> sshd
   Mirrored: Windows and WSL share an IP; sshd is reached directly and no portproxy is used.
-  InstallTask creates tasks for this Windows account that run at boot without logon (S4U)
-  and again at logon: one refreshes forwarding and one starts the WSL ssh service.
+    A Hyper-V firewall rule for the WSL VM allows TCP 22 from the allowed range.
+  InstallTask creates tasks for this Windows account that run at Windows boot without logon (S4U)
+  and again at logon: one refreshes forwarding, one keeps the WSL sshd running.
+  The keep-alive task is the only thing that starts sshd once it is installed.
   No sleep process is used.
   This script manages TCP 22 only and does not change RDP's TCP 3306 settings.
 
 .NOTES
   WSL2 NAT IP may change after `wsl --shutdown` or a Windows restart; run Refresh.
-  InstallTask runs after this Windows user logs on. It refreshes NAT forwarding and starts ssh.
+  The tasks start at boot, before anyone logs on, and again at logon.
+  Only the 0.0.0.0:22 portproxy rule is managed; other :22 rules are reported and left alone.
 #>
 
 [CmdletBinding()]
@@ -44,10 +49,26 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
+$script:SettingsPath = Join-Path $env:ProgramData 'wsl2-ssh-forward\settings.json'
+if ($Action -notin @('Install', 'InstallTask') -and (Test-Path -LiteralPath $script:SettingsPath)) {
+    try {
+        $saved = Get-Content -LiteralPath $script:SettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
+        if (-not $PSBoundParameters.ContainsKey('Distro') -and $saved.Distro) { $Distro = [string]$saved.Distro }
+        if (-not $PSBoundParameters.ContainsKey('AllowedRemoteAddress') -and $saved.AllowedRemoteAddress) {
+            $AllowedRemoteAddress = [string]$saved.AllowedRemoteAddress
+        }
+    }
+    catch {
+        Write-Host "[WARN] Could not read saved settings ($($script:SettingsPath)): $($_.Exception.Message)" -ForegroundColor Yellow
+    }
+}
+
 $script:ListenAddress = '0.0.0.0'
 $script:SshPort = 22
 $script:FirewallRuleName = 'WSL2 SSH 22'
 $script:FirewallRuleMarker = 'Managed by wsl2-ssh-forward.ps1'
+$script:HyperVRuleName = 'WSL-SSH-Inbound-TCP22-LAN'
+$script:WslVmCreatorId = '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'
 $script:AllowedRemoteAddress = $AllowedRemoteAddress
 $script:TaskName = 'WSL2 SSH Port Forward Refresh'
 $script:KeepaliveTaskName = 'WSL2 SSH Keepalive'
@@ -121,6 +142,17 @@ function Get-PortProxyEntries {
 }
 
 function Get-WslIPv4 {
+    # At boot WSL may not have an address yet; retry for up to about 30 seconds.
+    for ($attempt = 1; $attempt -le 6; $attempt++) {
+        try { return (Get-WslIPv4Once) }
+        catch {
+            if ($attempt -eq 6) { throw }
+            Start-Sleep -Seconds 5
+        }
+    }
+}
+
+function Get-WslIPv4Once {
     $output = @(& wsl.exe -d $Distro hostname -I 2>&1)
     $exitCode = $LASTEXITCODE
     if ($exitCode -ne 0) {
@@ -219,6 +251,77 @@ function Start-WslSshService {
         throw "SSH did not start listening on TCP 22 in '$Distro'."
     }
     Write-Ok "WSL SSH service active: TCP :22 LISTEN ($Distro)"
+}
+
+function Save-Settings {
+    $dir = Split-Path -Parent $script:SettingsPath
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $json = [ordered]@{ Distro = $Distro; AllowedRemoteAddress = $script:AllowedRemoteAddress } | ConvertTo-Json
+    [System.IO.File]::WriteAllText($script:SettingsPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+    Write-Ok "Saved settings: Distro=$Distro, AllowedRemoteAddress=$($script:AllowedRemoteAddress)"
+}
+
+function Wait-WslSshListening {
+    param([int]$TimeoutSeconds = 45)
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $status = Get-WslSshStatus
+        if ($status.Available -and $status.Listening) { return $true }
+        Start-Sleep -Seconds 3
+    } while ((Get-Date) -lt $deadline)
+    return $false
+}
+
+function Ensure-WslSshRunning {
+    # Once the keep-alive task exists it owns sshd; do not start a second (systemd) sshd next to it.
+    $task = Get-ScheduledTask -TaskName $script:SshStartTaskName -ErrorAction SilentlyContinue
+    if ($task) {
+        if ($task.State -ne 'Running') {
+            Start-ScheduledTask -TaskName $script:SshStartTaskName -ErrorAction Stop
+            Write-Ok "Started Scheduled Task: $($script:SshStartTaskName)"
+        }
+        if (-not (Wait-WslSshListening)) {
+            Show-SshInstallInstructions
+            throw "SSH did not start listening on TCP 22 in '$Distro' (task '$($script:SshStartTaskName)')."
+        }
+        $task = Get-ScheduledTask -TaskName $script:SshStartTaskName -ErrorAction Stop
+        if ($task.State -ne 'Running') {
+            throw "Task '$($script:SshStartTaskName)' is not running although :22 is open; another sshd may own the port."
+        }
+        Write-Ok "WSL SSH active: TCP :22 LISTEN, kept running by '$($script:SshStartTaskName)' ($Distro)"
+        return
+    }
+    Start-WslSshService
+}
+
+function Test-HyperVFirewallSupported {
+    return [bool](Get-Command New-NetFirewallHyperVRule -ErrorAction SilentlyContinue)
+}
+
+function Ensure-HyperVFirewallRule {
+    if (-not (Test-HyperVFirewallSupported)) {
+        Write-Warn 'Hyper-V firewall cmdlets are not available on this Windows build; only the Windows firewall rule was set.'
+        return
+    }
+    $rule = Get-NetFirewallHyperVRule -Name $script:HyperVRuleName -ErrorAction SilentlyContinue
+    if ($rule) {
+        Set-NetFirewallHyperVRule -Name $script:HyperVRuleName -Enabled True -Action Allow `
+            -Protocol TCP -LocalPorts $script:SshPort -RemoteAddresses $script:AllowedRemoteAddress -ErrorAction Stop
+        Write-Ok "Hyper-V firewall rule updated: TCP :22 from $($script:AllowedRemoteAddress) to WSL"
+        return
+    }
+    New-NetFirewallHyperVRule -Name $script:HyperVRuleName -DisplayName 'WSL SSH inbound TCP 22 (LAN)' `
+        -Direction Inbound -VMCreatorId $script:WslVmCreatorId -Protocol TCP -LocalPorts $script:SshPort `
+        -RemoteAddresses $script:AllowedRemoteAddress -Action Allow -ErrorAction Stop | Out-Null
+    Write-Ok "Hyper-V firewall rule created: TCP :22 from $($script:AllowedRemoteAddress) to WSL"
+}
+
+function Remove-HyperVFirewallRule {
+    if (-not (Test-HyperVFirewallSupported)) { return }
+    if (Get-NetFirewallHyperVRule -Name $script:HyperVRuleName -ErrorAction SilentlyContinue) {
+        Remove-NetFirewallHyperVRule -Name $script:HyperVRuleName -ErrorAction Stop
+        Write-Ok "Hyper-V firewall rule removed: $($script:HyperVRuleName)"
+    }
 }
 
 function Get-ProcessInfoForId {
@@ -346,7 +449,12 @@ function Ensure-FirewallRule {
 }
 
 function Remove-PortProxy22 {
-    $entries = @(Get-PortProxyEntries | Where-Object { $_.ListenPort -eq $script:SshPort })
+    # Only the rule this script manages (0.0.0.0:22); report others instead of deleting them.
+    $all = @(Get-PortProxyEntries | Where-Object { $_.ListenPort -eq $script:SshPort })
+    foreach ($other in @($all | Where-Object { $_.ListenAddress -ne $script:ListenAddress })) {
+        Write-Warn "Other :22 portproxy left unchanged: $($other.ListenAddress):22 -> $($other.ConnectAddress):$($other.ConnectPort)"
+    }
+    $entries = @($all | Where-Object { $_.ListenAddress -eq $script:ListenAddress })
     foreach ($entry in $entries) {
         Invoke-Netsh -Arguments @(
             'interface', 'portproxy', 'delete', 'v4tov4',
@@ -370,15 +478,11 @@ function Set-SshPortProxy {
         }
         Write-Ok 'Mirrored mode: WSL SSH is reached directly; no portproxy is needed'
         Ensure-FirewallRule
+        Ensure-HyperVFirewallRule
         return
     }
 
-    foreach ($entry in @($existingEntries | Where-Object { $_.ListenPort -eq $script:SshPort })) {
-        Invoke-Netsh -Arguments @(
-            'interface', 'portproxy', 'delete', 'v4tov4',
-            "listenport=$($entry.ListenPort)", "listenaddress=$($entry.ListenAddress)"
-        ) | Out-Null
-    }
+    Remove-PortProxy22 | Out-Null
 
     Invoke-Netsh -Arguments @(
         'interface', 'portproxy', 'add', 'v4tov4',
@@ -474,6 +578,12 @@ function Show-Status {
         Write-Warn "Could not inspect firewall rule: $($_.Exception.Message)"
     }
 
+    if ($mirrored -and (Test-HyperVFirewallSupported)) {
+        $hvRule = Get-NetFirewallHyperVRule -Name $script:HyperVRuleName -ErrorAction SilentlyContinue
+        if ($hvRule -and $hvRule.Enabled -eq 'True') { Write-Ok "Hyper-V firewall rule: $($script:HyperVRuleName) (enabled)" }
+        else { Write-Warn "Hyper-V firewall rule '$($script:HyperVRuleName)' not found or disabled" }
+    }
+
     $sshStatus = Get-WslSshStatus
     if (-not $sshStatus.Available) {
         $detail = if ($sshStatus.Detail) { ": $($sshStatus.Detail)" } else { '' }
@@ -534,6 +644,7 @@ function Remove-SshForwarding {
     else {
         Write-Warn 'No script-created firewall rule found'
     }
+    Remove-HyperVFirewallRule
 }
 
 function Install-SshServiceTask {
@@ -595,7 +706,8 @@ function Install-RefreshTask {
     )
     $taskPrincipal = New-ScheduledTaskPrincipal -UserId $currentUser -LogonType S4U -RunLevel Highest
     $taskSettings = New-ScheduledTaskSettingsSet -StartWhenAvailable `
-        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+        -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+        -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
     Register-ScheduledTask -TaskName $script:TaskName -Action $taskAction -Trigger $taskTrigger `
         -Principal $taskPrincipal -Settings $taskSettings -Description 'Refresh the WSL2 SSH TCP 22 portproxy at boot and at user logon.' -Force | Out-Null
 
@@ -603,9 +715,10 @@ function Install-RefreshTask {
     Write-Host "       Trigger: Windows boot (S4U) and $currentUser logon"
     Write-Host "       Action: $powershellExe $arguments"
     Install-SshServiceTask
+    Save-Settings
     Start-ScheduledTask -TaskName $script:TaskName -ErrorAction Stop
-    Start-WslSshService
-    Write-Ok 'Port forwarding and SSH service are ready'
+    Ensure-WslSshRunning
+    Write-Ok 'Port forwarding and SSH service are ready (tasks also run at boot without logon)'
 }
 
 function Remove-RefreshTask {
@@ -628,7 +741,6 @@ function Upgrade-LegacyKeepaliveTask {
     $legacyTask = Get-ScheduledTask -TaskName $script:KeepaliveTaskName -ErrorAction SilentlyContinue
     if ($legacyTask -or (Get-ScheduledTask -TaskName $script:SshStartTaskName -ErrorAction SilentlyContinue).Settings.ExecutionTimeLimit -ne 'PT0S') {
         Install-SshServiceTask
-        Start-ScheduledTask -TaskName $script:SshStartTaskName
     }
 }
 
@@ -637,13 +749,14 @@ try {
         'Install' {
             Assert-Administrator
             Set-SshPortProxy
-            Start-WslSshService
+            Save-Settings
+            Ensure-WslSshRunning
         }
         'Refresh' {
             Assert-Administrator
             Set-SshPortProxy
-            Start-WslSshService
             Upgrade-LegacyKeepaliveTask
+            Ensure-WslSshRunning
         }
         'Status' {
             Show-Status
@@ -663,7 +776,7 @@ try {
         }
         'Keepalive' {
             # Compatibility for a previously registered action; replace sleep with starting sshd.
-            Start-WslSshService
+            Ensure-WslSshRunning
         }
     }
 }

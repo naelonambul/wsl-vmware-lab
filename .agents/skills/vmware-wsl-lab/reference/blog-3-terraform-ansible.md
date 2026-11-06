@@ -84,7 +84,7 @@ cloud-init: accounts, SSH keys, DHCP. Ansible: packages.
 - Ansible run 1: nginx, HTTP 200, `failed=0`
 - Ansible run 2: `ok=6 changed=0 unreachable=0 failed=0`
 - Destroy: 2 resources removed, no leftover folder, base kept
-- Unverified: vmrest auto-start after reboot
+- Unverified by the post: vmrest auto-start after reboot (later verified with the repository's boot/S4U task)
 
 Networking notes: the host had no VMnet8 host adapter; in mirrored mode VMware host-only ranges were not directly reachable, so VMnet1 management with SSH relay fallback was used.
 

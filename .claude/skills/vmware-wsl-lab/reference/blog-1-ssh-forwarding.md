@@ -6,7 +6,7 @@ Summary of https://naelonambul.tistory.com/207 ("[WSL 자동화 1편] WSL2 SSH�
 - Goal and routes (NAT vs mirrored)
 - Step 1: sshd in WSL
 - Step 2: `wsl2-ssh-forward.ps1`
-- Step 3: logon scheduled tasks
+- Step 3: scheduled tasks (post: logon; repository: boot + logon)
 - Step 4: verify from another PC
 - `.wslconfig` resource limits
 - Troubleshooting notes from the post
@@ -46,7 +46,7 @@ Behavior:
 - Stops (does not auto-disable) if Windows OpenSSH Server already owns port 22.
 - Touches nothing other than port 22 (e.g. RDP untouched).
 
-## Step 3: run at Windows logon
+## Step 3: scheduled tasks (the repository starts them at boot)
 
 ```powershell
 .\wsl2-ssh-forward.ps1 InstallTask
@@ -106,3 +106,4 @@ Ports: 22 = SSH (external → Windows → WSL); 8697 = vmrest (WSL → Windows, 
 
 - Confirmed: refresh task exit 0, SSH task Running (PT0S), `sshd -D -e` and TCP 22 LISTEN in Ubuntu.
 - Not confirmed: later reboot and long-running persistence, reconnection from an external PC (an earlier LAN IP check timed out).
+- Repository (2026-11-06): with the boot + S4U tasks, an external LAN PC logged in over SSH after a reboot before anyone logged on to Windows.

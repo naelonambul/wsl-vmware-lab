@@ -23,7 +23,8 @@ echo "deb [arch=${architecture} signed-by=/usr/share/keyrings/hashicorp-archive-
 
 apt-get update
 DEBIAN_FRONTEND=noninteractive apt-get install -y \
-  terraform ansible python3 qemu-utils cloud-image-utils genisoimage openssh-client
+  terraform ansible python3 qemu-utils cloud-image-utils genisoimage openssh-client \
+  ubuntu-cloudimage-keyring
 
 terraform version
 ansible --version | head -n 2

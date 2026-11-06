@@ -8,7 +8,7 @@ Use this document as an execution instruction for an agent with Windows terminal
 - Objective and boundaries / Execution rules
 - 1. Discover the machine and create a checkpoint
 - 2. Update WSL, set resources, prepare Ubuntu, and resume after restart
-- 3. Configure Linux SSH and remote access (firewall, NAT portproxy, logon persistence)
+- 3. Configure Linux SSH and remote access (firewall, NAT portproxy, start at boot)
 - 4. Install VMware Workstation Pro using computer use
 - 5. Configure and keep vmrest available
 - 6. Install Linux automation tools
@@ -54,7 +54,7 @@ Some commands fail normally on a machine without WSL; distinguish missing softwa
 
 Prefer a supported Windows 11 release with mirrored WSL networking. Microsoft documents mirrored mode for Windows 11 22H2 and later. For a host without that capability, use the NAT branch below and verify its different API/SSH routes explicitly.
 
-Choose and record these non-secret parameters in a local installation checkpoint: distribution name, WSL username, project Windows path, corresponding WSL path, VM root directory, base name, unique test clone name, LAN subnet, chosen versions and current stage. Use `wslpath` for path conversion. Place VM files on a Windows drive, not the WSL ext4 filesystem. If antivirus blocks downloads or writes under the Windows user profile, as on one host, put the repository and the VM root outside it (for example `C:\wsl-vmware-lab` and `LAB_VM_ROOT_WIN='C:\VMs'` in `lab.env`). After moving an existing repository, re-register the base VM with `register-base.sh`, re-run `windows/install-vmrest-task.ps1` and `wsl2-ssh-forward.ps1 InstallTask` (elevated) so the tasks point at the new path, then run preflight.
+Choose and record these non-secret parameters in a local installation checkpoint: distribution name, WSL username, project Windows path, corresponding WSL path, VM root directory, base name, unique test clone name, LAN subnet, chosen versions and current stage. Use `wslpath` for path conversion. Place VM files on a Windows drive, not the WSL ext4 filesystem. If antivirus blocks downloads or writes under the Windows user profile, as on one host, put the repository outside it (for example `C:\wsl-vmware-lab`). The clone folder is VMware Workstation's default VM location (Edit > Preferences > Workspace; `prefvmx.defaultVMPath` in `%APPDATA%\VMware\preferences.ini`, default `%USERPROFILE%\Documents\Virtual Machines`): vmrest clones there whatever path Terraform asks for, so `LAB_VM_ROOT_WIN` must equal it (preflight checks). To keep VMs outside the profile, change that Workstation setting first, restart vmrest, then set `LAB_VM_ROOT_WIN` to the same folder. After moving an existing repository, re-register the base VM with `register-base.sh`, re-run `windows/install-vmrest-task.ps1` and `wsl2-ssh-forward.ps1 InstallTask` (elevated) so the tasks point at the new path, then run preflight.
 
 ## 2. Update WSL, set resources, then prepare Ubuntu
 
@@ -99,7 +99,7 @@ If virtualization is reported unavailable, also check `HyperVisorPresent` and ac
 
 Treat restart handling as part of setup, not an unrecorded interruption:
 
-1. Save a non-secret checkpoint outside the repository, for example under `%LOCALAPPDATA%\wsl-vmware-lab`. Include the repository path, target distribution, chosen resource values, config backup path (if any), exact command/output/exit code, current Windows boot time, completed stages, pending stages and next verification commands. Label the stage `pending-windows-restart`. Do not include passwords or private keys.
+1. Save a non-secret checkpoint outside the repository, at `%LOCALAPPDATA%\wsl-vmware-lab\setup-checkpoint.json` (JSON). Include the repository path, target distribution, chosen resource values, config backup path (if any), exact command/output/exit code, current Windows boot time, completed stages, pending stages and next verification commands. Label the stage `pending-windows-restart`. Do not include passwords or private keys.
 2. Tell the user why Windows must restart and to save open work. Obtain explicit restart timing unless already authorized. Never use a forced restart to close unsaved applications. The user may restart manually; no automatic task or unattended continuation is implied.
 3. After reconnecting, read the checkpoint and compare `Get-CimInstance Win32_OperatingSystem | Select-Object LastBootUpTime` with the saved boot time. Check `wsl --version`, `wsl --status`, `wsl --list --verbose` and the existing `.wslconfig` again. A previous exit code 0 with restart-required output proves neither distribution readiness nor settings application.
 4. If Ubuntu is still absent, rerun the recorded distribution install command once after the restart and inspect the new result. If present, launch it and finish any first-run initialization; reuse an existing account. Inspect errors before retrying and never unregister as generic recovery.
@@ -113,7 +113,7 @@ When handing off before restart, state what is complete, what is pending, the ch
 - Configured `.wslconfig` limits were confirmed only from inside the distribution (`nproc`, `free -h`, `swapon --show`), with memory slightly below the configured value because of kernel overhead.
 - A root-only probe does not prove first-run account setup is complete; verify the default user and sudo separately.
 - Files written from Windows for WSL scripts (such as `lab.env`) must use LF line endings; see pitfalls.
-- The update/install flow left no SSH server: external `ssh` failed until openssh-server was installed (section 3). After registering the logon tasks, SSH still failed because WSL idled out; starting the keep-alive task immediately fixed it. The firewall profiles were disabled on that host, so firewall rules were not the cause.
+- The update/install flow left no SSH server: external `ssh` failed until openssh-server was installed (section 3). After registering the tasks (logon-only at the time, and not started by the installer), SSH still failed because WSL idled out; starting the keep-alive task immediately fixed it. The firewall profiles were disabled on that host, so firewall rules were not the cause.
 
 This flow (update, resources, Ubuntu install, restart/resume, account, tools, vmrest, base, Terraform clone and Ansible) was verified on one host that already had VMware Workstation. External SSH from another LAN PC was then verified, including after a reboot before anyone logged on, once the SSH tasks used a boot trigger and S4U. A clean PC without VMware has not been tested.
 
@@ -133,7 +133,7 @@ ss -lnt
 
 If systemd is not available, inspect `/etc/wsl.conf` and the distribution's supported systemd configuration before selecting a service-start mechanism. Provision the external agent's public key in the intended user's `~/.ssh/authorized_keys` with directory mode 700 and file mode 600. Verify key login before considering password-login changes. Never write a private SSH key into documentation.
 
-For mirrored mode, inspect both Windows and Hyper-V firewall rules. Create an inbound TCP 22 rule scoped to the intended LAN subnet and WSL creator ID; avoid a broad default inbound allow policy. Microsoft documents `New-NetFirewallHyperVRule` and the WSL creator ID on its networking page. Check port ownership first: Windows OpenSSH and WSL SSH must not compete for the same externally reached endpoint. Choose a deliberate alternate port if necessary rather than stopping an unrelated service.
+For mirrored mode, inspect both Windows and Hyper-V firewall rules. Create an inbound TCP 22 rule scoped to the intended LAN subnet and WSL creator ID; avoid a broad default inbound allow policy. `windows/wsl2-ssh-forward.ps1 Install` creates both (Windows rule `WSL2 SSH 22`, Hyper-V rule `WSL-SSH-Inbound-TCP22-LAN`) and saves the range for later `Refresh` runs. On a host whose firewall profiles are disabled, a successful login does not prove the range restriction works; test from an address outside the range when it matters. Microsoft documents `New-NetFirewallHyperVRule` and the WSL creator ID on its networking page. Check port ownership first: Windows OpenSSH and WSL SSH must not compete for the same externally reached endpoint. Choose a deliberate alternate port if necessary rather than stopping an unrelated service.
 
 For NAT mode, use Windows `netsh interface portproxy` to forward the chosen Windows listening port to the current WSL IPv4 and port 22. Restrict its Windows firewall rule to the approved subnet. WSL NAT addresses can change, so implement a refresh action that discovers the current distribution address. Do not install a NAT portproxy for the mirrored path just because an older tutorial does so.
 

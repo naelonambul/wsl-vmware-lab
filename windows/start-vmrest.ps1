@@ -15,7 +15,24 @@ param(
 $ErrorActionPreference = 'Stop'
 $exe = $VmrestPath
 if (-not (Test-Path -LiteralPath $exe)) { throw "vmrest not found: $exe" }
-if (Get-Process -Name vmrest -ErrorAction SilentlyContinue) { exit 0 }
+$me = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+$existing = @(Get-CimInstance Win32_Process -Filter "Name = 'vmrest.exe'" -ErrorAction SilentlyContinue)
+if ($existing.Count -gt 0) {
+    $proc = $existing[0]
+    $owner = Invoke-CimMethod -InputObject $proc -MethodName GetOwner -ErrorAction SilentlyContinue
+    $ownerName = if ($owner -and $owner.User) { "$($owner.Domain)\$($owner.User)" } else { '' }
+    if ($ownerName -and $ownerName -ne $me) {
+        throw "vmrest (PID $($proc.ProcessId)) runs as $ownerName, not $me; it uses another vmrest.cfg and VM inventory. Stop it first."
+    }
+    if ($proc.ExecutablePath -and ($proc.ExecutablePath -ne (Resolve-Path -LiteralPath $exe).Path)) {
+        Write-Warning "Running vmrest is $($proc.ExecutablePath), expected $exe."
+    }
+    if ($NoWait) { exit 0 }
+    # Supervise the vmrest that is already running: when it exits, report failure so the task restarts it.
+    Wait-Process -Id $proc.ProcessId -ErrorAction SilentlyContinue
+    Write-Error "vmrest (PID $($proc.ProcessId), started before this task) exited."
+    exit 1
+}
 $logDirectory = Join-Path $env:LOCALAPPDATA 'WSL-VMware'
 New-Item -ItemType Directory -Path $logDirectory -Force | Out-Null
 $process = Start-Process -FilePath $exe -WorkingDirectory (Split-Path -Parent $exe) `

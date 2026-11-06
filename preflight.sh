@@ -56,6 +56,9 @@ fi
 echo '== Configuration'
 if [[ -f "$LAB_ENV_FILE" ]]; then
   ok "settings file: $LAB_ENV_FILE"
+  if grep -q $'\r' "$LAB_ENV_FILE"; then
+    warn "settings file has Windows (CRLF) line endings; the scripts strip them, but convert it once: sed -i 's/\\r\$//' $LAB_ENV_FILE"
+  fi
 else
   ok "settings file: none (defaults; optional lab.env from lab.env.example)"
 fi
@@ -76,7 +79,7 @@ if lab_require_credentials 2>/dev/null; then
       if ($hit) { "open:" + (($hit.IdentityReference.Value | Select-Object -Unique) -join ",") } else { "private" }'       -f "$(wslpath -w "${VMWS_CREDENTIAL_SOURCE#secrets file }")" 2>/dev/null | tr -d '\r')"
     case "$acl" in
       private) ok "secrets file permissions: not readable by other Windows users" ;;
-      open:*)  warn "secrets file readable by ${acl#open:}; restrict it to your user (icacls <file> /inheritance:r /grant:r %USERNAME%:F)" ;;
+      open:*)  warn "secrets file readable by ${acl#open:}; restrict it to your user (PowerShell: icacls "$env:USERPROFILE\\.env" /inheritance:r /grant:r "$($env:USERNAME):F", then check icacls output for other explicit entries)" ;;
     esac
   fi
 else
@@ -91,6 +94,23 @@ else
 fi
 [[ -n "${LAB_GUEST_USER:-}" ]] && warn "LAB_GUEST_USER is set but no longer used; the guest uses the image's default user"
 if [[ -n "$LAB_VM_ROOT_WIN" ]]; then ok "VM folder: $LAB_VM_ROOT_WIN (one <name> folder per VM)"; else warn "VM folder unknown (LAB_VM_ROOT_WIN)"; fi
+# vmrest clones into VMware Workstation's default VM folder (Preferences >
+# Workspace), not into the path Terraform asks for; the two must match or the
+# provider fails with "inconsistent result after apply: .path".
+if [[ -n "$profile" && -n "$LAB_VM_ROOT_WIN" ]]; then
+  prefs="$(wslpath -u "$profile")/AppData/Roaming/VMware/preferences.ini"
+  ws_default="$profile\\Documents\\Virtual Machines"
+  if [[ -f "$prefs" ]]; then
+    v="$(tr -d '\r' < "$prefs" | sed -nE 's/^[[:space:]]*prefvmx\.defaultVMPath[[:space:]]*=[[:space:]]*"(.*)"[[:space:]]*$/\1/p' | tail -n 1)"
+    [[ -n "$v" ]] && ws_default="$v"
+  fi
+  norm() { local x="${1%\\}"; echo "${x,,}"; }
+  if [[ "$(norm "$ws_default")" == "$(norm "$LAB_VM_ROOT_WIN")" ]]; then
+    ok "VM folder matches VMware Workstation's default VM location"
+  else
+    warn "VM folder $LAB_VM_ROOT_WIN differs from Workstation's default VM location $ws_default; vmrest clones there, so Terraform will fail. Set LAB_VM_ROOT_WIN to it, or change Workstation (Edit > Preferences > Workspace) and restart vmrest"
+  fi
+fi
 [[ -n "${LAB_CLONE_VMX_WIN:-}" ]] && warn "LAB_CLONE_VMX_WIN is deprecated; set LAB_VM_ROOT_WIN instead (derived from it for now)"
 ok "private dir: $LAB_PRIVATE_DIR$([[ -d "$LAB_PRIVATE_DIR" ]] || echo ' (not created yet)')"
 
@@ -165,10 +185,13 @@ if $interop; then
   extra="$("$PS" -NoProfile -NonInteractive -Command '
     $t = Get-ScheduledTask -TaskName "VMware vmrest API" -ErrorAction SilentlyContinue
     $c = Test-Path (Join-Path $env:USERPROFILE "vmrest.cfg")
+    $q = [char]34
+    $file = if ($t -and ("$($t.Actions.Arguments)" -match ("-File " + $q + "([^" + $q + "]+)" + $q))) { $Matches[1] } else { "" }
+    $fileok = [bool]($file -and (Test-Path -LiteralPath $file))
     $boot = [bool]($t.Triggers | Where-Object { $_.CimClass.CimClassName -eq "MSFT_TaskBootTrigger" })
     $others = (Get-ScheduledTask | Where-Object { $_.TaskName -ne "VMware vmrest API" -and $_.Settings.Enabled -and
       ($_.Actions | Where-Object { "$($_.Execute) $($_.Arguments)" -match "vmrest" }) }).TaskName -join ";"
-    "task=$(if ($t) { $(if ($t.Settings.Enabled) { "enabled" } else { "disabled" }) } else { "absent" }) boot=$boot logon=$($t.Principal.LogonType) cfg=$c others=[$others]"' 2>/dev/null | tr -d '\r')"
+    "task=$(if ($t) { $(if ($t.Settings.Enabled) { "enabled" } else { "disabled" }) } else { "absent" }) boot=$boot logon=$($t.Principal.LogonType) cfg=$c fileok=$fileok others=[$others] file=<$file>"' 2>/dev/null | tr -d '\r')"
   others="$(sed -nE 's/.*others=\[([^]]*)\].*/\1/p' <<<"$extra")"
   if [[ "$extra" == *"task=absent"* ]]; then
     warn "startup task 'VMware vmrest API' absent: vmrest will not start at boot (install with windows/install-vmrest-task.ps1, elevated)"
@@ -179,7 +202,27 @@ if $interop; then
   elif [[ -n "$extra" ]]; then
     warn "task 'VMware vmrest API' does not start vmrest at boot without logon; re-run windows/install-vmrest-task.ps1 (elevated)"
   fi
+  task_file="$(sed -nE 's/.*file=<([^>]*)>.*/\1/p' <<<"$extra")"
+  if [[ "$extra" != *"task=absent"* && "$extra" == *"fileok=False"* ]]; then
+    warn "task 'VMware vmrest API' runs a missing script (${task_file:-unknown}); the repository moved? re-run windows/install-vmrest-task.ps1 (elevated)"
+  elif [[ -n "$task_file" && "$(wslpath -u "$task_file" 2>/dev/null)" != "$LAB_PROJECT_DIR/windows/start-vmrest.ps1" ]]; then
+    warn "task 'VMware vmrest API' runs $task_file, not this repository's copy; re-run windows/install-vmrest-task.ps1 from here if this is the active repository"
+  fi
   [[ -n "$others" ]] && warn "other enabled task(s) also start vmrest: ${others} (keep one launcher; disable the others)"
+  # WSL SSH keep-alive task (windows/wsl2-ssh-forward.ps1 InstallTask): boot + S4U, script present.
+  ssh_task="$("$PS" -NoProfile -NonInteractive -Command '
+    $t = Get-ScheduledTask -TaskName "WSL2 SSH Service Start" -ErrorAction SilentlyContinue
+    if (-not $t) { "absent"; exit }
+    $boot = [bool]($t.Triggers | Where-Object { $_.CimClass.CimClassName -eq "MSFT_TaskBootTrigger" })
+    $q = [char]34
+    $file = if ("$($t.Actions.Arguments)" -match ("-File " + $q + "([^" + $q + "]+)" + $q)) { $Matches[1] } else { "" }
+    "state=$($t.State) boot=$boot logon=$($t.Principal.LogonType) fileok=$([bool]($file -and (Test-Path -LiteralPath $file)))"' 2>/dev/null | tr -d '\r')"
+  case "$ssh_task" in
+    absent|"") warn "SSH task 'WSL2 SSH Service Start' absent: WSL SSH from other PCs is not set up (windows/wsl2-ssh-forward.ps1 InstallTask, elevated)" ;;
+    *fileok=False*) warn "SSH task runs a missing script; re-run windows/wsl2-ssh-forward.ps1 InstallTask (elevated) from this repository" ;;
+    *"boot=True logon=S4U"*) ok "SSH task 'WSL2 SSH Service Start': boot trigger, runs without logon (S4U), ${ssh_task%% *}" ;;
+    *) warn "SSH task 'WSL2 SSH Service Start' does not start at boot without logon ($ssh_task); re-run wsl2-ssh-forward.ps1 InstallTask (elevated)" ;;
+  esac
   if [[ "$extra" == *"cfg=False"* ]]; then
     warn "no vmrest.cfg in the Windows user profile: the API account may not be set up (the user runs vmrest.exe -C)"
   elif [[ "$extra" == *"cfg=True"* ]]; then

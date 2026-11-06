@@ -90,7 +90,7 @@ VMWS_PASSWORD=<그 비밀번호>
 
 - `VMWS_USER`라고 적어도 인식합니다. 다른 도구가 같은 `.env`에 자기 줄을 두어도 됩니다. 스크립트는 파일을 실행하지 않고 `VMWS_*` 줄만 읽습니다.
 - 다른 파일을 쓰려면 `lab.env`에 `LAB_SECRETS_FILE=/mnt/c/...`를 지정합니다.
-- 이 파일은 본인 Windows 계정만 읽게 두세요. `preflight.sh`가 다른 사용자도 읽을 수 있으면 경고합니다. 제한하려면 `icacls %USERPROFILE%\.env /inheritance:r /grant:r %USERNAME%:F`를 실행합니다.
+- 이 파일은 본인 Windows 계정만 읽게 두세요. `preflight.sh`가 다른 사용자도 읽을 수 있으면 경고합니다. 제한하려면 PowerShell에서 `icacls "$env:USERPROFILE\.env" /inheritance:r /grant:r "$($env:USERNAME):F"`를 실행합니다(cmd라면 `icacls %USERPROFILE%\.env /inheritance:r /grant:r %USERNAME%:F`). 실행 후 `icacls` 출력에 다른 계정 항목이 남아 있지 않은지 확인하세요.
 - Windows 자격 증명 관리자도 시험했지만 쓰지 않습니다. 부팅 후 아무도 로그온하지 않은 상태에서 켜진 WSL에서는 자격 증명 관리자가 잠겨 있어 읽을 수 없었습니다.
 
 ## 개인 설정: `lab.env` (선택)
@@ -106,7 +106,7 @@ cp lab.env.example lab.env
 | 항목 | 기본값 | 변수 |
 |---|---|---|
 | VM 목록 | `vms.tfvars`가 있으면 그 목록, 없으면 아래 이름으로 1대 | `LAB_VMS_FILE` |
-| Windows 쪽 VM 폴더 | 로그인한 Windows 사용자 프로필 기준 `%USERPROFILE%\Documents\Virtual Machines` (VM마다 `<이름>\<이름>.vmx`) | `LAB_VM_ROOT_WIN` |
+| Windows 쪽 VM 폴더 | VMware Workstation의 기본 VM 위치(편집 > 기본 설정 > 작업 공간, 기본값 `%USERPROFILE%\Documents\Virtual Machines`). vmrest는 Terraform이 요청한 경로와 상관없이 이 위치에 클론을 만들므로 둘이 같아야 함(preflight가 확인). 사용자 폴더 밖에 두려면 Workstation 설정을 먼저 바꾸고 vmrest를 다시 시작한 뒤 같은 값으로 지정. 바꿔도 이미 만든 VM은 옮겨지지 않음 | `LAB_VM_ROOT_WIN` |
 | 기본 플레이북 | `ansible/configure-guest.yml` (nginx 예제) | `LAB_PLAYBOOK` |
 | 게스트 VM 사용자 (VM 안) | 설정하지 않음. 이미지 기본 사용자(Ubuntu 이미지는 `ubuntu`)를 쓰고, 게스트가 부팅할 때마다 VMware guestinfo로 이름을 알려 줌 | 없음 |
 | WSL 사용자 | 설정하지 않음. 이 PC에 SSH로 접속하는 계정(SSH config의 `User`)으로 스크립트를 실행하면 그 계정을 씀 | 없음 |
@@ -120,15 +120,17 @@ Windows 스크립트는 설정 파일 대신 매개변수를 받습니다.
 
 ```powershell
 # 관리자 PowerShell. 방화벽 허용 대역은 자신의 LAN으로 바꾼다
+# Install: Windows 방화벽 규칙, (미러드) Hyper-V 방화벽 규칙, (NAT) portproxy. 값은 저장되어 이후 Refresh가 그대로 씀
 .\windows\wsl2-ssh-forward.ps1 Install -AllowedRemoteAddress 192.168.0.0/24 -Distro Ubuntu-24.04
-.\windows\wsl2-ssh-forward.ps1 InstallTask -AllowedRemoteAddress 192.168.0.0/24
+# InstallTask: 부팅 시 로그온 없이(S4U) + 로그온 때 실행되는 작업 2개를 만들고, sshd 유지 작업을 바로 실행
+.\windows\wsl2-ssh-forward.ps1 InstallTask -AllowedRemoteAddress 192.168.0.0/24 -Distro Ubuntu-24.04
 # vmrest 자동 실행(관리자 PowerShell). 저장소의 windows 폴더에서 실행하고 폴더를 옮기지 않는다
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-vmrest-task.ps1
 ```
 
-`VMware vmrest API` 작업은 **Windows 부팅 때 로그온 없이** vmrest를 켭니다. 부팅 트리거, S4U(로그온 없이 해당 사용자로 실행, 비밀번호 저장 안 함), 시간 제한 없음, 실패 시 1분 간격 5회 재시작으로 등록됩니다. `start-vmrest.ps1`이 vmrest가 떠 있는 동안 계속 기다리기 때문에, vmrest가 죽으면 작업이 다시 켭니다. 다른 도구가 만든 vmrest 작업이 있으면 경고하니, 하나만 남기고 나머지는 사용 안 함으로 바꾸세요. 재부팅 후 아무도 로그온하지 않은 상태에서 vmrest가 응답(`401`)하는 것을 확인했습니다.
+`VMware vmrest API` 작업은 **Windows 부팅 때 로그온 없이** vmrest를 켭니다. 부팅 트리거, S4U(로그온 없이 해당 사용자로 실행, 비밀번호 저장 안 함), 시간 제한 없음, 실패 시 1분 간격 5회 재시작으로 등록됩니다. `start-vmrest.ps1`이 vmrest가 떠 있는 동안 계속 기다리기 때문에, vmrest가 죽으면 작업이 다시 켭니다. 작업보다 먼저 같은 사용자로 떠 있던 vmrest도 지켜보다가 죽으면 다시 켜고, 다른 사용자의 vmrest면 실패로 알립니다. 재시작 동작 자체는 아직 일부러 죽여서 시험해 보지 않았습니다. 다른 도구가 만든 vmrest 작업이 있으면 경고하니, 하나만 남기고 나머지는 사용 안 함으로 바꾸세요. 재부팅 후 아무도 로그온하지 않은 상태에서 vmrest가 응답(`401`)하는 것을 확인했습니다.
 
-`start-vmrest.ps1`은 기본으로 `%ProgramFiles%\VMware\VMware Workstation\vmrest.exe`를 실행합니다. 다른 곳에 설치했다면 `-VmrestPath`로 지정합니다. 수동으로 한 번만 켤 때는 `-NoWait`를 붙입니다.
+`start-vmrest.ps1`은 기본으로 `%ProgramFiles%\VMware\VMware Workstation\vmrest.exe`를 실행합니다. 다른 곳에 설치했다면 `install-vmrest-task.ps1 -VmrestPath <경로>`로 등록하면 작업에도 그 경로가 들어갑니다. 수동으로 한 번만 켤 때는 `-NoWait`를 붙입니다.
 
 ## 실행 순서 (WSL Ubuntu, 저장소 최상위)
 
@@ -188,8 +190,8 @@ bash preflight.sh --start-vmrest  # vmrest가 꺼져 있으면 'VMware vmrest AP
 
 ## 주의
 
-- **검증 범위:** 블로그의 검증 결과는 원본 스크립트로 얻은 것입니다. 이 저장소의 설정 분리판은 아직 실제 VMware 호스트에서 처음부터 끝까지 실행해 보지 않았습니다. 처음 쓸 때는 결과를 단계마다 확인하세요.
-- **SSH는 부팅 때 시작:** `wsl2-ssh-forward.ps1 InstallTask`는 vmrest처럼 Windows 부팅 시 로그온 없이(S4U) WSL sshd를 켜고, 로그온 때도 한 번 더 실행합니다. 블로그 1편의 원래 스크립트는 로그온 시점에만 실행됩니다. 예전에 등록한 PC는 관리자 PowerShell에서 `InstallTask`를 다시 실행하세요.
+- **검증 범위:** 2026-11-06 한 PC(VMware Workstation 기설치, 미러드 네트워크, Windows·Hyper-V 방화벽 꺼짐)에서 이 저장소판으로 WSL 설치부터 베이스 VM, Terraform 복제, Ansible 2회(두 번째 `changed=0`), 정리, 재부팅 후 로그온 전 vmrest·SSH까지 확인했습니다. VMware가 없는 새 PC, NAT 모드, 방화벽이 켜진 PC는 아직 확인하지 않았습니다. 처음 쓸 때는 결과를 단계마다 확인하세요.
+- **SSH는 부팅 때 시작:** `wsl2-ssh-forward.ps1 InstallTask`는 vmrest처럼 Windows 부팅 시 로그온 없이(S4U) WSL sshd를 켜고, 로그온 때도 한 번 더 실행합니다. 등록 직후에도 sshd 유지 작업을 바로 실행하고 22번이 열렸는지 확인합니다. sshd는 이 유지 작업 하나만 띄웁니다. 블로그 1편의 원래 스크립트는 로그온 시점에만 실행됩니다. 예전에 등록한 PC는 관리자 PowerShell에서 `InstallTask`를 다시 실행하세요.
 - **올리면 안 되는 파일:** `lab.env`, `%USERPROFILE%\.env`, SSH 개인키, `*.tfstate`, `inventory.json`, VM 디스크·ISO는 `.gitignore`에 들어 있습니다. 커밋하지 마세요.
 - **비공식 provider:** `elsudano/vmworkstation`은 HashiCorp나 Broadcom이 아닌 커뮤니티 provider입니다. 버전을 올리기 전에 스키마를 확인하세요(`terraform providers schema -json`).
 - **진단 스크립트:** `extras/diagnose-terraform.sh`는 베이스 VM을 끄고 `power_state=off`를 적용합니다. 실행 전에 내용을 읽어 보세요.

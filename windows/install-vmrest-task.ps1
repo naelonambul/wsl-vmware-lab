@@ -7,16 +7,19 @@
 #requires -RunAsAdministrator
 param(
     # Windows account that owns the vmrest account and VMs. Default: current user.
-    [string]$User = [Security.Principal.WindowsIdentity]::GetCurrent().Name
+    [string]$User = [Security.Principal.WindowsIdentity]::GetCurrent().Name,
+    # vmrest.exe location, passed to start-vmrest.ps1. Change if Workstation is installed elsewhere.
+    [string]$VmrestPath = (Join-Path $env:ProgramFiles 'VMware\VMware Workstation\vmrest.exe')
 )
 $ErrorActionPreference = 'Stop'
 $taskName = 'VMware vmrest API'
 $launcher = Join-Path $PSScriptRoot 'start-vmrest.ps1'
 if (-not (Test-Path -LiteralPath $launcher)) { throw 'Save start-vmrest.ps1 in the same folder first.' }
+if (-not (Test-Path -LiteralPath $VmrestPath)) { throw "vmrest not found: $VmrestPath (pass -VmrestPath)" }
 
 $action = New-ScheduledTaskAction `
     -Execute "$env:WINDIR\System32\WindowsPowerShell\v1.0\powershell.exe" `
-    -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $launcher + '"')
+    -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $launcher + '" -VmrestPath "' + $VmrestPath + '"')
 $trigger = New-ScheduledTaskTrigger -AtStartup
 # S4U: runs whether or not the user is logged on, without storing a password.
 # Limited: vmrest needs no administrator rights.
@@ -35,4 +38,4 @@ Get-ScheduledTask | Where-Object {
 } | ForEach-Object { Write-Warning "Another enabled task also starts vmrest: $($_.TaskName). Disable it to avoid two launchers." }
 
 Start-ScheduledTask -TaskName $taskName
-Write-Host "[OK] $taskName : starts at boot as $User (S4U); an already running vmrest is reused."
+Write-Host "[OK] $taskName : starts at boot as $User (S4U) with $VmrestPath; an already running vmrest of this user is supervised and restarted if it exits."

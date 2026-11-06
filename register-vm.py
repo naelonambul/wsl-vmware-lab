@@ -49,11 +49,30 @@ def main():
                      if ntpath.normcase(ntpath.normpath(vm["path"])) ==
                      ntpath.normcase(ntpath.normpath(windows_path))), None)
 
+    # Registrations whose VMX no longer exists (e.g. after moving the repository)
+    # are reported, not deleted: vmrest DELETE /vms/{id} can delete the VM files.
+    for vm in request("/vms"):
+        try:
+            local = subprocess.run(["wslpath", "-u", vm["path"]], capture_output=True,
+                                   text=True, check=True).stdout.strip()
+        except Exception:
+            continue
+        if local and not os.path.exists(local):
+            print("[WARN] Stale registration (VMX missing): " + vm["id"] + " " + vm["path"]
+                  + "  - remove it in VMware Workstation's library", file=sys.stderr)
+
     existing = find_vm()
     if existing:
         print("[OK] Already registered: " + existing["id"])
         return
-    request("/vms/registration", {"name": name, "path": windows_path})
+    try:
+        request("/vms/registration", {"name": name, "path": windows_path})
+    except urllib.error.HTTPError as error:
+        # vmrest has answered 500 while still registering the VM; trust the list.
+        if not find_vm():
+            raise
+        print("[WARN] vmrest answered HTTP " + str(error.code) + " but the VM is registered",
+              file=sys.stderr)
     registered = find_vm()
     if not registered:
         raise RuntimeError("Registration returned but VM is absent from /api/vms")

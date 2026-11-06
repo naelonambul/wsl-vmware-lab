@@ -17,14 +17,17 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 | Terraform 404 | endpoint missing `/api` | `http://127.0.0.1:8697/api` |
 | WSL cannot reach `127.0.0.1:8697` | WSL in NAT mode; vmrest bound to loopback | Use mirrored mode. Do not expose Basic-auth vmrest to the LAN |
 | VM missing from `/api/vms` | VMX/disk exist but not registered | `bash register-base.sh` (idempotent by path) |
-| `register-base.sh` gets HTTP 500; VMware log shows a VMX syntax error | `lab.env` written from Windows with CRLF line endings, so `\r` ends up in the VM name/`displayName` | `file lab.env` shows `CRLF`; rewrite it with LF (e.g. `sed -i 's/\r$//' lab.env`), regenerate the base VMX, then register again |
+| `register-base.sh` gets HTTP 500; VMware log shows a VMX syntax error | `lab.env` written from Windows with CRLF line endings put `\r` into the VM name (older checkouts) | `lib/config.sh` now strips CR when loading `lab.env` and preflight warns about CRLF; on an older checkout convert it with `sed -i 's/\r$//' lab.env`, regenerate the base VMX and register again |
 | `vmrest -C` fails with piped password | requires interactive input | user types it interactively |
 | Unauthenticated 401 works, authenticated request also 401 (Terraform/provider auth errors) | secrets file (`%USERPROFILE%\.env` or `LAB_SECRETS_FILE`) differs from the vmrest API account (`vmrest.exe -C`, stored in `vmrest.cfg`; password not readable) | user corrects the file, or re-runs `vmrest.exe -C`, writes the same values and restarts vmrest. Never read or print the values |
 | preflight cannot find the account although one exists | it is in another file or under `VMWS_USER` instead of `VMWS_USERNAME` | both names are accepted; point `LAB_SECRETS_FILE` at the file |
 | Account stored in Windows Credential Manager not visible from WSL over SSH | WSL started at boot without logon runs in a batch (S4U) session, where the Credential Manager vault stays locked | use the secrets file; this repository no longer uses Credential Manager |
 | Account worked before, now 401 | vmrest restarted under another Windows user (other profile, other `vmrest.cfg`), or `-C` was re-run without updating the stored copy | check which user runs vmrest (logon task principal); keep one account in sync |
 | `inspect-base.sh` fails on `listRegisteredVM` | unsupported command | use `api-status.sh` |
-| Downloads or file writes under `C:\Users\...` are blocked (git clone, image download, VM disks) | antivirus blocks writes in the user profile | keep the repository and VM root outside the profile (e.g. `C:\wsl-vmware-lab`, `LAB_VM_ROOT_WIN='C:\VMs'` in `lab.env`); after a move re-register the base and re-run the task installers |
+| Registration or another vmrest call returns HTTP 500 although the change happened | vmrest reports an error after doing the work | check the real state (`/api/vms`, VM folder) before retrying; `register-vm.py` now re-reads the list after an error. Details are in the vmrest log, `%TEMP%\vmware-<user>\vmware-vmrest-*.log` (for the S4U task, the task user's `%TEMP%`) |
+| Downloads or file writes under `C:\Users\...` are blocked (git clone, image download, VM disks) | antivirus blocks writes in the user profile | keep the repository outside the profile (e.g. `C:\wsl-vmware-lab`); for VM disks change Workstation's default VM location and restart vmrest, then set `LAB_VM_ROOT_WIN` to match; after moving the repository re-register the base and re-run the task installers |
+| A tool started from WSL cannot create folders under `Documents` (`Failed to create directory ...\Virtual Machines\...`), while the same command in PowerShell works | Windows Defender **Controlled folder access** blocks the WSL-launched process | check `Get-MpPreference \| Select EnableControlledFolderAccess`; let the user allow the app or turn the feature off, or run the Windows tool through `powershell.exe`; keep the repository outside protected folders |
+| Terraform `on` fails: `Provider produced inconsistent result after apply ... .path: was "<LAB_VM_ROOT_WIN>\..." but now "...Documents\Virtual Machines\..."` | vmrest clones into Workstation's default VM location, ignoring the requested path | set `LAB_VM_ROOT_WIN` to Workstation's default VM location (preflight warns on a mismatch), or change that Workstation setting and restart vmrest; then `terraform-vm.sh destroy` the half-created clone and retry |
 | Scheduled task fails after moving the repository | tasks store the old script path | re-run `windows/install-vmrest-task.ps1` and `wsl2-ssh-forward.ps1 InstallTask` (elevated) from the new folder |
 
 ## Terraform provider
@@ -37,6 +40,8 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 | NAT NIC recreate fails even when OFF | provider NAT NIC recreation bug | base VMX `connectionType="custom"`, `vnet="VMnet8"` (assumes VMnet8 is NAT) |
 | 409 "already exists" on retry | failed create left clone in API but not in state | compare API list and state before retry; do not delete blindly |
 | Provider reports IP `0.0.0.0/0` | not a real address | inventory uses mgmt MAC → DHCP lease (`/mnt/c/ProgramData/VMware/vmnetdhcp.leases`) |
+| Several clones get the same NAT IP / MAC | vmrest copies the base VMX verbatim, including `uuid.bios` and `ethernet0.generatedAddress` | `bootstrap-guest.sh` now removes the UUID and generated MACs and sets `uuid.action = "create"` before the first power-on; older clones need it applied while powered off |
+| A `while read` loop over VMs stops after the first one | a Windows program (`vmrun.exe`, `powershell.exe`) inside the loop reads the loop's stdin | give Windows programs in loops `</dev/null` |
 
 ## Guest boot, SSH, Ansible
 
@@ -45,10 +50,10 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 | `sha256sum -c SHA256SUMS`: `no file was verified` | OVA saved under the old blog name; Ubuntu lists `noble-server-cloudimg-amd64.ova` | `bash download-ubuntu-image.sh` (official name, signature + checksum) |
 | VM crashes on boot | hand-written VMX lacks PCIe slot for `e1000e` | use `e1000` |
 | `REMOTE HOST IDENTIFICATION HAS CHANGED` | clone first exposes base host key, or recreated clone reuses VM ID/IP | verify clone via API path + mgmt MAC/lease, then `ssh-keygen -f <clone-specific-known-hosts> -R <guest-IP>` only. Never disable host checking globally |
-| `Timeout (12s) waiting for privilege escalation prompt` | short default become wait (latency source unconfirmed; sudo itself verified passwordless) | `ANSIBLE_TIMEOUT=60` |
+| `Timeout (12s) waiting for privilege escalation prompt` | short default become wait (latency source unconfirmed; sudo itself verified passwordless) | `configure-guest.sh` now defaults `ANSIBLE_TIMEOUT=60`; raise it further if needed |
 | WSL cannot SSH to guest mgmt IP | host-only range not reachable from mirrored WSL | inventory falls back to `guest-proxy.sh` + `tcp-relay.ps1` (no listening port created) |
 | App/replica connects to an old subnet | stale separate copy of the deployment env file | keep one private env file (symlink copies to it); check addresses and inventory before deploy |
-| `base` boot "done" after 45 s | fixed sleep in `prepare-base.sh` | does not prove cloud-init completion; verify separately |
+| `base` boot "done" after 45 s (older checkouts) | fixed sleep in `prepare-base.sh` | `prepare-base.sh` now waits (up to 10 min) for the guestinfo user report from first-boot cloud-init before shutting the base down |
 
 ## WSL SSH access
 

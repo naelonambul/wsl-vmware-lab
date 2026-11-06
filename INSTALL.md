@@ -18,7 +18,7 @@ uname -s; uname -r; echo "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}"
 ```
 
 - `Linux` with `microsoft` in the kernel release, or `WSL_DISTRO_NAME` set (it is empty in SSH sessions, so the kernel release is the reliable check): you are in WSL. Run the bash steps below directly.
-- Windows (PowerShell, Git Bash): the scripts must still run in WSL. Run bash steps with `wsl.exe -e bash -lc '<command>'`, and check `wsl.exe -l -v` first. If WSL or a usable distribution is missing, distinguish a skill-only install from a full lab setup request. For an authorized lab setup, read the skill's `reference/install-new-pc.md` section 2 (`.claude/skills/vmware-wsl-lab/` for Claude Code, `.agents/skills/vmware-wsl-lab/` for Codex) and follow update, resource sizing and restart/resume before Bash steps; otherwise report the missing prerequisite and offer that path.
+- Windows (PowerShell, Git Bash): the scripts must still run in WSL. Run bash steps with `wsl.exe -e bash -lc '<command>'`, and check `wsl.exe -l -v` first. If WSL or a usable distribution is missing, distinguish a skill-only install from a full lab setup request. For an authorized lab setup, the repository is not available yet, so read section 2 of `reference/install-new-pc.md` from GitHub (https://github.com/naelonambul/wsl-vmware-lab/blob/main/.claude/skills/vmware-wsl-lab/reference/install-new-pc.md) and follow update, resource sizing, Ubuntu install and restart/resume from Windows PowerShell. Then continue with step 2 here, inside WSL. If Git for Windows is present you may clone first from PowerShell (`git clone https://github.com/naelonambul/wsl-vmware-lab.git C:\wsl-vmware-lab`) and read the local copy. Otherwise report the missing prerequisite and offer that path.
 - Anything else (macOS, plain Linux): this lab needs Windows + WSL2 + VMware Workstation. Stop and tell the user.
 
 ## 2. Find or clone the repository
@@ -26,13 +26,14 @@ uname -s; uname -r; echo "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}"
 Look for an existing checkout first (any folder name):
 
 ```bash
-find "$HOME" /mnt/c/Users -maxdepth 6 -name preflight.sh 2>/dev/null \
+{ find "$HOME" /mnt/c/Users -maxdepth 6 -name preflight.sh 2>/dev/null
+  find /mnt/c /mnt/d -maxdepth 3 -name preflight.sh 2>/dev/null; } | sort -u \
   | while read -r f; do [ -f "$(dirname "$f")/lib/config.sh" ] && dirname "$f"; done
 ```
 
 - One path printed: use it, and offer `git -C <path> pull --ff-only` to update.
 - Several: ask the user which one.
-- None: clone. Put it on the Windows drive, because the base VM files are created inside the repository and VMware Workstation must open them. Suggested place is the Windows user profile:
+- None: clone. Put it on the Windows drive, because the base VM files are created inside the repository and VMware Workstation must open them. Suggested place is the Windows user profile; if antivirus blocks writes there, use a folder outside it such as `C:\wsl-vmware-lab`:
 
 ```bash
 profile=$(/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -NonInteractive \
@@ -75,7 +76,7 @@ A replaced skill is kept as `vmware-wsl-lab.bak.<time>`; tell the user, and dele
 bash "$repo/preflight.sh"; echo "exit=$?"
 ```
 
-- `exit=0`: vmrest answers and the stored account is accepted. The lab is ready.
+- `exit=0`: vmrest answers and the stored account is accepted. The API side is ready; preflight does not test SSH from another PC, the base VM or a clone lifecycle (the skill's verification checklist does).
 - Anything else: read the `[ERROR]`/`[WARN]` lines and use the failure table in the skill's `SKILL.md` section 0. Typical first-time results: the vmrest account file `%USERPROFILE%\.env` does not exist yet (the user creates it; README section "vmrest 계정"), vmrest is not running, or tools are missing (new-PC path). Ask before fixing anything.
 
 Installing the skill is done even when preflight fails; report both results separately.

@@ -55,12 +55,17 @@ settings={
  'ethernet1.present':'TRUE', 'ethernet1.startConnected':'TRUE',
  'ethernet1.connectionType':'custom', 'ethernet1.vnet':os.environ['LAB_MGMT_VNET'],
  'ethernet1.virtualDev':'e1000', 'ethernet1.addressType':'generated',
+ # vmrest copies the base VMX verbatim: drop its BIOS UUID and NIC MACs so this
+ # clone gets its own on first power-on (otherwise several clones share the
+ # base's NAT MAC and receive the same DHCP address).
+ 'uuid.action':'create',
 }
+s=re.sub(r'(?mi)^\s*(uuid\.bios|uuid\.location|vc\.uuid|ethernet\d+\.generatedAddress(Offset)?)\s*=.*\n?','',s)
 for key,value in settings.items():
     line=f'{key} = "{value}"'
     pattern=r'(?m)^\s*'+re.escape(key)+r'\s*=.*$'
     if re.search(pattern,s): s=re.sub(pattern,lambda m:line,s)
     else: s+='\n'+line
 p.write_text(s+'\n')
-print('[OK] Cloud-init seed and management NIC configured')
+print('[OK] Cloud-init seed, management NIC and a fresh UUID/MAC for this clone configured')
 PY

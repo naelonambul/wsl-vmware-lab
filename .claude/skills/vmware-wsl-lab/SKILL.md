@@ -11,19 +11,21 @@ Host name, Windows user, WSL user, distro and repository location differ on ever
 
 ## 0. Detect the environment, then run preflight
 
-On Windows, inspect `wsl --version` and `wsl --list --verbose` first. For initial WSL setup or a pending installation reboot, read [reference/install-new-pc.md](reference/install-new-pc.md), section 2, before attempting Bash preflight. The setup order is WSL web update, host-specific resource settings, then Ubuntu preparation. A reboot-required result is a checkpoint, not completed installation. Resume from recorded evidence after reboot; do not reset or reinstall an existing distribution. An explicit update/setup request follows this path even when WSL is already installed.
+On Windows, inspect `wsl --version` and `wsl --list --verbose` first. For initial WSL setup or a pending installation reboot, read [reference/install-new-pc.md](reference/install-new-pc.md), section 2, before attempting Bash preflight. The setup order is WSL web update, host-specific resource settings, then Ubuntu preparation. A reboot-required result is a checkpoint, not completed installation. Keep the setup checkpoint in `%LOCALAPPDATA%\wsl-vmware-lab\setup-checkpoint.json` (non-secret JSON: stage, boot time, completed and pending steps, next checks); read it first when resuming. Resume from recorded evidence after reboot; do not reset or reinstall an existing distribution. An explicit update/setup request follows this path even when WSL is already installed.
 
 If you are already in a WSL shell (for example over SSH), SSH works; do not spend time checking it. Find the repository, then run preflight:
 
 ```bash
-# Lists every checkout of this repository (any folder name) under the WSL home and Windows users.
-find "$HOME" /mnt/c/Users -maxdepth 6 -name preflight.sh 2>/dev/null \
+# Lists every checkout of this repository (any folder name): WSL home, Windows users, and
+# shallow folders on C:/D: (C:\wsl-vmware-lab when antivirus blocks the user profile).
+{ find "$HOME" /mnt/c/Users -maxdepth 6 -name preflight.sh 2>/dev/null
+  find /mnt/c /mnt/d -maxdepth 3 -name preflight.sh 2>/dev/null; } | sort -u \
   | while read -r f; do [ -f "$(dirname "$f")/lib/config.sh" ] && dirname "$f"; done
 repo=<the one path printed>     # several printed: ask the user which one
 bash "$repo/preflight.sh"
 ```
 
-If nothing is printed, ask the user where the repository is, or whether to clone https://github.com/naelonambul/wsl-vmware-lab. Preflight reports the discovered repository, WSL user, distro, Windows profile, networking mode, which secrets file holds the vmrest account (values hidden) and whether other users can read it, tools and vmrest state. Exit code 0 means vmrest is reachable **and** the stored vmrest account is accepted.
+If nothing is printed, ask the user where the repository is, or whether to clone https://github.com/naelonambul/wsl-vmware-lab. Preflight reports the discovered repository, WSL user, distro, Windows profile, networking mode, which secrets file holds the vmrest account (values hidden) and whether other users can read it, tools and vmrest state. Exit code 0 means vmrest is reachable **and** the stored vmrest account is accepted. It does not test WSL SSH from another PC, the base VM or a clone lifecycle.
 
 vmrest has its own API account: a username and password set with `vmrest.exe -C`, kept by vmrest in `vmrest.cfg` in the Windows user profile, with the password not stored readably. It is separate from the Windows and Ubuntu logins. The scripts' copy of that account lives in a **secrets file in the Windows user folder**, `%USERPROFILE%\.env` by default (`LAB_SECRETS_FILE` to change it), as `VMWS_USERNAME=` (or `VMWS_USER=`) and `VMWS_PASSWORD=` lines. The file is parsed, never executed, so other tools may keep their own lines in it. It is readable at boot with nobody logged on; Windows Credential Manager was tried and is not (it stays locked without a logon). The user writes the file; when authentication fails, a mismatch between it and vmrest's account is the first suspect. Never read, print or guess the values.
 
@@ -35,7 +37,7 @@ When preflight fails at vmrest:
 | `HTTP 000` but `process=True listener8697=True` | vmrest runs; WSL cannot reach it | Check `VMWS_ENDPOINT` and mirrored networking. Do not start a second vmrest |
 | `HTTP 404` | endpoint lacks `/api` | Fix `VMWS_ENDPOINT` |
 | `... .env not found` / `lacks VMWS_USERNAME` | no usable secrets file | Look for an existing copy first (another `.env`, an old `vmrest.env`; check variable **names** only). Then ask the user to write `VMWS_USERNAME=` and `VMWS_PASSWORD=` into `%USERPROFILE%\.env`, or point `LAB_SECRETS_FILE` at the existing file |
-| `secrets file readable by ...` warning | other Windows users can read it | Ask the user to restrict it: `icacls <file> /inheritance:r /grant:r %USERNAME%:F` |
+| `secrets file readable by ...` warning | other Windows users can read it | Ask the user to restrict it: in PowerShell `icacls "$env:USERPROFILE\.env" /inheritance:r /grant:r "$($env:USERNAME):F"` (cmd: `icacls %USERPROFILE%\.env /inheritance:r /grant:r %USERNAME%:F`), then check the `icacls` output for other explicit entries |
 | authenticated `HTTP 401` | secrets file does not match vmrest | The user corrects the file, or re-runs `vmrest.exe -C`, writes the same values and restarts vmrest. Also check vmrest runs as the same Windows user (another user has another `vmrest.cfg`) |
 | `no vmrest.cfg` warning | API account never set up for this Windows user | The user runs `vmrest.exe -C` |
 | `startup task ... absent`, `disabled` or `does not start vmrest at boot` | vmrest will not come back at boot | vmrest must start at **boot, without logon**. Offer `windows/install-vmrest-task.ps1` (elevated): boot trigger, S4U, restart on failure |
@@ -131,7 +133,7 @@ Several VMs: `cp vms.tfvars.example vms.tfvars`, edit, then `terraform-vm.sh on`
 - [ ] (new or changed host) after a reboot with nobody logged on (`quser`: no users), preflight.sh exits 0
 ```
 
-Verified end to end on a second, freshly prepared PC: download/verify → base VM → clone on → Ansible ×2 (`changed=0` on the second run) → off → destroy with cleanup, plus a no-logon reboot. SSH before logon was verified on 2026-11-06 after `wsl2-ssh-forward.ps1 InstallTask` moved its tasks to boot + S4U: an external LAN PC logged in over SSH before anyone logged on to Windows. Not yet verified: vmrest restart after it crashes (task restart policy).
+Verified end to end on a second, freshly prepared PC: download/verify → base VM → clone on → Ansible ×2 (`changed=0` on the second run) → off → destroy with cleanup, plus a no-logon reboot. SSH before logon was verified on 2026-11-06 after `wsl2-ssh-forward.ps1 InstallTask` moved its tasks to boot + S4U: an external LAN PC logged in over SSH before anyone logged on to Windows. After the review fixes (repository at `C:\wsl-vmware-lab`, WSL limited to 4GB/4 CPUs) a single-clone lifecycle passed again, and two clones from one base got distinct BIOS UUIDs, MACs and NAT/management IPs, passed `ansible/check-lab.yml` and were destroyed without leftovers. Not yet verified: SSH before logon after the latest `wsl2-ssh-forward.ps1` changes (needs a reboot), vmrest restart after it crashes (task restart policy).
 
 ## 7. Report format
 

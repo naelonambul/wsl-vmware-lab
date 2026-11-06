@@ -8,7 +8,7 @@ Repository differences from the post: the vmrest account goes in `%USERPROFILE%\
 - Environment and ports
 - Step 1: WSL mirrored mode
 - Step 2: tools in WSL
-- Step 3: vmrest account and logon auto-start
+- Step 3: vmrest account and auto-start (repository: at boot)
 - Step 4: base image
 - Step 5: base VM creation and registration
 - Pitfalls from the post
@@ -63,7 +63,7 @@ cloud-localds --help
 
 Health: unauthenticated `http://127.0.0.1:8697/api/vms` returning **HTTP 401** means the server is up.
 
-Logon auto-start (Windows): keep `start-vmrest.ps1` and `install-vmrest-task.ps1` together in a fixed folder (e.g. `C:\Scripts\`) and do not move them after registering.
+Auto-start (Windows; the post used a logon task, the repository registers a boot/S4U task): keep `start-vmrest.ps1` and `install-vmrest-task.ps1` together in a fixed folder (e.g. `C:\Scripts\`) and do not move them after registering.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-vmrest-task.ps1
@@ -114,6 +114,6 @@ bash register-base.sh /mnt/c/VMs/ubuntu-base/ubuntu-base.vmx ubuntu24-base   # o
 - **API account ≠ Ubuntu login account.**
 - **vmrest not running after reboot** → no 8697 listener, HTTP 000 timeout, Terraform hangs on base lookup. Set up auto-start.
 - **Unregistered VMs are invisible** to `/api/vms` even if VMX/disk exist.
-- **Auto-start after reboot not verified** by the post (task exit 0 and HTTP 401 were).
+- **Auto-start after reboot not verified** by the post (task exit 0 and HTTP 401 were). The repository's boot/S4U task was verified on 2026-11-06: vmrest was up before anyone logged on.
 - **`listRegisteredVM` unsupported** (used by `inspect-base.sh`); check registration with `api-status.sh`.
 - `open-base.sh` is a legacy entry point (use `register-base.sh`); `inspect-base.sh` is diagnostic only.

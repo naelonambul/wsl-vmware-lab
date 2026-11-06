@@ -8,7 +8,19 @@ bash register-base.sh
 vmx=$(wslpath -w "${LAB_BASE_DIR}/ubuntu-base.vmx")
 vmrun="${VMWARE_DIR}/vmrun.exe"
 "$vmrun" -T ws start "$vmx" nogui
-# A fixed wait does not prove cloud-init finished; check the guest if in doubt.
-echo 'Waiting 45 seconds for the initial cloud-init setup...'
-sleep 45
+# First-boot cloud-init reports the guest user through guestinfo from its final
+# stage (lib/cloud-config.sh); wait for that instead of a fixed delay.
+echo 'Waiting for first-boot cloud-init (guestinfo user report, up to 10 minutes)...'
+reported=""
+for _ in $(seq 1 120); do
+  reported="$("$vmrun" -T ws readVariable "$vmx" guestVar "${LAB_GUESTINFO_USER_VAR:-wsl-vmware-lab.guest_user}" 2>/dev/null | tr -d '\r' || true)"
+  [[ -n "$reported" ]] && break
+  sleep 5
+done
+if [[ -z "$reported" ]]; then
+  echo "[ERROR] the guest did not report its user within 10 minutes; check the VM console and cloud-init" >&2
+  exit 1
+fi
+echo "[OK] cloud-init reported guest user: $reported"
+sleep 15   # let the remaining runcmd steps finish before the soft shutdown
 "$vmrun" -T ws stop "$vmx" soft

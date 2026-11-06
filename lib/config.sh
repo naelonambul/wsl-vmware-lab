@@ -10,8 +10,10 @@ export LAB_PROJECT_DIR
 
 LAB_ENV_FILE="${LAB_ENV_FILE:-$LAB_PROJECT_DIR/lab.env}"
 if [[ -f "$LAB_ENV_FILE" ]]; then
+  # Strip CR so a lab.env saved with Windows (CRLF) line endings does not put
+  # "\r" into VM names (VMX syntax error, vmrest HTTP 500 on registration).
   # shellcheck disable=SC1090
-  source "$LAB_ENV_FILE"
+  source <(tr -d '\r' < "$LAB_ENV_FILE")
 fi
 
 # Windows user profile of the logged-in Windows account, as a Windows path.

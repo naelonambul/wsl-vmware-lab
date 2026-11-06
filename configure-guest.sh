@@ -25,4 +25,6 @@ if [[ "$ready" != true ]]; then
 fi
 echo "[OK] Playbook: $playbook"
 export ANSIBLE_PIPELINING=true
+# The default 12 s privilege-escalation wait timed out on slower hosts.
+export ANSIBLE_TIMEOUT="${ANSIBLE_TIMEOUT:-60}"
 ansible-playbook -i "$LAB_INVENTORY" "$playbook" "$@"
