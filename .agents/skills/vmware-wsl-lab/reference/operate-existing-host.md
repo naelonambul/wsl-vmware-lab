@@ -21,7 +21,7 @@ Use this when the lab is already installed and you are in a WSL shell on it (loc
 3. Read the repository `README.md` if settings look unusual.
 4. Preserve the base VM and any existing clone unless the user explicitly authorizes changes.
 
-The shell is Bash inside WSL2, not PowerShell. Run Windows commands through `powershell.exe -NoProfile -Command ...`.
+The shell is Bash inside WSL2, not PowerShell. Run Windows commands through `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -Command ... </dev/null`, always by full path: an SSH session into WSL has no Windows folders on `PATH` (bare `powershell.exe` gives `command not found`, also in `bash -lic`). The same goes for other Windows programs (`"/mnt/c/Program Files/VMware/VMware Workstation/vmrun.exe"` by default, or `VMWARE_DIR` from `lab.env`; `/mnt/c/Windows/System32/cmd.exe`). `preflight.sh` keeps the full path in `$PS`.
 
 ## Where things are (defaults; preflight shows the actual values)
 
@@ -127,3 +127,5 @@ Lessons from running such a deployment:
 ## Evidence rules
 
 Report a result only with the command and its output from this run. Earlier logs and blog results are history, not current evidence. State which reboot/persistence scenarios were actually tested.
+
+A command handed to the user (for example a one-line `ssh <user>@<host> '...'` to run a step that needs their approval) must be the exact form you ran and verified in this session, not a retyped or shortened version. A retyped command with bare `powershell.exe` failed this way.
