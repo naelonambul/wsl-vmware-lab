@@ -86,7 +86,9 @@ All bash scripts source `lib/config.sh`, which reads optional settings from `lab
 6. **Destroy via the wrapper.** Use `bash terraform-vm.sh destroy` (runs cleanup), never bare `terraform destroy`. `0 destroyed` with vmrest down is not success.
 7. **Never disable host key checking globally.** Remove only the verified clone's stale entry.
 8. **Never disable Hyper-V / VBS / Secure Boot** to make VMware start; WSL2 needs them.
-9. **Verification.** Report a step as done only with the command and its actual output. Historical results in references are not fresh evidence.
+9. **Verification.** Report a step as done only with the command and its actual output. Historical results in references are not fresh evidence. A test passes only under the conditions it claims: for example, a credential written and read in the same session proves nothing about a fresh boot.
+10. **Hosts that differ from the skill.** When a host was set up another way (a vmrest task with another name or a logon trigger, the account in another file or under `VMWS_USER`, the OVA under an old name), do not work around it silently. Show the difference, propose converting the host to the skill's way, and on the user's OK convert it: disable rather than delete foreign tasks and keep foreign files. Then re-run preflight. If the difference reveals a gap in the skill itself, fix the skill and repository too.
+11. **Test hosts.** Run disruptive tests (stopping vmrest, reboots, lifecycle runs) only on a host the user names as free for testing, never on a host in use.
 
 ## 5. Routine command set (in WSL, from the repository found in section 0)
 
@@ -115,7 +117,10 @@ bash terraform-vm.sh destroy               # interactive; cleanup-aware
 - [ ] destroy removed clone from API/state + VMX, VMDK, seed ISO, clone dir
 - [ ] base VM and unrelated VMs unchanged; shared inventory restored
 - [ ] preflight.sh still exits 0 afterwards
+- [ ] (new or changed host) after a reboot with nobody logged on (`quser`: no users), preflight.sh exits 0
 ```
+
+Verified end to end on a second, freshly prepared PC: download/verify → base VM → clone on → Ansible ×2 (`changed=0` on the second run) → off → destroy with cleanup, plus a no-logon reboot. Not yet verified: vmrest restart after it crashes (task restart policy), and SSH start before logon with this repository's `wsl2-ssh-forward.ps1` (its tasks still trigger at logon).
 
 ## 7. Report format
 
