@@ -69,4 +69,4 @@ Do not restart WSL or edit scheduled tasks during an active remote session witho
 | Seed ISO left after destroy | provider does not delete it | use `terraform-vm.sh destroy` (runs `cleanup-guest.py`); bare `terraform destroy` skips it |
 | `0 destroyed` | vmrest was off, nothing found | not success; start vmrest and recheck API + files |
 | Old `verify-lifecycle.sh` | uses bare destroy, predates cleanup flow | read its results; do not rerun as the preferred entry point |
-| WSL seed dirs / known_hosts remain | wrapper does not remove them | expected; remove only verified clone-specific entries if asked |
+| `REMOTE HOST IDENTIFICATION HAS CHANGED` in Ansible after re-creating the clone | vmrest derives the VM id from the VMX path, so a clone re-created at the same path reuses the id and its old `known_hosts-<id>` | current `bootstrap-guest.sh` resets `known_hosts-<id>` for each fresh clone, and `terraform-vm.sh destroy` removes it; on older checkouts `git pull` and re-run `on`. Never disable host key checking |

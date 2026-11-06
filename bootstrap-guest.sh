@@ -7,9 +7,18 @@ if "${VMWARE_DIR}/vmrun.exe" -T ws list | tr -d '\r' | grep -Fxq "$VMX_WIN"; the
   echo 'Power the clone off with Terraform before bootstrap; use terraform-vm.sh on.' >&2
   exit 1
 fi
+[[ "$VM_ID" =~ ^[A-Za-z0-9_-]+$ ]] || { echo 'Invalid VM id from Terraform' >&2; exit 1; }
 vmx=$(wslpath -u "$VMX_WIN")
 seed_dir="$LAB_PRIVATE_DIR/seed-$VM_ID"
 mkdir -p "$seed_dir"
+# vmrest derives the VM id from the VMX path, so a clone recreated at the same
+# path gets the same id. This bootstrap only runs for a freshly created disk,
+# whose cloud-init generates new SSH host keys: forget the old ones.
+known_hosts="$LAB_PRIVATE_DIR/known_hosts-$VM_ID"
+if [[ -e "$known_hosts" ]]; then
+  rm -f -- "$known_hosts"
+  echo '[OK] Reset known_hosts for the recreated clone id'
+fi
 pubkey=$(cat "$LAB_SSH_KEY.pub")
 # The image's "default" user is already "ubuntu"; list it only for other names.
 default_entry=""

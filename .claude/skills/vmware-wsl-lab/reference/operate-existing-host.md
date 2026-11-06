@@ -68,7 +68,7 @@ bash terraform-vm.sh off        # a Terraform apply; review state first
 bash terraform-vm.sh destroy    # interactive; runs cleanup-guest.py afterwards
 ```
 
-`destroy` saves state metadata, runs Terraform destroy, then removes only the generated seed ISO and an empty clone directory after verifying VMX/VMDK are gone. Bare `terraform destroy` skips this. WSL seed directories and known_hosts files are not removed.
+`destroy` saves state metadata, runs Terraform destroy, then removes only the generated seed ISO and an empty clone directory after verifying VMX/VMDK are gone. Bare `terraform destroy` skips this. It then removes that clone id's `known_hosts-<id>` and `seed-<id>/` (only the generated cloud-init files) under `LAB_PRIVATE_DIR`; other files are left.
 
 ## File guide
 

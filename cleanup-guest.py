@@ -1,5 +1,6 @@
-"""Remove only our seed ISO after Terraform successfully deletes its clone."""
+"""After Terraform deletes the clone, remove only files generated for that clone id."""
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
@@ -29,3 +30,21 @@ if parent.is_dir():
         raise SystemExit('Other files remain; directory was left intact: ' + str(parent))
     parent.rmdir()
     print('[OK] Removed empty clone directory')
+
+# WSL-side files for this clone id. vmrest derives the id from the VMX path, so a
+# clone recreated at the same path reuses it; stale host keys would block SSH.
+private = Path(os.environ.get('LAB_PRIVATE_DIR', str(Path.home() / '.config/wsl-vmware-lab')))
+known_hosts = private / ('known_hosts-' + vm['id'])
+if known_hosts.is_file():
+    known_hosts.unlink()
+    print('[OK] Removed known_hosts for the destroyed clone')
+seed_dir = private / ('seed-' + vm['id'])
+expected = {'user-data', 'meta-data', 'network-config'}
+if seed_dir.is_dir():
+    if {p.name for p in seed_dir.iterdir()} <= expected:
+        for p in seed_dir.iterdir():
+            p.unlink()
+        seed_dir.rmdir()
+        print('[OK] Removed WSL seed directory for the destroyed clone')
+    else:
+        print('[WARN] Unexpected files in ' + str(seed_dir) + '; left intact')
