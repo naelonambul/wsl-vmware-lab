@@ -19,7 +19,9 @@ repo=<the one path printed>     # several printed: ask the user which one
 bash "$repo/preflight.sh"
 ```
 
-If nothing is printed, ask the user where the repository is, or whether to clone https://github.com/naelonambul/wsl-vmware-lab. Preflight reports the discovered repository, WSL user, distro, Windows profile, networking mode, settings file (values hidden), tools and vmrest state. Exit code 0 means vmrest is reachable.
+If nothing is printed, ask the user where the repository is, or whether to clone https://github.com/naelonambul/wsl-vmware-lab. Preflight reports the discovered repository, WSL user, distro, Windows profile, networking mode, settings file (values hidden), tools and vmrest state. Exit code 0 means vmrest is reachable **and** the `lab.env` credentials are accepted.
+
+vmrest has its own API account (username and password set with `vmrest.exe -C`, kept in `vmrest.cfg` in the Windows user profile; the password is not stored readably). It is separate from the Windows and Ubuntu logins. When authentication fails, a mismatch between that account and `lab.env` is the first suspect. Never read, print or guess the values. The user fixes them.
 
 When preflight fails at vmrest:
 
@@ -28,7 +30,10 @@ When preflight fails at vmrest:
 | `HTTP 000` and `process=False` | vmrest is not running | Ask the user, then `bash "$repo/preflight.sh" --start-vmrest` (starts the `VMware vmrest API` logon task, or runs `windows/start-vmrest.ps1` once) |
 | `HTTP 000` but `process=True listener8697=True` | vmrest runs; WSL cannot reach it | Check `VMWS_ENDPOINT` and mirrored networking. Do not start a second vmrest |
 | `HTTP 404` | endpoint lacks `/api` | Fix `VMWS_ENDPOINT` |
-| authenticated `HTTP 401` | wrong API account | The user re-enters it in `lab.env` (created with `vmrest.exe -C`) |
+| `credentials ... not set` | no account in `lab.env` | The user copies `lab.env.example` to `lab.env` and enters the vmrest account |
+| authenticated `HTTP 401` | `lab.env` does not match the vmrest account | The user corrects `lab.env`, or re-runs `vmrest.exe -C`, updates `lab.env` to match and restarts vmrest. Also check vmrest runs as the same Windows user (another user has another `vmrest.cfg`) |
+| `no vmrest.cfg` warning | API account never set up for this Windows user | The user runs `vmrest.exe -C` |
+| `logon task ... absent` warning | vmrest will not come back after a reboot | Offer `windows/install-vmrest-task.ps1`; it is not needed for the current session |
 | `no interop` | WSL cannot run Windows programs | The user checks vmrest on Windows |
 
 Do not run Terraform until preflight exits 0.

@@ -18,6 +18,8 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 | WSL cannot reach `127.0.0.1:8697` | WSL in NAT mode; vmrest bound to loopback | Use mirrored mode. Do not expose Basic-auth vmrest to the LAN |
 | VM missing from `/api/vms` | VMX/disk exist but not registered | `bash register-base.sh` (idempotent by path) |
 | `vmrest -C` fails with piped password | requires interactive input | user types it interactively |
+| Unauthenticated 401 works, authenticated request also 401 (Terraform/provider auth errors) | `lab.env` username/password differ from the vmrest API account (`vmrest.exe -C`, stored in `vmrest.cfg` in the Windows user profile; password not readable) | user corrects `lab.env`, or re-runs `vmrest.exe -C`, matches `lab.env` and restarts vmrest. Never read or print the values |
+| Account worked before, now 401 | vmrest restarted under another Windows user (other profile, other `vmrest.cfg`), or `-C` was re-run without updating `lab.env` | check which user runs vmrest (logon task principal); keep one account in sync |
 | `inspect-base.sh` fails on `listRegisteredVM` | unsupported command | use `api-status.sh` |
 
 ## Terraform provider

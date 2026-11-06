@@ -2,14 +2,15 @@
 # Session preflight for the WSL + VMware lab. Run inside WSL, from anywhere:
 #   bash <repo>/preflight.sh                 # report only, changes nothing
 #   bash <repo>/preflight.sh --start-vmrest  # also start vmrest if it is down
-# Exit code 0 = vmrest API is reachable; 1 = not ready. Never prints secrets.
+# Exit code 0 = vmrest reachable AND lab.env credentials accepted; 1 = not ready.
+# Never prints secrets.
 set -uo pipefail
 
 start_vmrest=false
 case "${1:-}" in
   "") ;;
   --start-vmrest) start_vmrest=true ;;
-  -h|--help) sed -n '2,5p' "$0"; exit 0 ;;
+  -h|--help) sed -n '2,6p' "$0"; exit 0 ;;
   *) echo "Unknown option: $1 (use --start-vmrest)" >&2; exit 2 ;;
 esac
 
@@ -133,16 +134,43 @@ case "$code" in
   *)   fail "unexpected HTTP $code from ${VMWS_ENDPOINT}"; exit 1 ;;
 esac
 
-if $have_creds; then
-  auth_code="$(curl --connect-timeout 3 --max-time 8 -s -o /dev/null -w '%{http_code}' -K - "${VMWS_ENDPOINT%/}/vms" \
-    <<<"user = \"${VMWS_USERNAME}:${VMWS_PASSWORD}\"")"
-  if [[ "$auth_code" == 200 ]]; then
-    ok "authenticated GET /vms: HTTP 200"
-  else
-    fail "authenticated GET /vms: HTTP $auth_code - check VMWS_USERNAME / VMWS_PASSWORD"
-    exit 1
+# Windows-side setup that matters after a reboot or for authentication.
+# vmrest.cfg (written by `vmrest.exe -C`) holds the API account; observed in
+# %USERPROFILE% of the Windows user running vmrest. Only its presence is checked.
+if $interop; then
+  extra="$("$PS" -NoProfile -NonInteractive -Command '
+    $t = Get-ScheduledTask -TaskName "VMware vmrest API" -ErrorAction SilentlyContinue
+    $c = Test-Path (Join-Path $env:USERPROFILE "vmrest.cfg")
+    "task=$(if ($t) { $t.State } else { "absent" }) cfg=$c"' 2>/dev/null | tr -d '\r')"
+  if [[ "$extra" == *"task=absent"* ]]; then
+    warn "logon task 'VMware vmrest API' absent: vmrest will not start after a reboot (install with windows/install-vmrest-task.ps1)"
+  elif [[ -n "$extra" ]]; then
+    ok "logon task 'VMware vmrest API' present"
   fi
-else
-  warn "skipped authenticated check (no credentials)"
+  if [[ "$extra" == *"cfg=False"* ]]; then
+    warn "no vmrest.cfg in the Windows user profile: the API account may not be set up (the user runs vmrest.exe -C)"
+  elif [[ "$extra" == *"cfg=True"* ]]; then
+    ok "vmrest account file present in the Windows user profile (not read)"
+  fi
 fi
-echo '== Ready: vmrest reachable'
+
+if ! $have_creds; then
+  fail "cannot verify the vmrest account: VMWS_USERNAME / VMWS_PASSWORD not set"
+  echo "       The user puts the account created with vmrest.exe -C into lab.env (see lab.env.example)."
+  exit 1
+fi
+auth_code="$(curl --connect-timeout 3 --max-time 8 -s -o /dev/null -w '%{http_code}' -K - "${VMWS_ENDPOINT%/}/vms" \
+  <<<"user = \"${VMWS_USERNAME}:${VMWS_PASSWORD}\"")"
+if [[ "$auth_code" == 200 ]]; then
+  ok "authenticated GET /vms: HTTP 200 (lab.env matches the vmrest account)"
+elif [[ "$auth_code" == 401 ]]; then
+  fail "authenticated GET /vms: HTTP 401 - lab.env does not match the vmrest account"
+  echo "       vmrest keeps its own account (vmrest.exe -C); the password is not stored in readable form."
+  echo "       The user either corrects lab.env, or re-runs vmrest.exe -C, updates lab.env to match"
+  echo "       and restarts vmrest. Also check that vmrest runs as the same Windows user."
+  exit 1
+else
+  fail "authenticated GET /vms: HTTP $auth_code"
+  exit 1
+fi
+echo '== Ready: vmrest reachable and credentials accepted'
