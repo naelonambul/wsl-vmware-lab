@@ -18,6 +18,7 @@ WSL Ansible --SSH--> 테스트 VM (nginx 설치, 페이지 배포, HTTP 확인)
 
 | 경로 | 내용 |
 |---|---|
+| `preflight.sh` | 작업 전 점검: 환경 감지, 설정 유무, 도구, vmrest 상태(`--start-vmrest`로 켜기) |
 | `lib/config.sh` | 모든 bash 스크립트가 불러오는 설정 로더 |
 | `lab.env.example` | 설정 예시(가짜 값). `lab.env`로 복사해서 사용 |
 | `*.sh`, `*.py` (최상위) | WSL에서 실행하는 본 스크립트 (2·3편) |
@@ -80,8 +81,9 @@ sudo bash setup-wsl-tools.sh                 # Terraform(HashiCorp apt), Ansible
 sha256sum --ignore-missing -c SHA256SUMS
 bash extract-ubuntu-image.sh
 bash prepare-cloud-init.sh
+bash preflight.sh                            # vmrest 확인. 꺼져 있으면 --start-vmrest
 bash prepare-base.sh                         # 1회만: 베이스 VMX 생성, API 등록, 첫 부팅
-bash api-status.sh                           # vmrest 확인
+bash api-status.sh                           # 등록된 VM 목록
 bash terraform-vm.sh on                      # 복제 -> cloud-init/NIC 준비 -> 전원 ON
 ANSIBLE_TIMEOUT=60 bash configure-guest.sh   # nginx 설치, HTTP 확인 (두 번째 실행 changed=0)
 bash terraform-vm.sh off
@@ -89,6 +91,15 @@ bash terraform-vm.sh destroy                 # 삭제 + seed ISO/빈 폴더 정�
 ```
 
 자세한 설명과 함정은 블로그 글과 [`.claude/skills/vmware-wsl-lab/reference/pitfalls.md`](.claude/skills/vmware-wsl-lab/reference/pitfalls.md)를 참고하세요.
+
+## 작업 전 점검: `preflight.sh`
+
+```bash
+bash preflight.sh                 # 점검만 하고 아무것도 바꾸지 않음. vmrest가 응답하면 종료 코드 0
+bash preflight.sh --start-vmrest  # vmrest가 꺼져 있으면 'VMware vmrest API' 작업을 시작하고 최대 30초 대기
+```
+
+실제로 감지한 값(저장소 위치, WSL 사용자·배포판, Windows 프로필, mirrored 여부)과 설정 파일 유무, 도구 설치 상태, vmrest 응답을 보여 줍니다. 비밀번호 값은 출력하지 않습니다. vmrest가 Windows에서는 실행 중인데 WSL에서 닿지 않으면, 새로 켜지 않고 endpoint와 네트워크 설정을 확인하라고 안내합니다.
 
 ## 블로그 원본과 달라진 점
 

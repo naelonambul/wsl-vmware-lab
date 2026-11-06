@@ -5,7 +5,33 @@ description: Sets up and operates a Windows + WSL2 + VMware Workstation lab wher
 
 # VMware Workstation + WSL lab
 
-Two situations share this skill. Pick one first.
+Host name, Windows user, WSL user, distro and repository location differ on every machine. Discover them; never reuse values from examples or earlier sessions.
+
+## 0. Start every session with preflight
+
+If you are already in a WSL shell (for example over SSH), SSH works; do not spend time checking it. Find the repository, then run preflight:
+
+```bash
+# Lists every checkout of this repository (any folder name) under the WSL home and Windows users.
+find "$HOME" /mnt/c/Users -maxdepth 6 -name preflight.sh 2>/dev/null \
+  | while read -r f; do [ -f "$(dirname "$f")/lib/config.sh" ] && dirname "$f"; done
+repo=<the one path printed>     # several printed: ask the user which one
+bash "$repo/preflight.sh"
+```
+
+If nothing is printed, ask the user where the repository is, or whether to clone https://github.com/naelonambul/wsl-vmware-lab. Preflight reports the discovered repository, WSL user, distro, Windows profile, networking mode, settings file (values hidden), tools and vmrest state. Exit code 0 means vmrest is reachable.
+
+When preflight fails at vmrest:
+
+| Preflight output | Meaning | Next step |
+|---|---|---|
+| `HTTP 000` and `process=False` | vmrest is not running | Ask the user, then `bash "$repo/preflight.sh" --start-vmrest` (starts the `VMware vmrest API` logon task, or runs `windows/start-vmrest.ps1` once) |
+| `HTTP 000` but `process=True listener8697=True` | vmrest runs; WSL cannot reach it | Check `VMWS_ENDPOINT` and mirrored networking. Do not start a second vmrest |
+| `HTTP 404` | endpoint lacks `/api` | Fix `VMWS_ENDPOINT` |
+| authenticated `HTTP 401` | wrong API account | The user re-enters it in `lab.env` (created with `vmrest.exe -C`) |
+| `no interop` | WSL cannot run Windows programs | The user checks vmrest on Windows |
+
+Do not run Terraform until preflight exits 0.
 
 ## 1. Choose the path
 
@@ -47,17 +73,19 @@ All bash scripts source `lib/config.sh`, which reads `lab.env` (gitignored; temp
 1. **User decides.** Propose options with trade-offs before changing a host, and run only what the user picks.
 2. **Secrets.** Never print, copy or commit `lab.env`, vmrest credentials, SSH private keys, Terraform state or generated `inventory.json`. Do not enable `set -x` around config loading. New variables get a fake value in `lab.env.example`.
 3. **Preserve.** Never delete or re-prepare the base VM, reset WSL distributions, restore VMware network defaults, or overwrite an existing Terraform state unless the user explicitly asks.
-4. **Check before lifecycle commands.** An unauthenticated `curl` to `/api/vms` must return `401` (or `200` with auth). `000`/timeout means vmrest is down; fix that before touching Terraform.
+4. **Check before lifecycle commands.** `preflight.sh` must exit 0 in this session before any Terraform command (section 0).
 5. **One runner per state.** One checkout = one state, one clone, one inventory. Serialize work, or use a fully isolated checkout with its own `lab.env`.
 6. **Destroy via the wrapper.** Use `bash terraform-vm.sh destroy` (runs cleanup), never bare `terraform destroy`. `0 destroyed` with vmrest down is not success.
 7. **Never disable host key checking globally.** Remove only the verified clone's stale entry.
 8. **Never disable Hyper-V / VBS / Secure Boot** to make VMware start; WSL2 needs them.
 9. **Verification.** Report a step as done only with the command and its actual output. Historical results in references are not fresh evidence.
 
-## 5. Routine command set (repository root, in WSL)
+## 5. Routine command set (in WSL, from the repository found in section 0)
 
 ```bash
-bash api-status.sh                         # vmrest inventory check
+cd "$repo"
+bash preflight.sh                          # must exit 0 first
+bash api-status.sh                         # vmrest inventory (JSON; contains VM paths)
 bash terraform-vm.sh status                # state (contains details; report only non-secret findings)
 bash terraform-vm.sh on                    # OFF create -> bootstrap -> ON
 ANSIBLE_TIMEOUT=60 bash configure-guest.sh # nginx + HTTP assertions
@@ -71,14 +99,14 @@ bash terraform-vm.sh destroy               # interactive; cleanup-aware
 ## 6. Acceptance checklist (copy and tick)
 
 ```
-- [ ] vmrest reachable from WSL (401 unauthenticated, 200 authenticated)
+- [ ] preflight.sh exit 0 (vmrest 401 unauthenticated, 200 authenticated)
 - [ ] clone appears in API inventory and is poweredOn
 - [ ] Ansible run 1: HTTP 200 + expected content, failed=0
 - [ ] Ansible run 2: changed=0 unreachable=0 failed=0
 - [ ] power-off confirmed by API, not only Terraform exit code
 - [ ] destroy removed clone from API/state + VMX, VMDK, seed ISO, clone dir
 - [ ] base VM and unrelated VMs unchanged; shared inventory restored
-- [ ] external SSH and WSL->vmrest still work afterwards
+- [ ] preflight.sh still exits 0 afterwards
 ```
 
 ## 7. Report format

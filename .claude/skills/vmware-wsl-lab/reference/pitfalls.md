@@ -13,7 +13,7 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| Terraform hangs reading base VM, then fails; `curl` gives HTTP `000` | vmrest not running, no 8697 listener (common after reboot) | Check Windows process/listener (`Get-NetTCPConnection` port 8697); start vmrest / its logon task `VMware vmrest API`; re-probe expecting 401 |
+| Terraform hangs reading base VM, then fails; `curl` gives HTTP `000` | vmrest not running, no 8697 listener (common after reboot) | `bash preflight.sh` shows the Windows process/listener/task state; with the user's OK, `bash preflight.sh --start-vmrest` starts it and waits for 401 |
 | Terraform 404 | endpoint missing `/api` | `http://127.0.0.1:8697/api` |
 | WSL cannot reach `127.0.0.1:8697` | WSL in NAT mode; vmrest bound to loopback | Use mirrored mode. Do not expose Basic-auth vmrest to the LAN |
 | VM missing from `/api/vms` | VMX/disk exist but not registered | `bash register-base.sh` (idempotent by path) |
@@ -51,6 +51,7 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 | Port 22 conflict | Windows OpenSSH Server owns 22 | choose deliberately; do not stop unrelated services silently |
 | `.wslconfig` ignored | saved as `.wslconfig.txt` | rename |
 | PowerShell 5.1 task aborts on systemctl message | stderr + `ErrorActionPreference=Stop` | judge by exit code and LISTEN state |
+| `WSL2 SSH Port Forward Refresh` last result `1`; log shows `wsl: Failed to start the systemd user session` | `wsl.exe` prints this warning on stderr and the task reports failure (seen in mirrored mode; root cause not confirmed) | judge by a real SSH login from another PC; in mirrored mode no portproxy is needed anyway |
 | Unreachable after reboot before logon | tasks trigger at logon, not boot | expected; needs user logon |
 
 Do not restart WSL or edit scheduled tasks during an active remote session without a recovery path (Windows console).

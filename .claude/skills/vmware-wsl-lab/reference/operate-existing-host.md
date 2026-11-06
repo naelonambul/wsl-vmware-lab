@@ -1,10 +1,10 @@
 # Operating an existing lab host (template)
 
-Use this when the lab is already installed and an agent connects to it to run or change VMs. Placeholders in `<ANGLE_BRACKETS>` must be filled from the actual host, never guessed. Keep a filled-in copy privately (outside this public repository) if it contains internal addresses.
+Use this when the lab is already installed and you are in a WSL shell on it (locally or over SSH). Host name, users, distro and paths differ per machine: take them from `preflight.sh` output, not from this file.
 
 ## Contents
-- Start here: connect and inspect
-- Host and filesystem map (fill in)
+- Start here
+- Where things are (defaults; preflight shows the actual values)
 - Responsibilities and connectivity
 - Credentials and private artifacts
 - Routine commands
@@ -14,36 +14,27 @@ Use this when the lab is already installed and an agent connects to it to run or
 - Known operational lessons
 - Evidence rules
 
-## Start here: connect and inspect
+## Start here
 
-```bash
-ssh <SSH_ALIAS>            # resolves to <WSL_USER>@<WINDOWS_LAN_IP>:22
-cd <REPO_WSL_PATH>         # e.g. /mnt/c/Users/<WINDOWS_USER>/.../wsl-vmware-lab
-```
-
-The remote shell is Bash inside WSL2, not Windows PowerShell. Before changing anything:
-
-1. Read this file and the repository `README.md`.
-2. `bash api-status.sh` — confirm vmrest answers (HTTP 000/timeout = vmrest down; fix that first).
-3. `bash terraform-vm.sh status` — inspect current state; report only non-secret findings.
+1. Run preflight as described in SKILL.md section 0, and continue only when it exits 0.
+2. `bash terraform-vm.sh status`: inspect the current state and report only non-secret findings.
+3. Read the repository `README.md` if settings in `lab.env` look unusual.
 4. Preserve the base VM and any existing clone unless the user explicitly authorizes changes.
 
-## Host and filesystem map (fill in)
+The shell is Bash inside WSL2, not PowerShell. Run Windows commands through `powershell.exe -NoProfile -Command ...`.
 
-| Component | Value |
-| --- | --- |
-| Windows host name | `<WINDOWS_HOSTNAME>` |
-| Windows user profile | `C:\Users\<WINDOWS_USER>` (detected automatically by `lib/config.sh`) |
-| WSL distribution | `Ubuntu-24.04` (default) |
-| WSL account | `ubuntu` (recommended default) → `/home/ubuntu` |
-| Repository, Windows path | `<REPO_WINDOWS_PATH>` |
-| Repository, WSL path | `<REPO_WSL_PATH>` (same files via `/mnt/c`) |
-| Workstation tools | `/mnt/c/Program Files/VMware/VMware Workstation/` (`VMWARE_DIR`) |
-| Clone VMX | `%USERPROFILE%\Documents\Virtual Machines\<clone>\<clone>.vmx` (`LAB_CLONE_VMX_WIN`) |
-| Base VMX | `base/ubuntu-base.vmx` in the repository |
-| Private directory | `~/.config/wsl-vmware-lab/` (`LAB_PRIVATE_DIR`) |
-| DHCP leases | `/mnt/c/ProgramData/VMware/vmnetdhcp.leases` |
-| SSH forward script | `windows/wsl2-ssh-forward.ps1` (copied to a fixed Windows folder) |
+## Where things are (defaults; preflight shows the actual values)
+
+| Component | Default | Override |
+| --- | --- | --- |
+| Repository | wherever it was cloned; preflight prints it | n/a |
+| Windows user profile | detected through Windows interop | `LAB_CLONE_VMX_WIN` |
+| Clone VMX | `%USERPROFILE%\Documents\Virtual Machines\<clone>\<clone>.vmx` | `LAB_CLONE_VMX_WIN` |
+| Base VMX | `base/ubuntu-base.vmx` in the repository | `LAB_BASE_DIR` |
+| Workstation tools | `/mnt/c/Program Files/VMware/VMware Workstation/` | `VMWARE_DIR` |
+| Private directory | `~/.config/wsl-vmware-lab/` | `LAB_PRIVATE_DIR` |
+| Guest user | `ubuntu` | `LAB_GUEST_USER` |
+| DHCP leases | `/mnt/c/ProgramData/VMware/vmnetdhcp.leases` | `LAB_DHCP_LEASES` |
 
 Use `wslpath -w` for arguments passed to Windows tools and `wslpath -u` for paths read from Terraform. VM disks and ISO files must be on a Windows drive.
 
@@ -57,7 +48,7 @@ Use `wslpath -w` for arguments passed to Windows tools and `wslpath -u` for path
 
 VMnet8 = NAT (internet), VMnet1 = host-only management. If WSL cannot reach the management IP directly, inventory uses `guest-proxy.sh` + `tcp-relay.ps1` (per-connection stdio relay; no listening port).
 
-Record the host's `.wslconfig` (networking mode, memory, processors) here: `<WSLCONFIG_SUMMARY>`. Do not change it merely to run the example.
+Preflight reports whether `.wslconfig` uses mirrored networking. Do not change `.wslconfig` merely to run the example.
 
 ## Credentials and private artifacts
 
