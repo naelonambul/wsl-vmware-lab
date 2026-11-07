@@ -5,25 +5,15 @@ cd "$(dirname "$0")"
 source lib/config.sh
 source lib/cloud-config.sh
 # Refuse unless the clone is positively known to be off: a failed or garbled
-# vmrun answer must stop here, before any file is changed. Windows paths are
-# compared case-insensitively with / and \ treated alike.
-norm_win_path() { local p="${1//\//\\}"; printf '%s' "${p,,}"; }
-if ! running=$("${VMWARE_DIR}/vmrun.exe" -T ws list 2>&1); then
-  echo "[ERROR] vmrun could not list running VMs; not editing the clone: ${running//$'\r'/}" >&2
+# vmrun answer must stop here, before any file is changed.
+power=0; lab_vm_running "$VMX_WIN" || power=$?
+if [[ $power -eq 0 ]]; then
+  echo 'Power the clone off with Terraform before bootstrap; use terraform-vm.sh on.' >&2
+  exit 1
+elif [[ $power -ne 1 ]]; then
+  echo '[ERROR] Could not confirm the clone is powered off; not editing it.' >&2
   exit 1
 fi
-running=${running//$'\r'/}
-if [[ "$(head -n 1 <<<"$running")" != 'Total running VMs: '* ]]; then
-  echo "[ERROR] Unexpected vmrun list output; not editing the clone: $(head -n 1 <<<"$running")" >&2
-  exit 1
-fi
-target=$(norm_win_path "$VMX_WIN")
-while IFS= read -r line; do
-  if [[ -n "$line" && "$(norm_win_path "$line")" == "$target" ]]; then
-    echo 'Power the clone off with Terraform before bootstrap; use terraform-vm.sh on.' >&2
-    exit 1
-  fi
-done < <(tail -n +2 <<<"$running")
 [[ "$VM_ID" =~ ^[A-Za-z0-9_-]+$ ]] || { echo 'Invalid VM id from Terraform' >&2; exit 1; }
 vmx=$(wslpath -u "$VMX_WIN")
 seed_dir="$LAB_PRIVATE_DIR/seed-$VM_ID"
@@ -82,6 +72,10 @@ for key,value in settings.items():
     pattern=r'(?m)^\s*'+re.escape(key)+r'\s*=.*$'
     if re.search(pattern,s): s=re.sub(pattern,lambda m:line,s)
     else: s+='\n'+line
-p.write_text(s+'\n')
+# Write a sibling temp file and rename it over the VMX, so an interrupted
+# write never leaves a truncated VMX.
+tmp=p.with_name(p.name+'.tmp')
+tmp.write_text(s+'\n')
+os.replace(tmp,p)
 print('[OK] Cloud-init seed, management NIC and a fresh UUID/MAC for this clone configured')
 PY
