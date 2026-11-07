@@ -193,7 +193,7 @@ bash preflight.sh --start-vmrest  # vmrest가 꺼져 있으면 'VMware vmrest AP
   `-WhatIf`를 붙이면 바꿀 내용만 보여 줍니다. 노트북을 실습 호스트로 쓰면 전원을 연결해 두세요.
 - **올리면 안 되는 파일:** `lab.env`, `%USERPROFILE%\.env`, SSH 개인키, `*.tfstate`, `inventory.json`, VM 디스크·ISO는 `.gitignore`에 들어 있습니다. 커밋하지 마세요.
 - **비공식 provider:** `elsudano/vmworkstation`은 HashiCorp나 Broadcom이 아닌 커뮤니티 provider입니다. 버전을 올리기 전에 스키마를 확인하세요(`terraform providers schema -json`).
-- **진단 스크립트:** `extras/diagnose-terraform.sh`는 베이스 VM을 끄고 `power_state=off`를 적용합니다. 실행 전에 내용을 읽어 보세요.
+- **진단 스크립트:** `extras/diagnose-terraform.sh`는 읽기 전용입니다. 사용 중인 VM 목록, state, 베이스 VM 전원 상태, plan이 바꿀 내용(삭제·교체는 경고)만 보여 주고 아무것도 적용하지 않습니다.
 
 ## License
 
