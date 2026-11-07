@@ -144,7 +144,7 @@ bash download-ubuntu-image.sh               # 공식 OVA 받기 + 서명(gpgv)·
 bash extract-ubuntu-image.sh
 bash prepare-cloud-init.sh
 bash preflight.sh                            # vmrest 확인. 꺼져 있으면 --start-vmrest
-bash prepare-base.sh                         # 1회만: 베이스 VMX 생성, API 등록, 첫 부팅
+bash prepare-base.sh                         # 1회만: 베이스 VMX 생성, API 등록, 첫 부팅 (다시 실행하면 건너뜀)
 bash api-status.sh                           # 등록된 VM 목록
 bash terraform-vm.sh on                      # 복제 -> cloud-init/NIC 준비 -> 전원 ON
 ANSIBLE_TIMEOUT=60 bash configure-guest.sh   # nginx 설치, HTTP 확인 (두 번째 실행 changed=0)
@@ -152,6 +152,8 @@ bash terraform-vm.sh off                     # 전원만 끔. plan에 다른 변
 bash terraform-vm.sh destroy                 # 삭제 + seed ISO/빈 폴더 정리
 bash terraform-vm.sh cleanup                 # 정리가 실패했거나 중간에 끊겼을 때 다시 정리
 ```
+
+`prepare-base.sh`는 디스크를 임시 파일로 변환하고, 검사가 통과해야 `base/ubuntu-base.vmdk`로 바꿉니다(완성 표시 `ubuntu-base.vmdk.complete`). 베이스가 꺼진 것을 확인한 뒤에만 준비 완료 표시(`ubuntu-base.prepared`)를 남기고, 이 표시가 있으면 다시 실행해도 아무것도 하지 않습니다. 이미 있는 베이스 VMX는 덮어쓰지 않습니다. 베이스를 새로 만들려면 베이스를 끄고 `bash prepare-base.sh --recreate`를 실행합니다(이미 만든 클론은 그대로 남습니다). 예전 버전으로 만든 베이스는 표시가 없어서 다시 실행하면 거부하며, 이때 출력되는 안내를 따릅니다.
 
 VM을 지우기 전에 지울 VM을 `terraform/cleanup-pending.json`에 적어 두고, 정리가 끝난 VM만 목록에서 뺍니다. 정리가 실패하거나 중간에 끊기면 다음 `on`·`destroy`·`cleanup`이 남은 정리를 이어서 합니다. `status`는 정리가 남은 VM을 알려 줍니다.
 

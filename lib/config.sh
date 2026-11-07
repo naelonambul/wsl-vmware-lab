@@ -155,3 +155,27 @@ lab_terraform_env() {
     return 1
   fi
 }
+
+# Windows path compared case-insensitively, with / and \ treated alike.
+lab_norm_win_path() { local p="${1//\//\\}"; printf '%s' "${p,,}"; }
+
+# Is the VM with this Windows VMX path running? Exit status: 0 running,
+# 1 not running, 2 unknown (vmrun failed or answered unexpectedly; reason on
+# stderr). Callers must treat 2 as "do not touch the VM".
+lab_vm_running() {
+  local target out line
+  target=$(lab_norm_win_path "$1")
+  if ! out=$("${VMWARE_DIR}/vmrun.exe" -T ws list 2>&1); then
+    echo "vmrun could not list running VMs: ${out//$'\r'/}" >&2
+    return 2
+  fi
+  out=${out//$'\r'/}
+  if [[ "$(head -n 1 <<<"$out")" != 'Total running VMs: '* ]]; then
+    echo "unexpected vmrun list output: $(head -n 1 <<<"$out")" >&2
+    return 2
+  fi
+  while IFS= read -r line; do
+    [[ -n "$line" && "$(lab_norm_win_path "$line")" == "$target" ]] && return 0
+  done < <(tail -n +2 <<<"$out")
+  return 1
+}
