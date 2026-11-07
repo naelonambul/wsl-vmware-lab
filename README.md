@@ -150,7 +150,10 @@ bash terraform-vm.sh on                      # 복제 -> cloud-init/NIC 준비 -
 ANSIBLE_TIMEOUT=60 bash configure-guest.sh   # nginx 설치, HTTP 확인 (두 번째 실행 changed=0)
 bash terraform-vm.sh off                     # 전원만 끔. plan에 다른 변경이 있으면 거부
 bash terraform-vm.sh destroy                 # 삭제 + seed ISO/빈 폴더 정리
+bash terraform-vm.sh cleanup                 # 정리가 실패했거나 중간에 끊겼을 때 다시 정리
 ```
+
+VM을 지우기 전에 지울 VM을 `terraform/cleanup-pending.json`에 적어 두고, 정리가 끝난 VM만 목록에서 뺍니다. 정리가 실패하거나 중간에 끊기면 다음 `on`·`destroy`·`cleanup`이 남은 정리를 이어서 합니다. `status`는 정리가 남은 VM을 알려 줍니다.
 
 ## 내 시스템 올리기: 여러 VM + 내 플레이북
 

@@ -115,6 +115,7 @@ ANSIBLE_TIMEOUT=60 bash configure-guest.sh # idempotence: expect changed=0 faile
 ANSIBLE_TIMEOUT=60 bash configure-guest.sh ~/my-system/site.yml    # the user's own playbook
 bash terraform-vm.sh off                   # targeted apply; refused unless the plan is power changes only
 bash terraform-vm.sh destroy               # interactive; cleanup-aware, every VM
+bash terraform-vm.sh cleanup               # retry cleanup left by a failed or interrupted delete
 ```
 
 Several VMs: `cp vms.tfvars.example vms.tfvars`, edit, then `terraform-vm.sh on`. Changing the list later: edit and run `on` again (removing entries: `on --allow-destroy`, after the user confirms).
