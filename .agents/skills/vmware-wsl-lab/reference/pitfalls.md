@@ -31,6 +31,8 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 | Scheduled task fails after moving the repository | tasks registered by an older version store the checkout path | re-run `windows/install-vmrest-task.ps1` and `wsl2-ssh-forward.ps1 InstallTask` (elevated); current versions run a copy in `%ProgramFiles%\wsl-vmware-lab` |
 | Fix pulled into the repository has no effect on boot tasks | tasks run the copy in `%ProgramFiles%\wsl-vmware-lab` | re-run both installs (elevated); `preflight.sh` warns when the copy differs |
 | Install refuses: `... can be changed by <user>; refusing to use it for a scheduled task` | `%ProgramFiles%\wsl-vmware-lab` ACL lets a non-administrator write | restore inherited Program Files permissions on that folder (or delete it) and re-run the install |
+| `A portproxy not created by this script uses 0.0.0.0:22 ...` | another tool's portproxy holds 0.0.0.0:22; the script records the one it creates and touches only that | ask the user before deleting it; in mirrored mode it can collide with WSL sshd |
+| `Hyper-V firewall rule ... does not look like this script's rule; left unchanged` | a same-name Hyper-V rule with a different display name, direction, VM creator or port | ask the user; the script will not modify or remove it |
 
 ## Terraform provider
 
