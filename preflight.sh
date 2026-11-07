@@ -101,6 +101,8 @@ fi
 ok "guest user: image default, reported by the guest via guestinfo  base: $LAB_BASE_NAME"
 if [[ -f "$LAB_VMS_FILE" ]]; then
   ok "VM list: $LAB_VMS_FILE"
+elif [[ "$LAB_VMS_FILE_EXPLICIT" == 1 ]]; then
+  warn "VM list: LAB_VMS_FILE is set but $LAB_VMS_FILE does not exist; terraform-vm.sh will refuse to run"
 else
   ok "VM list: single VM $LAB_CLONE_NAME (${LAB_CLONE_CPUS} vCPU, ${LAB_CLONE_MEMORY_MB} MB); for several VMs copy vms.tfvars.example to vms.tfvars"
 fi

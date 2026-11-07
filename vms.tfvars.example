@@ -8,7 +8,8 @@
 # Omitted values default to 2 vCPU, 2048 MB and groups ["demo"].
 #
 # Adding an entry and running `terraform-vm.sh on` creates only the new VM
-# (running VMs stay on). Removing an entry destroys that VM and cleans its files.
+# (running VMs stay on). Removing an entry needs `terraform-vm.sh on --allow-destroy`,
+# which destroys that VM and cleans its files; plain `on` refuses to delete VMs.
 
 vms = {
   "web1" = {
