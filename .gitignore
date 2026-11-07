@@ -41,3 +41,7 @@ agent-live-*/
 __pycache__/
 *.pyc
 *.part
+
+# Cleanup journal for deleted clones (terraform-vm.sh)
+cleanup-pending.json
+cleanup-pending.json.tmp

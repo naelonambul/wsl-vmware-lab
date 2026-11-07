@@ -44,7 +44,13 @@ for line in open(sys.argv[1]):
     except ValueError:
         continue
     if m.get("@level") == "error":
-        errors.append(m.get("@message", ""))
+        d = m.get("diagnostic", {})
+        msg = d.get("summary") or m.get("@message", "")
+        if d.get("detail"):
+            msg += ": " + d["detail"]
+        if d.get("address"):
+            msg += " (at " + d["address"] + ")"
+        errors.append(msg)
     if m.get("type") == "planned_change":
         c = m["change"]
         changes.append((c.get("action"), c["resource"].get("addr")))
