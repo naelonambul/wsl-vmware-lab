@@ -12,7 +12,9 @@
   .\wsl2-ssh-forward.ps1 RemoveTask
   StartSsh is an internal Scheduled Task action.
   Install and InstallTask save -Distro and -AllowedRemoteAddress; later runs without them
-  reuse the saved values (%ProgramData%\wsl2-ssh-forward\settings.json).
+  reuse the saved values (%ProgramFiles%\wsl-vmware-lab\wsl2-ssh-forward.settings.json).
+  InstallTask copies this script to %ProgramFiles%\wsl-vmware-lab and the tasks run that copy;
+  re-run InstallTask after updating the repository.
 
 .STRUCTURE
   NAT: Windows 0.0.0.0:22 -> current WSL IPv4:22 -> sshd
@@ -49,7 +51,52 @@ param(
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
-$script:SettingsPath = Join-Path $env:ProgramData 'wsl2-ssh-forward\settings.json'
+# Scheduled tasks must not run a script that a non-administrator can change:
+# the task would run the edited code with the task's rights. Tasks therefore
+# run a copy in %ProgramFiles%\wsl-vmware-lab, writable only by SYSTEM,
+# Administrators and TrustedInstaller. Re-run the install after updating the
+# repository to refresh the copy.
+$script:ProtectedDir = Join-Path $env:ProgramFiles 'wsl-vmware-lab'
+
+function Assert-AdminOnlyWritable {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $trusted = @('S-1-5-18', 'S-1-5-32-544', 'S-1-5-80-956008885-3418522649-1831038044-1853292631-2271478464')
+    # Specific write rights plus GENERIC_ALL (0x10000000) and GENERIC_WRITE (0x40000000).
+    $mask = [int][Security.AccessControl.FileSystemRights]'WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership' -bor 0x50000000
+    $acl = Get-Acl -LiteralPath $Path
+    $owner = $acl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    if ($trusted -notcontains $owner) {
+        throw "$Path is owned by $owner, not Administrators/SYSTEM; refusing to use it for a scheduled task."
+    }
+    foreach ($rule in $acl.GetAccessRules($true, $true, [Security.Principal.SecurityIdentifier])) {
+        if ($rule.AccessControlType -ne 'Allow') { continue }
+        if ($rule.PropagationFlags -band [Security.AccessControl.PropagationFlags]::InheritOnly) { continue }
+        if ((([int]$rule.FileSystemRights) -band $mask) -and ($trusted -notcontains $rule.IdentityReference.Value)) {
+            $name = $rule.IdentityReference.Value
+            try { $name = $rule.IdentityReference.Translate([Security.Principal.NTAccount]).Value } catch { }
+            throw "$Path can be changed by $name; refusing to use it for a scheduled task."
+        }
+    }
+}
+
+function Install-ProtectedScript {
+    param([Parameter(Mandatory = $true)][string]$Source)
+    $dest = Join-Path $script:ProtectedDir (Split-Path -Leaf $Source)
+    New-Item -ItemType Directory -Path $script:ProtectedDir -Force | Out-Null
+    Assert-AdminOnlyWritable -Path $script:ProtectedDir
+    if ((Resolve-Path -LiteralPath $Source).Path -ne $dest) {
+        Copy-Item -LiteralPath $Source -Destination $dest -Force
+    }
+    Assert-AdminOnlyWritable -Path $dest
+    $hash = (Get-FileHash -LiteralPath $dest -Algorithm SHA256).Hash
+    Write-Host "[OK] Installed $dest (SHA-256 $hash)" -ForegroundColor Green
+    return $dest
+}
+
+$script:InstalledScript = Join-Path $script:ProtectedDir 'wsl2-ssh-forward.ps1'
+$script:SettingsPath = Join-Path $script:ProtectedDir 'wsl2-ssh-forward.settings.json'
+# Older versions kept settings here, where any user can write; no longer read.
+$script:LegacySettingsPath = Join-Path $env:ProgramData 'wsl2-ssh-forward\settings.json'
 if ($Action -notin @('Install', 'InstallTask') -and (Test-Path -LiteralPath $script:SettingsPath)) {
     try {
         $saved = Get-Content -LiteralPath $script:SettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
@@ -254,11 +301,20 @@ function Start-WslSshService {
 }
 
 function Save-Settings {
-    $dir = Split-Path -Parent $script:SettingsPath
-    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    # The elevated refresh task reads these values, so they live in the
+    # administrator-only folder too.
+    New-Item -ItemType Directory -Force -Path $script:ProtectedDir | Out-Null
+    Assert-AdminOnlyWritable -Path $script:ProtectedDir
     $json = [ordered]@{ Distro = $Distro; AllowedRemoteAddress = $script:AllowedRemoteAddress } | ConvertTo-Json
     [System.IO.File]::WriteAllText($script:SettingsPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+    Assert-AdminOnlyWritable -Path $script:SettingsPath
     Write-Ok "Saved settings: Distro=$Distro, AllowedRemoteAddress=$($script:AllowedRemoteAddress)"
+    if (Test-Path -LiteralPath $script:LegacySettingsPath) {
+        Remove-Item -LiteralPath $script:LegacySettingsPath -Force
+        $legacyDir = Split-Path -Parent $script:LegacySettingsPath
+        if (-not (Get-ChildItem -LiteralPath $legacyDir -Force)) { Remove-Item -LiteralPath $legacyDir -Force }
+        Write-Ok "Removed old settings file: $($script:LegacySettingsPath)"
+    }
 }
 
 function Wait-WslSshListening {
@@ -506,6 +562,19 @@ function Set-SshPortProxy {
 
 function Show-Status {
     Write-Host "WSL distribution : $Distro"
+    if (Test-Path -LiteralPath $script:InstalledScript) {
+        $installedHash = (Get-FileHash -LiteralPath $script:InstalledScript -Algorithm SHA256).Hash
+        if ($PSCommandPath -and $PSCommandPath -ne $script:InstalledScript -and
+            (Get-FileHash -LiteralPath $PSCommandPath -Algorithm SHA256).Hash -ne $installedHash) {
+            Write-Warn "Task script $($script:InstalledScript) differs from $PSCommandPath; re-run InstallTask (elevated) to update it"
+        }
+        else {
+            Write-Ok "Task script: $($script:InstalledScript)"
+        }
+    }
+    else {
+        Write-Warn "Task script not installed ($($script:InstalledScript)); run InstallTask (elevated)"
+    }
 
     $mirrored = $false
     try {
@@ -648,9 +717,11 @@ function Remove-SshForwarding {
 }
 
 function Install-SshServiceTask {
+    param([Parameter(Mandatory = $true)][string]$ScriptPath)
+    Assert-AdminOnlyWritable -Path $ScriptPath
     $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $powershellExe = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $scriptPath = $PSCommandPath.Replace('"', '""')
+    $scriptPath = $ScriptPath.Replace('"', '""')
     $distroArg = $Distro.Replace('"', '""')
     $arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $scriptPath + '" StartSsh -Distro "' + $distroArg + '"'
     $action = New-ScheduledTaskAction -Execute $powershellExe -Argument $arguments
@@ -693,9 +764,10 @@ function Install-RefreshTask {
         Stop-ScheduledTask -TaskName $script:TaskName -ErrorAction Stop
     }
 
+    $installed = Install-ProtectedScript -Source $PSCommandPath
     $currentUser = [Security.Principal.WindowsIdentity]::GetCurrent().Name
     $powershellExe = Join-Path $env:WINDIR 'System32\WindowsPowerShell\v1.0\powershell.exe'
-    $scriptPath = $PSCommandPath.Replace('"', '""')
+    $scriptPath = $installed.Replace('"', '""')
     $distroArg = $Distro.Replace('"', '""')
     $arguments = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $scriptPath + '" Refresh -Distro "' + $distroArg + '" -AllowedRemoteAddress "' + $script:AllowedRemoteAddress.Replace('"', '""') + '"'
 
@@ -714,7 +786,7 @@ function Install-RefreshTask {
     Write-Ok "Scheduled Task created: $($script:TaskName)"
     Write-Host "       Trigger: Windows boot (S4U) and $currentUser logon"
     Write-Host "       Action: $powershellExe $arguments"
-    Install-SshServiceTask
+    Install-SshServiceTask -ScriptPath $installed
     Save-Settings
     Start-ScheduledTask -TaskName $script:TaskName -ErrorAction Stop
     Ensure-WslSshRunning
@@ -735,12 +807,26 @@ function Remove-RefreshTask {
         Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction Stop
         Write-Ok "Scheduled Task removed: $taskName"
     }
+    foreach ($file in @($script:InstalledScript, $script:SettingsPath)) {
+        if (Test-Path -LiteralPath $file) {
+            Remove-Item -LiteralPath $file -Force
+            Write-Ok "Removed $file"
+        }
+    }
+    if ((Test-Path -LiteralPath $script:ProtectedDir) -and -not (Get-ChildItem -LiteralPath $script:ProtectedDir -Force)) {
+        Remove-Item -LiteralPath $script:ProtectedDir -Force
+    }
 }
 
 function Upgrade-LegacyKeepaliveTask {
     $legacyTask = Get-ScheduledTask -TaskName $script:KeepaliveTaskName -ErrorAction SilentlyContinue
     if ($legacyTask -or (Get-ScheduledTask -TaskName $script:SshStartTaskName -ErrorAction SilentlyContinue).Settings.ExecutionTimeLimit -ne 'PT0S') {
-        Install-SshServiceTask
+        if (Test-Path -LiteralPath $script:InstalledScript) {
+            Install-SshServiceTask -ScriptPath $script:InstalledScript
+        }
+        else {
+            Write-Warn "SSH service task needs an update; run InstallTask (elevated) to install $($script:InstalledScript)"
+        }
     }
 }
 
