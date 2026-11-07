@@ -63,7 +63,7 @@ cloud-localds --help
 
 Health: unauthenticated `http://127.0.0.1:8697/api/vms` returning **HTTP 401** means the server is up.
 
-Auto-start (Windows; the post used a logon task, the repository registers a boot/S4U task): keep `start-vmrest.ps1` and `install-vmrest-task.ps1` together in a fixed folder (e.g. `C:\Scripts\`) and do not move them after registering.
+Auto-start (Windows; the post used a logon task, the repository registers a boot/S4U task): keep `start-vmrest.ps1` beside `install-vmrest-task.ps1` and run the install elevated. It copies `start-vmrest.ps1` to `%ProgramFiles%\wsl-vmware-lab` (administrator-only) and the task runs that copy, so the repository can move; re-run the install after updating the repository.
 
 ```powershell
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install-vmrest-task.ps1
