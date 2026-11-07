@@ -97,12 +97,23 @@ $script:InstalledScript = Join-Path $script:ProtectedDir 'wsl2-ssh-forward.ps1'
 $script:SettingsPath = Join-Path $script:ProtectedDir 'wsl2-ssh-forward.settings.json'
 # Older versions kept settings here, where any user can write; no longer read.
 $script:LegacySettingsPath = Join-Path $env:ProgramData 'wsl2-ssh-forward\settings.json'
-if ($Action -notin @('Install', 'InstallTask') -and (Test-Path -LiteralPath $script:SettingsPath)) {
+# Ownership record of the NAT portproxy this script created (connect address),
+# kept with the settings. $null = none. HasPortProxyRecord is false for settings
+# written by older versions, which did not record it.
+$script:OwnedPortProxyTarget = $null
+$script:HasPortProxyRecord = $false
+if (Test-Path -LiteralPath $script:SettingsPath) {
     try {
         $saved = Get-Content -LiteralPath $script:SettingsPath -Raw -Encoding UTF8 | ConvertFrom-Json
-        if (-not $PSBoundParameters.ContainsKey('Distro') -and $saved.Distro) { $Distro = [string]$saved.Distro }
-        if (-not $PSBoundParameters.ContainsKey('AllowedRemoteAddress') -and $saved.AllowedRemoteAddress) {
-            $AllowedRemoteAddress = [string]$saved.AllowedRemoteAddress
+        if ($Action -notin @('Install', 'InstallTask')) {
+            if (-not $PSBoundParameters.ContainsKey('Distro') -and $saved.Distro) { $Distro = [string]$saved.Distro }
+            if (-not $PSBoundParameters.ContainsKey('AllowedRemoteAddress') -and $saved.AllowedRemoteAddress) {
+                $AllowedRemoteAddress = [string]$saved.AllowedRemoteAddress
+            }
+        }
+        if ($saved.PSObject.Properties.Name -contains 'PortProxyTarget') {
+            $script:HasPortProxyRecord = $true
+            if ($saved.PortProxyTarget) { $script:OwnedPortProxyTarget = [string]$saved.PortProxyTarget }
         }
     }
     catch {
@@ -115,6 +126,7 @@ $script:SshPort = 22
 $script:FirewallRuleName = 'WSL2 SSH 22'
 $script:FirewallRuleMarker = 'Managed by wsl2-ssh-forward.ps1'
 $script:HyperVRuleName = 'WSL-SSH-Inbound-TCP22-LAN'
+$script:HyperVRuleDisplayName = 'WSL SSH inbound TCP 22 (LAN)'
 $script:WslVmCreatorId = '{40E0AC32-46A5-438A-A0B2-2B479E8F2E90}'
 $script:AllowedRemoteAddress = $AllowedRemoteAddress
 $script:TaskName = 'WSL2 SSH Port Forward Refresh'
@@ -300,14 +312,47 @@ function Start-WslSshService {
     Write-Ok "WSL SSH service active: TCP :22 LISTEN ($Distro)"
 }
 
+function Write-SettingsFile {
+    New-Item -ItemType Directory -Force -Path $script:ProtectedDir | Out-Null
+    Assert-AdminOnlyWritable -Path $script:ProtectedDir
+    $json = [ordered]@{
+        Distro               = $Distro
+        AllowedRemoteAddress = $script:AllowedRemoteAddress
+        PortProxyTarget      = $script:OwnedPortProxyTarget
+    } | ConvertTo-Json
+    [System.IO.File]::WriteAllText($script:SettingsPath, $json, (New-Object System.Text.UTF8Encoding($false)))
+    Assert-AdminOnlyWritable -Path $script:SettingsPath
+    $script:HasPortProxyRecord = $true
+}
+
+# Record (or clear, with $null) the 0.0.0.0:22 portproxy this script owns.
+function Set-PortProxyRecord {
+    param([AllowNull()][string]$Target)
+    $script:OwnedPortProxyTarget = if ([string]::IsNullOrEmpty($Target)) { $null } else { $Target }
+    Write-SettingsFile
+}
+
+# Is this 0.0.0.0:22 portproxy entry the one this script created? Settings from
+# older versions have no record: then an entry to port 22 counts as ours only
+# while this script's marked Windows firewall rule exists (it created both).
+function Test-OwnedPortProxy {
+    param([Parameter(Mandatory = $true)][object]$Entry)
+    if ($Entry.ListenAddress -ne $script:ListenAddress -or $Entry.ListenPort -ne $script:SshPort -or
+        $Entry.ConnectPort -ne $script:SshPort) {
+        return $false
+    }
+    if ($script:HasPortProxyRecord) {
+        return [bool]($script:OwnedPortProxyTarget -and $Entry.ConnectAddress -eq $script:OwnedPortProxyTarget)
+    }
+    return [bool](@(Get-FirewallRules | Where-Object { $_.Description -ceq $script:FirewallRuleMarker }).Count -gt 0)
+}
+
 function Save-Settings {
     # The elevated refresh task reads these values, so they live in the
     # administrator-only folder too.
     New-Item -ItemType Directory -Force -Path $script:ProtectedDir | Out-Null
     Assert-AdminOnlyWritable -Path $script:ProtectedDir
-    $json = [ordered]@{ Distro = $Distro; AllowedRemoteAddress = $script:AllowedRemoteAddress } | ConvertTo-Json
-    [System.IO.File]::WriteAllText($script:SettingsPath, $json, (New-Object System.Text.UTF8Encoding($false)))
-    Assert-AdminOnlyWritable -Path $script:SettingsPath
+    Write-SettingsFile
     Write-Ok "Saved settings: Distro=$Distro, AllowedRemoteAddress=$($script:AllowedRemoteAddress)"
     if (Test-Path -LiteralPath $script:LegacySettingsPath) {
         Remove-Item -LiteralPath $script:LegacySettingsPath -Force
@@ -360,24 +405,45 @@ function Ensure-HyperVFirewallRule {
         return
     }
     $rule = Get-NetFirewallHyperVRule -Name $script:HyperVRuleName -ErrorAction SilentlyContinue
+    if ($rule -and -not (Test-OwnedHyperVRule -Rule $rule)) {
+        Write-Warn "Hyper-V firewall rule '$($script:HyperVRuleName)' exists but does not look like this script's rule; left unchanged. SSH from the LAN may be blocked."
+        return
+    }
     if ($rule) {
         Set-NetFirewallHyperVRule -Name $script:HyperVRuleName -Enabled True -Action Allow `
             -Protocol TCP -LocalPorts $script:SshPort -RemoteAddresses $script:AllowedRemoteAddress -ErrorAction Stop
         Write-Ok "Hyper-V firewall rule updated: TCP :22 from $($script:AllowedRemoteAddress) to WSL"
         return
     }
-    New-NetFirewallHyperVRule -Name $script:HyperVRuleName -DisplayName 'WSL SSH inbound TCP 22 (LAN)' `
+    New-NetFirewallHyperVRule -Name $script:HyperVRuleName -DisplayName $script:HyperVRuleDisplayName `
         -Direction Inbound -VMCreatorId $script:WslVmCreatorId -Protocol TCP -LocalPorts $script:SshPort `
         -RemoteAddresses $script:AllowedRemoteAddress -Action Allow -ErrorAction Stop | Out-Null
     Write-Ok "Hyper-V firewall rule created: TCP :22 from $($script:AllowedRemoteAddress) to WSL"
 }
 
+# Hyper-V rules have no description to mark, so a same-name rule counts as this
+# script's only if it also has the display name, direction, VM creator and port
+# this script sets.
+function Test-OwnedHyperVRule {
+    param([Parameter(Mandatory = $true)][object]$Rule)
+    return [bool](
+        $Rule.DisplayName -ceq $script:HyperVRuleDisplayName -and
+        [string]$Rule.Direction -eq 'Inbound' -and
+        ([string]$Rule.VMCreatorId).Trim('{}') -eq $script:WslVmCreatorId.Trim('{}') -and
+        [string]$Rule.Protocol -eq 'TCP' -and
+        (@($Rule.LocalPorts) -join ',') -eq [string]$script:SshPort)
+}
+
 function Remove-HyperVFirewallRule {
     if (-not (Test-HyperVFirewallSupported)) { return }
-    if (Get-NetFirewallHyperVRule -Name $script:HyperVRuleName -ErrorAction SilentlyContinue) {
-        Remove-NetFirewallHyperVRule -Name $script:HyperVRuleName -ErrorAction Stop
-        Write-Ok "Hyper-V firewall rule removed: $($script:HyperVRuleName)"
+    $rule = Get-NetFirewallHyperVRule -Name $script:HyperVRuleName -ErrorAction SilentlyContinue
+    if (-not $rule) { return }
+    if (-not (Test-OwnedHyperVRule -Rule $rule)) {
+        Write-Warn "Hyper-V firewall rule '$($script:HyperVRuleName)' does not look like this script's rule; left unchanged"
+        return
     }
+    Remove-NetFirewallHyperVRule -Name $script:HyperVRuleName -ErrorAction Stop
+    Write-Ok "Hyper-V firewall rule removed: $($script:HyperVRuleName)"
 }
 
 function Get-ProcessInfoForId {
@@ -505,29 +571,47 @@ function Ensure-FirewallRule {
 }
 
 function Remove-PortProxy22 {
-    # Only the rule this script manages (0.0.0.0:22); report others instead of deleting them.
+    # Only the 0.0.0.0:22 rule this script created; report others instead of deleting them.
     $all = @(Get-PortProxyEntries | Where-Object { $_.ListenPort -eq $script:SshPort })
-    foreach ($other in @($all | Where-Object { $_.ListenAddress -ne $script:ListenAddress })) {
-        Write-Warn "Other :22 portproxy left unchanged: $($other.ListenAddress):22 -> $($other.ConnectAddress):$($other.ConnectPort)"
+    $entries = @($all | Where-Object { Test-OwnedPortProxy -Entry $_ })
+    foreach ($other in @($all | Where-Object { -not (Test-OwnedPortProxy -Entry $_) })) {
+        Write-Warn "portproxy not created by this script left unchanged: $($other.ListenAddress):22 -> $($other.ConnectAddress):$($other.ConnectPort)"
     }
-    $entries = @($all | Where-Object { $_.ListenAddress -eq $script:ListenAddress })
     foreach ($entry in $entries) {
         Invoke-Netsh -Arguments @(
             'interface', 'portproxy', 'delete', 'v4tov4',
             "listenport=$($entry.ListenPort)", "listenaddress=$($entry.ListenAddress)"
         ) | Out-Null
     }
+    if ($entries.Count -gt 0 -or $script:OwnedPortProxyTarget -or -not $script:HasPortProxyRecord) {
+        Set-PortProxyRecord -Target $null
+    }
     return $entries.Count
+}
+
+# Stop before any change if 0.0.0.0:22 is taken by a portproxy this script did
+# not create. Mirrored mode: such a rule can collide with WSL sshd on port 22.
+function Assert-NoForeignPortProxy22 {
+    param([Parameter(Mandatory = $true)][bool]$Mirrored)
+    $foreign = @(Get-PortProxyEntries | Where-Object {
+        $_.ListenAddress -eq $script:ListenAddress -and $_.ListenPort -eq $script:SshPort -and
+        -not (Test-OwnedPortProxy -Entry $_) })
+    if ($foreign.Count -eq 0) { return }
+    $desc = ($foreign | ForEach-Object { "$($_.ListenAddress):22 -> $($_.ConnectAddress):$($_.ConnectPort)" }) -join ', '
+    $why = if ($Mirrored) { 'In mirrored mode it can collide with WSL sshd on port 22.' } else { 'Replacing it could break another tool.' }
+    throw "A portproxy not created by this script uses $desc. $why Nothing was changed; remove it yourself (netsh interface portproxy delete v4tov4 listenport=22 listenaddress=0.0.0.0) if it is not needed."
 }
 
 function Set-SshPortProxy {
     $wslIp = Get-WslIPv4
     Write-Ok "WSL IP: $wslIp"
 
+    $mirrored = Test-WslMirroredAddress -WslIPv4 $wslIp
+    Assert-NoForeignPortProxy22 -Mirrored $mirrored
     $existingEntries = @(Get-PortProxyEntries)
     Assert-Port22Available -ExistingProxyEntries $existingEntries
 
-    if (Test-WslMirroredAddress -WslIPv4 $wslIp) {
+    if ($mirrored) {
         $removedCount = Remove-PortProxy22
         if ($removedCount -gt 0) {
             Write-Ok 'Removed stale :22 portproxy (mirrored mode shares the Windows IP)'
@@ -555,6 +639,7 @@ function Set-SshPortProxy {
     if ($finalEntry.Count -ne 1) {
         throw 'Could not verify the Windows :22 -> WSL :22 portproxy after creation.'
     }
+    Set-PortProxyRecord -Target $wslIp
 
     Ensure-FirewallRule
     Write-Ok "Windows :22 -> WSL $($wslIp):22"
@@ -600,7 +685,12 @@ function Show-Status {
         }
         else {
             foreach ($entry in $entries) {
-                Write-Ok "Windows portproxy: $($entry.ListenAddress):22 -> $($entry.ConnectAddress):$($entry.ConnectPort)"
+                if (Test-OwnedPortProxy -Entry $entry) {
+                    Write-Ok "Windows portproxy: $($entry.ListenAddress):22 -> $($entry.ConnectAddress):$($entry.ConnectPort) (created by this script)"
+                }
+                else {
+                    Write-Warn "Windows portproxy not created by this script: $($entry.ListenAddress):22 -> $($entry.ConnectAddress):$($entry.ConnectPort)"
+                }
             }
         }
     }

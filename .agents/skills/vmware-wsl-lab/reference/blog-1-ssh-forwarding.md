@@ -63,7 +63,7 @@ wsl.exe -d Ubuntu-24.04 -u root -- /bin/sh -c 'systemctl stop ssh.socket ssh.ser
 ```
 
 - Holding `sshd -D` keeps WSL alive. `systemctl enable --now ssh` alone lets WSL shut down when the command ends, dropping SSH.
-- The post's trigger is Windows **logon**, not boot. This repository's `InstallTask` now registers both tasks with a boot trigger and S4U (runs as the user without logon) plus a logon trigger, so SSH comes up before anyone logs on. The tasks run an administrator-only copy of the script in `%ProgramFiles%\wsl-vmware-lab` (the refresh task is elevated), and settings are saved there instead of `%ProgramData%\wsl2-ssh-forward`; re-run `InstallTask` after updating the repository.
+- The post's trigger is Windows **logon**, not boot. This repository's `InstallTask` now registers both tasks with a boot trigger and S4U (runs as the user without logon) plus a logon trigger, so SSH comes up before anyone logs on. The tasks run an administrator-only copy of the script in `%ProgramFiles%\wsl-vmware-lab` (the refresh task is elevated), and settings are saved there instead of `%ProgramData%\wsl2-ssh-forward`; re-run `InstallTask` after updating the repository. The settings file also records the NAT portproxy the script created; it changes or deletes only that `0.0.0.0:22` rule and stops if another tool owns it (mirrored mode included). The Hyper-V rule is changed or removed only if its display name, direction, WSL VM creator and port match what the script creates.
 - After a manual `wsl --shutdown`, run `Refresh` again.
 
 ## Step 4: verify from another PC
