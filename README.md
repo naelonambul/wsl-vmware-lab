@@ -146,7 +146,7 @@ bash prepare-base.sh                         # 1회만: 베이스 VMX 생성, AP
 bash api-status.sh                           # 등록된 VM 목록
 bash terraform-vm.sh on                      # 복제 -> cloud-init/NIC 준비 -> 전원 ON
 ANSIBLE_TIMEOUT=60 bash configure-guest.sh   # nginx 설치, HTTP 확인 (두 번째 실행 changed=0)
-bash terraform-vm.sh off
+bash terraform-vm.sh off                     # 전원만 끔. plan에 다른 변경이 있으면 거부
 bash terraform-vm.sh destroy                 # 삭제 + seed ISO/빈 폴더 정리
 ```
 
@@ -164,7 +164,9 @@ bash check-power.sh                          # VM별 전원 상태
 
 - `vms.tfvars`의 키가 VM 이름입니다. Windows 폴더 이름, 게스트 hostname, Ansible 호스트 이름이 모두 이 이름이 됩니다.
 - `groups`에 적은 그룹이 Ansible 그룹이 되고, 모든 VM은 `lab` 그룹에도 들어갑니다. 플레이북에서 `hosts: web`, `hosts: db`처럼 씁니다.
-- 목록에서 항목을 지우고 `on`을 실행하면 그 VM이 삭제되고, seed ISO, known_hosts 같은 관련 파일도 정리됩니다.
+- `on`과 `off`는 먼저 plan을 확인합니다. `on`은 VM을 삭제하거나 교체해야 하면 그 이름을 보여 주고 멈추고, `off`는 전원 변경 말고 다른 변경이 있으면 거부합니다. `vms.tfvars`가 없어지거나 이름이 틀려도 기존 VM이 지워지지 않습니다.
+- 목록에서 항목을 일부러 지웠다면 `bash terraform-vm.sh on --allow-destroy`로 그 VM을 삭제합니다. seed ISO, known_hosts 같은 관련 파일도 정리됩니다.
+- `LAB_VMS_FILE`을 직접 지정했는데 파일이 없으면 기본 VM 1대로 바꾸지 않고 오류로 멈춥니다.
 - `configure-guest.sh` 뒤에 붙인 옵션은 그대로 `ansible-playbook`에 넘어갑니다(예: `--limit web1`, `-e key=value`).
 
 자세한 설명과 함정은 블로그 글과 [`.claude/skills/vmware-wsl-lab/reference/pitfalls.md`](.claude/skills/vmware-wsl-lab/reference/pitfalls.md)를 참고하세요.

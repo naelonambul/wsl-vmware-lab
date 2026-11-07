@@ -41,6 +41,9 @@ export LAB_CLONE_NAME="${LAB_CLONE_NAME:-ubuntu24-demo}"
 export LAB_CLONE_CPUS="${LAB_CLONE_CPUS:-2}"
 export LAB_CLONE_MEMORY_MB="${LAB_CLONE_MEMORY_MB:-2048}"
 # Several VMs (a whole system): Terraform var file with `vms = { ... }`.
+# Set explicitly (environment or lab.env)? Then a missing file is an error, not
+# the single-VM fallback (lab_terraform_env).
+if [[ -n "${LAB_VMS_FILE:-}" ]]; then LAB_VMS_FILE_EXPLICIT=1; else LAB_VMS_FILE_EXPLICIT=0; fi
 LAB_VMS_FILE="${LAB_VMS_FILE:-$LAB_PROJECT_DIR/vms.tfvars}"
 [[ "$LAB_VMS_FILE" == /* ]] || LAB_VMS_FILE="$LAB_PROJECT_DIR/$LAB_VMS_FILE"
 export LAB_VMS_FILE
@@ -144,5 +147,11 @@ lab_terraform_env() {
     "$LAB_CLONE_NAME" "$LAB_CLONE_CPUS" "$LAB_CLONE_MEMORY_MB")
   export TF_VAR_vms
   LAB_TF_VAR_ARGS=()
-  if [[ -f "$LAB_VMS_FILE" ]]; then LAB_TF_VAR_ARGS=(-var-file="$LAB_VMS_FILE"); fi
+  if [[ -f "$LAB_VMS_FILE" ]]; then
+    LAB_TF_VAR_ARGS=(-var-file="$LAB_VMS_FILE")
+  elif [[ "$LAB_VMS_FILE_EXPLICIT" == 1 ]]; then
+    echo "[ERROR] LAB_VMS_FILE is set but $LAB_VMS_FILE does not exist." >&2
+    echo "        Fix the path, or unset LAB_VMS_FILE to use the single default VM $LAB_CLONE_NAME." >&2
+    return 1
+  fi
 }

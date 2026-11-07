@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# WSL: bash terraform-vm.sh on|off|status|destroy [terraform args]
+# WSL: bash terraform-vm.sh on [--allow-destroy] | off | status | destroy [terraform args]
 # VMs come from vms.tfvars (LAB_VMS_FILE) if present, else one VM from lab.env.
+# on/off read the plan first: on refuses to delete or replace VMs unless
+# --allow-destroy is given; off refuses anything but a power change.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib/config.sh"
 lab_terraform_env
@@ -17,7 +19,9 @@ if [[ "${1:-status}" != status ]]; then
   fi
 fi
 terraform init -input=false >/dev/null
-[[ ${#LAB_TF_VAR_ARGS[@]} -gt 0 ]] && echo "[OK] VM list: $LAB_VMS_FILE" || echo "[OK] VM list: single VM $LAB_CLONE_NAME (no vms.tfvars)"
+if [[ ${#LAB_TF_VAR_ARGS[@]} -gt 0 ]]; then vm_list_desc="$LAB_VMS_FILE"
+else vm_list_desc="single VM $LAB_CLONE_NAME (no $LAB_VMS_FILE)"; fi
+echo "[OK] VM list: $vm_list_desc"
 
 state_json() { terraform show -json; }
 before=$(mktemp); after=$(mktemp); plan=$(mktemp)
@@ -35,29 +39,59 @@ apply_and_clean() {
   return "$rc"
 }
 
-# Print the names Terraform would create with the current list (new entries,
-# or VMs whose bootstrap never finished). `plan -json` streams messages; no
-# plan file is written (a saved plan would contain the vmrest password).
-planned_new_vms() {
-  if ! terraform plan -input=false -lock=false -json "${LAB_TF_VAR_ARGS[@]}" -var=power_state=off > "$plan"; then
+# Write a `plan -json` message stream to $plan (no plan file is written: a
+# saved plan would contain the vmrest password). Prints plan errors.
+run_plan() {
+  if ! terraform plan -input=false -lock=false -json "${LAB_TF_VAR_ARGS[@]}" "$@" > "$plan"; then
     python3 -c 'import json, sys
 for line in open(sys.argv[1]):
-    m = json.loads(line)
+    try:
+        m = json.loads(line)
+    except ValueError:
+        continue
     if m.get("@level") == "error":
         print("[ERROR] " + m.get("@message", ""), file=sys.stderr)' "$plan"
     return 1
   fi
+}
+
+# Planned changes in $plan, one per line: action<TAB>address<TAB>type<TAB>name<TAB>key
+plan_changes() {
   python3 -c 'import json, sys
-names = set()
 for line in open(sys.argv[1]):
-    m = json.loads(line)
+    try:
+        m = json.loads(line)
+    except ValueError:
+        continue
     if m.get("type") != "planned_change":
         continue
     c = m["change"]; r = c["resource"]
-    if c.get("action") in ("create", "replace") and r.get("resource_name") in ("vm", "guest_bootstrap") \
-       and r.get("resource_type") in ("vmworkstation_virtual_machine", "terraform_data"):
-        names.add(str(r.get("resource_key")))
-sys.stdout.write("".join(n + "\n" for n in sorted(names)))' "$plan"
+    print("\t".join(str(x) for x in (c.get("action"), r.get("addr"), r.get("resource_type"),
+                                      r.get("resource_name"), r.get("resource_key"))))' "$plan"
+}
+
+# Names Terraform would create with the current list (new entries, or VMs
+# whose bootstrap never finished), from $plan.
+planned_new_vms() {
+  plan_changes | awk -F'\t' '($1 == "create" || $1 == "replace") &&
+    (($3 == "vmworkstation_virtual_machine" && $4 == "vm") || ($3 == "terraform_data" && $4 == "guest_bootstrap")) { print $5 }' | sort -u
+}
+
+# Stop unless the user allowed it when $plan deletes or replaces a VM. A
+# missing or mistyped vms.tfvars shows up here as deletions.
+guard_vm_destroy() {
+  local doomed
+  doomed=$(plan_changes | awk -F'\t' '($1 == "delete" || $1 == "replace") && $3 == "vmworkstation_virtual_machine" { print $5 }' | sort -u)
+  [[ -z "$doomed" ]] && return 0
+  if [[ "$allow_destroy" == 1 ]]; then
+    echo "[WARN] --allow-destroy: deleting or replacing VMs: $(tr '\n' ' ' <<<"$doomed")"
+    return 0
+  fi
+  echo "[ERROR] This would delete or replace VMs: $(tr '\n' ' ' <<<"$doomed")" >&2
+  echo "        VM list in use: $vm_list_desc" >&2
+  echo "        If vms.tfvars is missing or wrong, fix it. To remove these VMs on purpose:" >&2
+  echo "        bash terraform-vm.sh on --allow-destroy  (or terraform-vm.sh destroy for all)" >&2
+  exit 1
 }
 
 # Targets for the VMs that already exist in the state.
@@ -67,6 +101,15 @@ existing_targets() {
 
 case "${1:-status}" in
   on)
+    allow_destroy=0
+    for arg in "${@:2}"; do
+      case "$arg" in
+        --allow-destroy) allow_destroy=1 ;;
+        *) echo "[ERROR] Unknown option for on: $arg" >&2; exit 2 ;;
+      esac
+    done
+    run_plan -var=power_state=on
+    guard_vm_destroy
     # Bootstrap needs a powered-off clone: create new VMs off first, targeting
     # only them so VMs that are already running stay on.
     new_vms=$(planned_new_vms)
@@ -93,10 +136,21 @@ case "${1:-status}" in
     apply_and_clean -var=power_state=on
     ;;
   off)
-    # Power off only the VMs that exist; never create list entries here.
+    [[ $# -le 1 ]] || { echo '[ERROR] off takes no options' >&2; exit 2; }
+    # Power off only the VMs that exist; never create list entries here. The
+    # targeted apply is still a full apply for those VMs, so check its plan
+    # first and refuse anything but an in-place power change.
     mapfile -t targets < <(existing_targets)
     if [[ ${#targets[@]} -eq 0 ]]; then echo '[OK] No VMs in the state'; exit 0; fi
-    state_json > "$before"
+    run_plan -var=power_state=off "${targets[@]}"
+    other=$(plan_changes | awk -F'\t' '!($1 == "update" && $3 == "vmworkstation_virtual_machine") &&
+      $1 != "no-op" && $1 != "noop" && $1 != "read" { print "  " $1 ": " $2 }')
+    if [[ -n "$other" ]]; then
+      echo '[ERROR] off would do more than power VMs off; nothing changed:' >&2
+      echo "$other" >&2
+      echo "        VM list in use: $vm_list_desc. Fix vms.tfvars, or review with: bash extras/diagnose-terraform.sh off" >&2
+      exit 1
+    fi
     terraform apply -input=false -auto-approve -parallelism=1 "${LAB_TF_VAR_ARGS[@]}" \
       -var=power_state=off "${targets[@]}"
     ;;
@@ -109,5 +163,5 @@ case "${1:-status}" in
     python3 ../cleanup-guest.py "$before" "$after" || { [[ $rc -ne 0 ]] || rc=1; }
     exit "$rc"
     ;;
-  *) echo 'Usage: bash terraform-vm.sh on|off|status|destroy' >&2; exit 2 ;;
+  *) echo 'Usage: bash terraform-vm.sh on [--allow-destroy] | off | status | destroy [terraform args]' >&2; exit 2 ;;
 esac
