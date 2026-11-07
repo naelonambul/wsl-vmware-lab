@@ -67,19 +67,31 @@ cred_msg="$(lab_require_credentials 2>&1 >/dev/null)"
 if lab_require_credentials 2>/dev/null; then
   have_creds=true
   ok "vmrest account: from ${VMWS_CREDENTIAL_SOURCE} (values not shown)"
-  # The secrets file must not be readable by other Windows users. Checked by
-  # well-known SIDs so localized group names do not matter.
+  # The secrets file should grant access only to your user (plus SYSTEM and
+  # Administrators). Compared by SID so localized names do not matter. The
+  # path goes through the environment: powershell.exe -Command does not bind
+  # trailing arguments to param().
   if $interop && [[ "$VMWS_CREDENTIAL_SOURCE" == "secrets file /mnt/"* ]]; then
-    acl="$("$PS" -NoProfile -NonInteractive -Command '
-      param($f)
-      $wide = "S-1-1-0","S-1-5-11","S-1-5-32-545"
-      $hit = (Get-Acl -LiteralPath $f).Access | Where-Object {
-        $_.AccessControlType -eq "Allow" -and
-        $wide -contains $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value }
-      if ($hit) { "open:" + (($hit.IdentityReference.Value | Select-Object -Unique) -join ",") } else { "private" }'       -f "$(wslpath -w "${VMWS_CREDENTIAL_SOURCE#secrets file }")" 2>/dev/null | tr -d '\r')"
+    secrets_win="$(wslpath -w "${VMWS_CREDENTIAL_SOURCE#secrets file }")"
+    acl="$(LAB_ACL_FILE="$secrets_win" WSLENV="LAB_ACL_FILE${WSLENV:+:$WSLENV}" \
+      "$PS" -NoProfile -NonInteractive -Command '
+      [Console]::OutputEncoding = [Text.Encoding]::UTF8
+      try {
+        $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+        $allowed = @($me, "S-1-5-18", "S-1-5-32-544")
+        $other = foreach ($a in (Get-Acl -LiteralPath $env:LAB_ACL_FILE -ErrorAction Stop).Access) {
+          if ($a.AccessControlType -ne "Allow") { continue }
+          try { $sid = $a.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { $sid = $null }
+          if (-not $sid -or $allowed -notcontains $sid) { $a.IdentityReference.Value }
+        }
+        if ($other) { "open:" + (($other | Select-Object -Unique) -join ", ") } else { "private" }
+      } catch { "error:" + $_.Exception.GetType().Name }' 2>/dev/null | tr -d '\r')" || acl=""
+    # Printed literally for the user to paste into PowerShell; not expanded here.
+    fix_cmd='icacls "'"$secrets_win"'" /inheritance:r /grant:r "$($env:USERNAME):F"'
     case "$acl" in
-      private) ok "secrets file permissions: not readable by other Windows users" ;;
-      open:*)  warn "secrets file readable by ${acl#open:}; restrict it to your user (PowerShell: icacls "$env:USERPROFILE\\.env" /inheritance:r /grant:r "$($env:USERNAME):F", then check icacls output for other explicit entries)" ;;
+      private) ok "secrets file permissions: only your user, SYSTEM and Administrators are granted access" ;;
+      open:*)  warn "secrets file also grants access to: ${acl#open:}; restrict it to your user (PowerShell: $fix_cmd), then re-run preflight" ;;
+      *)       warn "secrets file permissions: could not be checked (${acl:-no output}); check with: icacls \"$secrets_win\"" ;;
     esac
   fi
 else

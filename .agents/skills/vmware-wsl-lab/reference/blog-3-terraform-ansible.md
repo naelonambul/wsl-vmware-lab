@@ -53,7 +53,7 @@ ansible-playbook -i "$LAB_INVENTORY" ansible/configure-guest.yml   # default ~/.
 | `guest-proxy.sh` + Windows `tcp-relay.ps1` | SSH via Windows when direct access fails |
 | `ansible/configure-guest.yml` | playbook |
 
-Appendix, not part of the main flow: `run-demo.sh`, `diagnose-base.sh`, `diagnose-error.sh`, `diagnose-terraform.sh`, `configure-vmrest-bridge.ps1`, `remove-vmrest-bridge.ps1`. The bridge scripts need admin and change Windows networking; the post says skip them. **`diagnose-terraform.sh` tries to shut down the base VM and applies `power_state=off` — review before running.**
+Appendix, not part of the main flow: `run-demo.sh`, `diagnose-base.sh`, `diagnose-error.sh`, `diagnose-terraform.sh`, `configure-vmrest-bridge.ps1`, `remove-vmrest-bridge.ps1`. The bridge scripts need admin and change Windows networking; the post says skip them. `diagnose-terraform.sh` is read-only: it shows the VM list, state, base power and the plan's changes (warning on delete/replace) and applies nothing. (The blog's original version shut down the base VM and applied `power_state=off`.)
 
 ## Versions and network settings
 

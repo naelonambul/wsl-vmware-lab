@@ -4,10 +4,26 @@ set -euo pipefail
 cd "$(dirname "$0")"
 source lib/config.sh
 source lib/cloud-config.sh
-if "${VMWARE_DIR}/vmrun.exe" -T ws list | tr -d '\r' | grep -Fxq "$VMX_WIN"; then
-  echo 'Power the clone off with Terraform before bootstrap; use terraform-vm.sh on.' >&2
+# Refuse unless the clone is positively known to be off: a failed or garbled
+# vmrun answer must stop here, before any file is changed. Windows paths are
+# compared case-insensitively with / and \ treated alike.
+norm_win_path() { local p="${1//\//\\}"; printf '%s' "${p,,}"; }
+if ! running=$("${VMWARE_DIR}/vmrun.exe" -T ws list 2>&1); then
+  echo "[ERROR] vmrun could not list running VMs; not editing the clone: ${running//$'\r'/}" >&2
   exit 1
 fi
+running=${running//$'\r'/}
+if [[ "$(head -n 1 <<<"$running")" != 'Total running VMs: '* ]]; then
+  echo "[ERROR] Unexpected vmrun list output; not editing the clone: $(head -n 1 <<<"$running")" >&2
+  exit 1
+fi
+target=$(norm_win_path "$VMX_WIN")
+while IFS= read -r line; do
+  if [[ -n "$line" && "$(norm_win_path "$line")" == "$target" ]]; then
+    echo 'Power the clone off with Terraform before bootstrap; use terraform-vm.sh on.' >&2
+    exit 1
+  fi
+done < <(tail -n +2 <<<"$running")
 [[ "$VM_ID" =~ ^[A-Za-z0-9_-]+$ ]] || { echo 'Invalid VM id from Terraform' >&2; exit 1; }
 vmx=$(wslpath -u "$VMX_WIN")
 seed_dir="$LAB_PRIVATE_DIR/seed-$VM_ID"
