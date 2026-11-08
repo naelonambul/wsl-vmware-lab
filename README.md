@@ -1,195 +1,114 @@
 # wsl-vmware-lab
 
-Windows PC 한 대에서 **Terraform + Ansible로 시스템을 구성하고 시험하고 배포하는** 실습 기반입니다. WSL2 Ubuntu의 Terraform이 **VMware Workstation**에 VM을 1대 또는 여러 대 만들고, Ansible이 그 VM들에 **여러분의 플레이북**을 실행합니다. 들어 있는 Ubuntu VM 1대 + nginx 설치는 **예제이자 동작 확인용**입니다.
-
-게스트 이미지는 **Ubuntu 클라우드 이미지(기본 24.04 noble)만 지원**합니다. 게스트가 VMware guestinfo로 자기 사용자 이름을 알려 주는데, 이때 이미지에 들어 있는 `open-vm-tools`가 필요하기 때문입니다(Debian 12 클라우드 이미지 등에는 없습니다).
-
-블로그 연재의 첨부 스크립트를 한곳에 모았습니다.
-
-- 0편: [WSL 업데이트·사양 설정·Ubuntu 설치, 재부팅 후 이어가기](https://naelonambul.tistory.com/210)
-- 1편: [WSL2 SSH를 Windows 22번 포트로 포워딩하기](https://naelonambul.tistory.com/207)
-- 2편: [VMware 실습 도구 설치와 베이스 VM API 등록](https://naelonambul.tistory.com/208)
-- 3편: [Terraform으로 VM 만들고 Ansible로 Ubuntu 설정하기](https://naelonambul.tistory.com/209)
+Windows PC 한 대에서 **Terraform + Ansible로 시스템을 구성하고 시험하는** 실습 기반입니다. WSL2 Ubuntu의 Terraform이 **VMware Workstation**에 VM을 1대 또는 여러 대 만들고, Ansible이 그 VM들에 **여러분의 플레이북**을 실행합니다. 들어 있는 Ubuntu VM 1대 + nginx는 예제이자 동작 확인용입니다.
 
 ```
-다른 PC --SSH:22--> Windows --(mirrored)--> WSL2 Ubuntu
-WSL Terraform --> Windows vmrest http://127.0.0.1:8697/api --> VMware Workstation --> 테스트 VM
-WSL Ansible --SSH--> 테스트 VM (nginx 설치, 페이지 배포, HTTP 확인)
+다른 PC --SSH:22--> Windows (mirrored) --> WSL2 Ubuntu
+WSL Terraform --> vmrest http://127.0.0.1:8697/api --> VMware Workstation --> 실습 VM
+WSL Ansible --SSH--> 실습 VM
 ```
 
-## AI 에이전트 스킬 설치 (Claude Code / Codex)
+배경 설명은 블로그 연재에 있습니다(그 뒤로 저장소가 바뀌었으니, 다르면 이 README가 기준입니다): [0편](https://naelonambul.tistory.com/210) · [1편](https://naelonambul.tistory.com/207) · [2편](https://naelonambul.tistory.com/208) · [3편](https://naelonambul.tistory.com/209)
 
-이 저장소에는 실습을 대신 운영하는 스킬이 들어 있습니다. 같은 내용을 두 에이전트가 읽는 위치에 하나씩 둡니다.
+## 준비물
 
-| 에이전트 | 저장소 안 위치 | 설치 위치(모든 프로젝트) | 부르는 법 |
-|---|---|---|---|
-| Claude Code | `.claude/skills/vmware-wsl-lab` | `~/.claude/skills/vmware-wsl-lab` | `/vmware-wsl-lab` |
-| Codex | `.agents/skills/vmware-wsl-lab` | `~/.agents/skills/vmware-wsl-lab` (`$skill-installer`로 설치하면 `~/.codex/skills/vmware-wsl-lab`) | `$vmware-wsl-lab` (또는 `/skills`) |
+- Windows 11, WSL2 Ubuntu 24.04, **미러드 네트워크**(`%USERPROFILE%\.wslconfig`의 `[wsl2]`에 `networkingMode=mirrored`)
+- **VMware Workstation Pro는 사람이 직접 설치합니다.** 공식 설치 파일은 Broadcom 계정으로만 받을 수 있어 자동화하지 않습니다. 설치 뒤 `vmrest.exe -C`로 API 계정을 만듭니다(Windows·Ubuntu 로그인과 별개).
+- 게스트는 **Ubuntu 클라우드 이미지(24.04)만** 지원합니다. 게스트가 VMware guestinfo로 사용자 이름과 SSH 호스트 키를 알려 주는데, 여기에 이미지 안의 `open-vm-tools`가 필요합니다.
+- 저장소는 Windows 드라이브(예: `C:\wsl-vmware-lab`, WSL에서 `/mnt/c/...`)에 둡니다. 베이스 VM 파일이 저장소 안에 만들어집니다.
 
-요청 내용이 스킬 설명과 맞으면 두 에이전트 모두 알아서 스킬을 씁니다. 저장소 폴더 안에서 에이전트를 실행하면 설치하지 않아도 스킬이 보입니다.
+## 설치
 
-어느 에이전트든 이렇게 말하면 설치됩니다.
+1. **vmrest 계정:** Windows 사용자 폴더의 `.env`(`C:\Users\<사용자>\.env`)에 적습니다. 다른 계정이 읽지 못하게 두세요(`./lab status`가 확인합니다).
+   ```
+   VMWS_USERNAME=<vmrest.exe -C 로 만든 계정>
+   VMWS_PASSWORD=<그 비밀번호>
+   ```
+2. **Windows 쪽 (관리자 PowerShell, 저장소의 `windows` 폴더에서, 한 번):**
+   ```powershell
+   .\setup.ps1 Install -AllowedRemoteAddress 192.168.1.0/24   # 허용 대역은 자신의 LAN으로
+   .\setup.ps1 Status                                          # 읽기만 함
+   .\setup.ps1 Remove                                          # 작업과 방화벽 규칙 제거 (전원 설정은 그대로)
+   ```
+   - 부팅 작업 2개를 만듭니다: `WSL2 SSH Service Start`(WSL 안의 sshd, WSL도 계속 켜 둠)와 `VMware vmrest API`(127.0.0.1:8697). 둘 다 **로그온 없이 부팅 때**(S4U) 시작하고, 끝나면 다시 시작합니다. `wsl.exe`, `vmrest.exe`를 직접 실행하므로 저장소를 옮겨도 됩니다.
+   - TCP 22를 `-AllowedRemoteAddress`에서만 허용합니다(Windows 방화벽 + Hyper-V 방화벽).
+   - 전원 연결 시 절전·최대 절전을 끄고 덮개를 닫아도 아무것도 하지 않게 합니다(`-IncludeBattery`: 배터리도, `-SkipPower`: 건드리지 않음). 절전하면 SSH·vmrest·VM이 모두 멈춥니다.
+   - 22번과 8697번이 실제로 열린 뒤에만 준비 완료를 출력합니다. 예전 버전이 만든 작업과 `%ProgramFiles%\wsl-vmware-lab` 사본은 지웁니다.
+3. **WSL 쪽:**
+   ```bash
+   git clone https://github.com/naelonambul/wsl-vmware-lab.git && cd wsl-vmware-lab
+   ./lab setup     # 1회: 도구(없으면 sudo로 설치), 공식 이미지 받기·서명 확인, 베이스 VM 준비
+   ./lab status    # 점검 (아무것도 바꾸지 않음)
+   ```
 
-```text
-https://github.com/naelonambul/wsl-vmware-lab/blob/main/INSTALL.md 를 읽고 설치해 줘
-```
+AI 에이전트(Claude Code, Codex)에게 맡기려면 "https://github.com/naelonambul/wsl-vmware-lab/blob/main/INSTALL.md 를 읽고 설치해 줘"라고 말하면 됩니다. 저장소의 스킬(`.claude/skills/vmware-wsl-lab`, Codex용 사본 `.agents/skills/vmware-wsl-lab`)을 설치하고 `./lab status`로 점검합니다. vmrest 비밀번호는 묻지도 읽지도 않습니다.
 
-에이전트가 [INSTALL.md](INSTALL.md) 순서대로 진행합니다. 경로를 바꾸거나 설치하기 전에는 먼저 물어봅니다.
-1. 실행 환경이 WSL인지 확인합니다.
-2. 저장소를 찾거나, 없으면 Windows 사용자 폴더 아래에 받습니다.
-3. 자기 에이전트의 설치 위치에 스킬을 복사합니다. 기존 스킬이 있으면 `.bak`으로 보관합니다.
-4. `./lab status`로 점검합니다.
-
-Codex는 스킬만 따로 설치할 수도 있습니다. 이 경우에도 저장소는 받아 둬야 합니다. 이렇게 설치하면 `~/.codex/skills/vmware-wsl-lab`(`$CODEX_HOME/skills`)에 들어가고, Codex는 이 위치도 읽습니다. 작업 폴더 밖에 쓰는 것이라 Codex가 쓰기 권한을 물을 수 있습니다. `~/.agents/skills`에 복사한 것과 중복 설치하지는 마세요(목록에 두 번 나옵니다).
-
-```text
-$skill-installer install https://github.com/naelonambul/wsl-vmware-lab/tree/main/.agents/skills/vmware-wsl-lab
-```
-
-vmrest 비밀번호는 묻지도, 읽지도 않습니다. `%USERPROFILE%\.env`는 직접 만드세요(아래 "vmrest 계정").
-
-직접 설치하려면 WSL에서 아래 명령을 실행합니다. 에이전트를 Windows에서 쓰면 복사 위치를 `%USERPROFILE%\.claude\skills\`(Claude Code), `%USERPROFILE%\.agents\skills\`(Codex)로 바꾸세요.
+## 사용: `./lab`
 
 ```bash
-# 저장소는 Windows 드라이브(사용자 폴더)에 둡니다. 베이스 VM 파일이 저장소 안에 만들어지기 때문입니다.
-profile=$(/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -Command '[Environment]::GetFolderPath("UserProfile")' </dev/null | tr -d '\r')
-cd "$(wslpath -u "$profile")" && pwd    # 사용자 폴더가 출력되는지 확인한 뒤 다음 줄로
-git clone https://github.com/naelonambul/wsl-vmware-lab.git
-mkdir -p ~/.claude/skills && cp -r wsl-vmware-lab/.claude/skills/vmware-wsl-lab ~/.claude/skills/
-mkdir -p ~/.agents/skills && cp -r wsl-vmware-lab/.agents/skills/vmware-wsl-lab ~/.agents/skills/   # Codex를 쓸 때
-./lab status
+./lab status [--start-vmrest]     # 점검: 도구, vmrest(루프백·인증), Windows 작업·전원, VM 전원
+./lab status --plan [on|off]      # up/down이 바꿀 내용을 미리 보기 (읽기 전용)
+./lab up [--allow-destroy]        # vms.tfvars의 VM 만들기(새 VM은 꺼서 준비한 뒤 켬) + 모두 켜기
+./lab configure [PLAYBOOK] [옵션] # Ansible 실행. 기본은 nginx 예제, 옵션은 ansible-playbook에 그대로
+./lab down                        # 전원만 끔
+./lab destroy                     # 이 체크아웃의 VM 모두 삭제 + 관련 파일 정리
+./lab cleanup                     # 중간에 끊긴 정리 이어서 하기
+./lab setup --recreate            # 베이스를 새로 만들기 (베이스가 꺼져 있어야 함)
 ```
 
-## 폴더 구성
+같은 체크아웃에서 `lab` 명령은 한 번에 하나만 실행됩니다(두 번째는 바로 멈춤).
 
-| 경로 | 내용 |
-|---|---|
-| `lab` | 유일한 진입점: `setup`, `status`, `up`, `down`, `configure`, `destroy`, `cleanup` |
-| `lib/base.sh` | `./lab setup`: 공식 OVA 받기·서명 확인, 디스크 변환, cloud-init, 베이스 등록·첫 부팅 |
-| `lib/preflight.sh` | 작업 전 점검: 환경 감지, 설정 유무, 도구, vmrest 상태(`--start-vmrest`로 켜기) |
-| `lib/config.sh` | 모든 bash 스크립트가 불러오는 설정 로더 |
-| `lab.env.example` | 설정 예시(가짜 값). `lab.env`로 복사해서 사용 |
-| `*.sh`, `*.py` (최상위) | WSL에서 실행하는 본 스크립트 (2·3편) |
-| `windows/tcp-relay.ps1` | `lib/guest-proxy.sh`가 호출하는 Windows SSH 중계 (3편) |
-| `terraform/` | `main.tf`, `variables.tf` (provider `elsudano/vmworkstation` 2.0.1 고정) |
-| `ansible/` | `configure-guest.yml`(nginx 예제), `check-lab.yml`(모든 VM 동작 확인) |
-| `vms.tfvars.example` | 여러 VM 시스템용 VM 목록 예시. `vms.tfvars`로 복사해서 사용 |
-| `windows/` | `setup.ps1`(부팅 작업·방화벽·전원, 관리자 PowerShell), `tcp-relay.ps1`(게스트 SSH 중계) |
-| `lib/` | 진단·호환용 스크립트와 예전 NAT 방식 브리지. 실습에는 필요 없음 |
-| `.claude/skills/vmware-wsl-lab/` | Claude Code용 설치·운영 스킬 (원본. 여기서 고침) |
-| `.agents/skills/vmware-wsl-lab/` | Codex용 같은 스킬. `bash tools/sync-agent-skills.sh`로 복사하고, CI가 두 사본이 같은지 확인 |
-| `INSTALL.md` | Claude가 읽고 따라 하는 스킬 설치 절차 |
-
-## vmrest 계정: `%USERPROFILE%\.env`
-
-vmrest에는 Windows·Ubuntu 로그인과 별개인 API 계정이 있습니다(`vmrest.exe -C`로 만듦). 스크립트가 쓸 이 계정은 **Windows 사용자 폴더의 `.env`**(`C:\Users\<사용자>\.env`)에 적습니다.
-
-```
-VMWS_USERNAME=<vmrest.exe -C 로 만든 계정>
-VMWS_PASSWORD=<그 비밀번호>
-```
-
-- `VMWS_USER`라고 적어도 인식합니다. 다른 도구가 같은 `.env`에 자기 줄을 두어도 됩니다. 스크립트는 파일을 실행하지 않고 `VMWS_*` 줄만 읽습니다.
-- 다른 파일을 쓰려면 `lab.env`에 `LAB_SECRETS_FILE=/mnt/c/...`를 지정합니다.
-- 이 파일은 본인 Windows 계정만 읽게 두세요. `lib/preflight.sh`가 다른 사용자도 읽을 수 있으면 경고합니다. 제한하려면 PowerShell에서 `icacls "$env:USERPROFILE\.env" /inheritance:r /grant:r "$($env:USERNAME):F"`를 실행합니다(cmd라면 `icacls %USERPROFILE%\.env /inheritance:r /grant:r %USERNAME%:F`). 실행 후 `icacls` 출력에 다른 계정 항목이 남아 있지 않은지 확인하세요.
-- Windows 자격 증명 관리자도 시험했지만 쓰지 않습니다. 부팅 후 아무도 로그온하지 않은 상태에서 켜진 WSL에서는 자격 증명 관리자가 잠겨 있어 읽을 수 없었습니다.
-
-## 개인 설정: `lab.env` (선택)
-
-기본값을 바꿀 때만 만듭니다(계정은 넣지 않습니다).
+### 내 시스템 올리기
 
 ```bash
-cp lab.env.example lab.env
+cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, 메모리, Ansible 그룹 (git에 올라가지 않음)
+./lab up
+./lab configure ansible/check-lab.yml      # 모든 VM 접속·cloud-init·sudo 확인
+./lab configure ~/my-system/site.yml       # 내 플레이북 (다른 폴더에 둬도 됨)
 ```
 
-따로 지정하지 않으면 다음 기본값을 씁니다.
+- `vms.tfvars`의 키가 VM 이름입니다(Windows 폴더, 게스트 hostname, Ansible 호스트 이름). `groups`가 Ansible 그룹이 되고, 모든 VM은 `lab` 그룹에도 들어갑니다.
+- 목록에 항목을 더하고 `up`하면 새 VM만 만들고, 켜져 있는 VM은 그대로 둡니다.
+
+## 지켜 주는 것
+
+- **지우기 전에 멈춤:** `up`은 VM을 삭제·교체해야 하면 이름을 보여 주고 멈춥니다. 정말 지울 때만 `--allow-destroy`를 붙입니다. `vms.tfvars`가 없어지거나 오타가 나도 기존 VM이 지워지지 않습니다. `down`은 전원 변경 말고 다른 변경이 있으면 거부합니다.
+- **베이스 확인:** `up`/`down` 전에 베이스 이름(`LAB_BASE_NAME`)을 가진 VM이 정확히 하나이고 `base/ubuntu-base.vmx`인지 봅니다. 베이스를 다시 만들면(`setup --recreate`) 다음 `up`이 "베이스가 바뀌었다"며 멈추고, `up --allow-destroy`로 클론을 새 베이스에서 다시 만듭니다(클론 안의 내용은 사라짐).
+- **엉뚱한 VM 막기:** 관리망(VMnet1)의 현재 DHCP 임대만 쓰고, 게스트가 guestinfo로 알려 준 SSH 호스트 키로만 접속합니다. 그 IP에 다른 VM이 있으면 접속하지 않습니다.
+- **정리:** 지울 VM을 `terraform/cleanup-pending.json`에 적어 두고, 정리가 끝난 것만 뺍니다. 중간에 끊기면 다음 `up`·`destroy`·`cleanup`이 이어서 합니다.
+- **vmrest:** 루프백(127.0.0.1)에서만 리슨하고, 인증 없이는 거부해야 `status`가 통과합니다.
+
+## 설정: `lab.env` (선택)
+
+기본값을 바꿀 때만 `cp lab.env.example lab.env`로 만듭니다(비밀번호는 넣지 않습니다). 주요 항목:
 
 | 항목 | 기본값 | 변수 |
 |---|---|---|
-| VM 목록 | `vms.tfvars`가 있으면 그 목록, 없으면 아래 이름으로 1대 | `LAB_VMS_FILE` |
-| Windows 쪽 VM 폴더 | VMware Workstation의 기본 VM 위치(편집 > 기본 설정 > 작업 공간, 기본값 `%USERPROFILE%\Documents\Virtual Machines`). vmrest는 Terraform이 요청한 경로와 상관없이 이 위치에 클론을 만들므로 둘이 같아야 함(preflight가 확인). 사용자 폴더 밖에 두려면 Workstation 설정을 먼저 바꾸고 vmrest를 다시 시작한 뒤 같은 값으로 지정. 바꿔도 이미 만든 VM은 옮겨지지 않음 | `LAB_VM_ROOT_WIN` |
-| 기본 플레이북 | `ansible/configure-guest.yml` (nginx 예제) | `LAB_PLAYBOOK` |
-| 게스트 VM 사용자 (VM 안) | 설정하지 않음. 이미지 기본 사용자(Ubuntu 이미지는 `ubuntu`)를 쓰고, 게스트가 부팅할 때마다 VMware guestinfo로 이름을 알려 줌 | 없음 |
-| 게스트 SSH 호스트 키 | 게스트가 guestinfo로 알려 준 키만 믿고 접속(`StrictHostKeyChecking=yes`). DHCP 임대 기록에서는 관리망(VMnet1)의 현재 임대만 씀 | 없음 |
-| WSL 사용자 | 설정하지 않음. 이 PC에 SSH로 접속하는 계정(SSH config의 `User`)으로 스크립트를 실행하면 그 계정을 씀 | 없음 |
+| VM 목록 | `vms.tfvars`, 없으면 아래 이름으로 1대 | `LAB_VMS_FILE` |
+| 베이스 / 클론 이름 | `ubuntu24-base` / `ubuntu24-demo` | `LAB_BASE_NAME` / `LAB_CLONE_NAME` |
+| 클론 VM 폴더 | Workstation의 기본 VM 위치(기본 `%USERPROFILE%\Documents\Virtual Machines`). vmrest가 이 위치에 클론을 만들므로 같아야 함 | `LAB_VM_ROOT_WIN` |
 | 개인 파일(SSH 키, inventory, known_hosts) | `~/.config/wsl-vmware-lab/` | `LAB_PRIVATE_DIR` |
-| VMware 설치 경로 | `/mnt/c/Program Files/VMware/VMware Workstation` | `VMWARE_DIR` |
-| 베이스 / 클론 이름 (`vms.tfvars` 없을 때) | `ubuntu24-base` / `ubuntu24-demo` | `LAB_BASE_NAME` / `LAB_CLONE_NAME` |
-| 클론 CPU / 메모리 (`vms.tfvars` 없을 때) | 2 / 2048 MB | `LAB_CLONE_CPUS` / `LAB_CLONE_MEMORY_MB` |
 | 네트워크 | NAT `VMnet8`, 관리용 host-only `VMnet1` | `LAB_NAT_VNET` / `LAB_MGMT_VNET` |
+| 게스트 준비 대기 | 300초 | `LAB_GUEST_WAIT_SECONDS` |
 
-Windows 쪽 설정은 관리자 PowerShell에서 한 번 실행합니다. WSL은 미러드 네트워크(`%USERPROFILE%\.wslconfig`의 `[wsl2]`에 `networkingMode=mirrored`)여야 합니다.
+나머지 항목은 `lab.env.example`에 있습니다.
 
-```powershell
-# 관리자 PowerShell, 저장소의 windows 폴더에서. 허용 대역은 자신의 LAN으로 바꾼다
-.\setup.ps1 Install -AllowedRemoteAddress 192.168.1.0/24   # 부팅 작업 2개, 방화벽, 절전 끄기, 그다음 22·8697 확인
-.\setup.ps1 Status                                          # 읽기만 함
-.\setup.ps1 Remove                                          # 작업과 방화벽 규칙 제거 (전원 설정은 그대로)
-```
+## 폴더
 
-- **작업 2개:** `WSL2 SSH Service Start`(WSL 안에서 sshd를 포그라운드로 실행, WSL도 계속 켜 둠)와 `VMware vmrest API`(vmrest.exe, 127.0.0.1:8697). 둘 다 **Windows 부팅 때 로그온 없이**(S4U, 비밀번호 저장 안 함) 시작하고, 끝나면 1분 간격으로 5번까지 다시 시작합니다. 작업은 저장소의 스크립트가 아니라 `wsl.exe`, `vmrest.exe`를 직접 실행하므로 저장소를 옮겨도 됩니다.
-- **방화벽:** Windows 방화벽과 Hyper-V 방화벽(WSL)에 TCP 22를 `-AllowedRemoteAddress`에서만 허용합니다.
-- **전원:** 전원 연결 시 절전·최대 절전을 끄고 덮개를 닫아도 아무것도 하지 않게 합니다(`-IncludeBattery`면 배터리일 때도, `-SkipPower`면 건드리지 않음). 되돌리기 기능은 없습니다.
-- **준비 완료:** 22번(WSL sshd)과 127.0.0.1:8697(vmrest)이 실제로 열린 것을 확인한 뒤에만 출력합니다.
-- **예전 설치에서 옮기기:** 예전 버전이 만든 작업(`WSL2 SSH Port Forward Refresh` 등)과 `%ProgramFiles%\wsl-vmware-lab`의 사본을 지웁니다.
-
-## 실행 순서 (WSL Ubuntu, 저장소 최상위)
-
-WSL 계정은 `ubuntu`로 만드는 것을 권장합니다. Windows에서 `wsl --install -d Ubuntu-24.04`를 실행한 뒤, 첫 실행 화면에서 사용자 이름을 `ubuntu`로 입력하면 됩니다. 저장소는 VM 파일과 같이 Windows 드라이브(예: `/mnt/c/...`)에 두세요.
-
-모든 작업은 `./lab` 명령 하나로 합니다. 같은 체크아웃에서 `lab` 명령은 한 번에 하나만 실행되고, 이미 실행 중이면 두 번째는 바로 멈춥니다.
-
-```bash
-./lab setup        # 1회만: WSL 도구(없으면 sudo로 설치), 공식 OVA 받기·서명 확인, cloud-init, 베이스 VM 준비 (다시 실행하면 건너뜀)
-./lab status       # 점검만: 도구, vmrest, 전원 설정, Terraform 상태
-./lab up           # 복제 -> cloud-init/NIC 준비 -> 전원 ON
-./lab configure    # nginx 설치, HTTP 확인 (두 번째 실행 changed=0)
-./lab down         # 전원만 끔. plan에 다른 변경이 있으면 거부
-./lab destroy      # 삭제 + seed ISO/빈 폴더 정리
-./lab cleanup      # 정리가 실패했거나 중간에 끊겼을 때 다시 정리
-```
-
-`./lab setup`은 디스크를 임시 파일로 변환하고, 검사가 통과해야 `base/ubuntu-base.vmdk`로 바꿉니다. 베이스가 꺼진 것을 확인한 뒤에만 준비 완료 표시(`ubuntu-base.prepared`)를 남기고, 이 표시가 있으면 다시 실행해도 아무것도 하지 않습니다. 이미 있는 베이스 VMX는 덮어쓰지 않습니다. 베이스를 새로 만들려면 베이스를 끄고 `./lab setup --recreate`를 실행합니다(이미 만든 클론은 그대로 남다가, 다음 `./lab up`이 "베이스가 바뀌었다"며 멈춥니다. 클론을 새 베이스로 다시 만들려면 `./lab up --allow-destroy`를 실행합니다. 클론 안의 내용은 모두 사라집니다). 예전 버전으로 만든 베이스는 표시가 없어서 다시 실행하면 거부하며, 이때 출력되는 안내를 따릅니다.
-
-VM을 지우기 전에 지울 VM을 `terraform/cleanup-pending.json`에 적어 두고, 정리가 끝난 VM만 목록에서 뺍니다. 정리가 실패하거나 중간에 끊기면 다음 `up`·`destroy`·`cleanup`이 남은 정리를 이어서 합니다. `status`는 정리가 남은 VM을 알려 줍니다.
-
-## 내 시스템 올리기: 여러 VM + 내 플레이북
-
-예제 대신 자기 시스템을 구성할 때는 VM 목록과 플레이북만 바꿉니다. 스크립트는 고치지 않습니다.
-
-```bash
-cp vms.tfvars.example vms.tfvars             # VM 이름, CPU, 메모리, Ansible 그룹 (git에 올라가지 않음)
-./lab up                                     # 목록대로 생성. 나중에 항목을 추가하면 새 VM만 만들고, 켜져 있는 VM은 그대로
-./lab configure ansible/check-lab.yml        # 모든 VM 접속·cloud-init·sudo 확인
-./lab configure ~/my-system/site.yml         # 내 플레이북 (다른 폴더에 둬도 됨)
-```
-
-- `vms.tfvars`의 키가 VM 이름입니다. Windows 폴더 이름, 게스트 hostname, Ansible 호스트 이름이 모두 이 이름이 됩니다.
-- `groups`에 적은 그룹이 Ansible 그룹이 되고, 모든 VM은 `lab` 그룹에도 들어갑니다. 플레이북에서 `hosts: web`, `hosts: db`처럼 씁니다.
-- `up`과 `down`은 먼저 plan을 확인합니다. `up`은 VM을 삭제하거나 교체해야 하면 그 이름을 보여 주고 멈추고, `down`은 전원 변경 말고 다른 변경이 있으면 거부합니다. `vms.tfvars`가 없어지거나 이름이 틀려도 기존 VM이 지워지지 않습니다.
-- `up`/`down`은 시작하기 전에 베이스 이름(`LAB_BASE_NAME`)을 가진 VM이 정확히 하나이고 `base/ubuntu-base.vmx`인지 확인합니다. 같은 이름이 둘이면 아무것도 바꾸지 않고 멈춥니다. VM 이름을 베이스 이름과 같게 지을 수 없습니다.
-- 목록에서 항목을 일부러 지웠다면 `./lab up --allow-destroy`로 그 VM을 삭제합니다. seed ISO, known_hosts 같은 관련 파일도 정리됩니다.
-- `LAB_VMS_FILE`을 직접 지정했는데 파일이 없으면 기본 VM 1대로 바꾸지 않고 오류로 멈춥니다.
-- `./lab configure PLAYBOOK` 뒤에 붙인 옵션은 그대로 `ansible-playbook`에 넘어갑니다(예: `--limit web1`, `-e key=value`).
-
-자세한 설명과 함정은 블로그 글과 [`.claude/skills/vmware-wsl-lab/reference/pitfalls.md`](.claude/skills/vmware-wsl-lab/reference/pitfalls.md)를 참고하세요.
-
-## 작업 전 점검: `./lab status`
-
-```bash
-./lab status                      # 점검만 하고 아무것도 바꾸지 않음. vmrest가 응답하면 종료 코드 0
-./lab status --start-vmrest  # vmrest가 꺼져 있으면 'VMware vmrest API' 작업을 시작하고 최대 30초 대기
-```
-
-실제로 감지한 값(저장소 위치, WSL 사용자·배포판, Windows 프로필, mirrored 여부)과 설정 파일 유무, 도구 설치 상태, vmrest 응답, 절전·최대 절전·덮개 닫기 전원 설정(읽기만 함)을 보여 줍니다. 비밀번호 값은 출력하지 않습니다. vmrest가 Windows에서는 실행 중인데 WSL에서 닿지 않으면, 새로 켜지 않고 endpoint와 네트워크 설정을 확인하라고 안내합니다.
+| 경로 | 내용 |
+|---|---|
+| `lab` | 유일한 진입점 |
+| `lib/` | `lab`이 부르는 내부 스크립트(베이스 준비, 수명주기, 점검, 인벤토리, 정리) |
+| `windows/` | `setup.ps1`(관리자 PowerShell), `tcp-relay.ps1`(게스트 SSH 중계) |
+| `terraform/`, `ansible/` | provider `elsudano/vmworkstation` 2.0.1 고정 / 예제·점검 플레이북 |
+| `.claude/skills/vmware-wsl-lab/` | 에이전트용 스킬(원본). `.agents/`는 `tools/sync-agent-skills.sh`로 복사한 Codex용 사본 |
 
 ## 주의
 
-- **검증 범위:** 2026-11-06 한 PC(VMware Workstation 기설치, 미러드 네트워크, Windows·Hyper-V 방화벽 꺼짐)에서 이 저장소판으로 WSL 설치부터 베이스 VM, Terraform 복제, Ansible 2회(두 번째 `changed=0`), 정리, 재부팅 후 로그온 전 vmrest·SSH까지 확인했습니다. VMware가 없는 새 PC, NAT 모드, 방화벽이 켜진 PC는 아직 확인하지 않았습니다. 처음 쓸 때는 결과를 단계마다 확인하세요.
-- **절전하면 접속이 끊김:** Windows가 절전이나 최대 절전으로 들어가면 WSL SSH, vmrest, VM이 모두 멈춥니다. 다른 PC에서는 22번 포트 타임아웃으로 보여서 SSH 설정 문제와 헷갈리기 쉽습니다. `setup.ps1 Install`이 전원 연결 시 절전을 끄고, `./lab status`가 지금 값을 보여 줍니다. 노트북을 실습 호스트로 쓰면 전원을 연결해 두세요.
-- **올리면 안 되는 파일:** `lab.env`, `%USERPROFILE%\.env`, SSH 개인키, `*.tfstate`, `inventory.json`, VM 디스크·ISO는 `.gitignore`에 들어 있습니다. 커밋하지 마세요.
-- **비공식 provider:** `elsudano/vmworkstation`은 HashiCorp나 Broadcom이 아닌 커뮤니티 provider입니다. 버전을 올리기 전에 스키마를 확인하세요(`terraform providers schema -json`).
-- **진단 스크립트:** `./lab status --plan`는 읽기 전용입니다. 사용 중인 VM 목록, state, 베이스 VM 전원 상태, plan이 바꿀 내용(삭제·교체는 경고)만 보여 주고 아무것도 적용하지 않습니다.
+- **검증 범위:** 한 노트북(VMware 기설치, 미러드 네트워크, Windows 방화벽의 Private·Public 프로필 꺼짐)에서 설치부터 베이스, 복제, Ansible 2회(두 번째 `changed=0`), 정리, 재부팅 후 로그온 전 SSH·vmrest까지 확인했습니다(2026-11-09, `setup.ps1` 포함). VMware가 없는 새 PC와 방화벽이 켜진 PC는 아직 확인하지 않았습니다.
+- **올리면 안 되는 파일:** `lab.env`, `.env`, SSH 개인키, `*.tfstate`, `inventory.json`, VM 디스크·ISO는 `.gitignore`에 있습니다.
+- **비공식 provider:** `elsudano/vmworkstation`은 커뮤니티 provider입니다. 이름이 같은 VM이 있으면 첫 번째를 고르고, 베이스가 바뀌어도 스스로 클론을 다시 만들지 않습니다. 이 저장소가 그 둘을 대신 확인합니다. 버전을 올리기 전에 스키마를 확인하세요.
+- **문제가 생기면:** [`pitfalls.md`](.claude/skills/vmware-wsl-lab/reference/pitfalls.md)에서 증상을 찾으세요.
 
 ## License
 

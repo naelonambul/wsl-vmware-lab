@@ -1,0 +1,32 @@
+name: check
+
+# Static checks for every change: shell syntax and shellcheck, Python
+# compilation, Terraform formatting and validation. Nothing here talks to
+# VMware; real lab runs stay manual (see README).
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: bash -n
+        run: for f in lab lib/*.sh tools/*.sh; do bash -n "$f"; done
+      - name: shellcheck
+        # SC2154: variables exported by lib/config.sh functions (lab_terraform_env).
+        run: shellcheck -S warning -e SC2154 -x lab lib/*.sh tools/*.sh
+      - name: python
+        run: python3 -m py_compile lib/*.py
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.17.1
+      - name: terraform fmt
+        run: terraform fmt -check -recursive terraform
+      - name: terraform validate
+        working-directory: terraform
+        run: terraform init -backend=false -input=false >/dev/null && terraform validate

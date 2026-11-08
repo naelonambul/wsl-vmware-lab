@@ -85,9 +85,9 @@ Preflight reports whether `.wslconfig` uses mirrored networking. Do not change `
 | `lib/configure.sh` | `[PLAYBOOK] [ansible options]`; waits for the inventory (all VMs) up to `LAB_GUEST_WAIT_SECONDS` (default 300 s, each attempt limited to 120 s), then runs the playbook |
 | `ansible/configure-guest.yml` | example: wait SSH/cloud-init; nginx; page; service; HTTP 200 + content assertion (group `demo`) |
 | `ansible/check-lab.yml` | smoke test for group `lab`: SSH, cloud-init, sudo, OS facts |
-| `./lab status` | power state of every VM, or of one name/id |
+| `./lab status` | read-only: host checks (`lib/preflight.sh`), Windows section (`windows/setup.ps1 Status`), power state of every VM of this checkout; `--plan [on\|off]` runs `lib/diagnose.sh` |
 | `lib/register-vm.py` | idempotent `POST /api/vms/registration` (called by `./lab setup`) |
-| `lib/base.sh` (`./lab setup`) | one-time base preparation; markers make re-runs safe, `--recreate` (base off, user-approved) rebuilds |
+| `lib/base.sh` (`./lab setup`) | one-time base preparation (signed image, disk converted to a temp file then renamed, VMX, registration, first boot, confirmed off, marker `ubuntu-base.prepared`); a prepared base only re-registers; `--recreate` (base off, user-approved) rebuilds |
 | `lib/wsl-tools.sh` (sudo, run by `./lab setup` when a tool is missing) | installs Terraform (HashiCorp apt), Ansible, image tools |
 
 Helper scripts read the Terraform output `vms`, not resource addresses. A state made by the older single-clone version (`vmworkstation_virtual_machine.ubuntu_demo`) is not migrated: destroy it with that version before upgrading, or the new version plans a second clone at the same path.

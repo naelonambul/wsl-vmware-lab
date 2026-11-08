@@ -70,7 +70,7 @@ Codex alternative for the skill only (the repository is still needed, step 2): i
 
 A replaced skill is kept as `vmware-wsl-lab.bak.<time>`; tell the user, and delete it only if they ask.
 
-## 4. Check the lab with preflight
+## 4. Check the lab with ./lab status
 
 ```bash
 "$repo/lab" status; echo "exit=$?"
