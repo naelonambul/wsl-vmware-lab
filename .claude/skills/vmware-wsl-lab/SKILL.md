@@ -132,7 +132,7 @@ Several VMs: `cp vms.tfvars.example vms.tfvars`, edit, then `./lab up`. Changing
 - [ ] (new or changed host) after a reboot with nobody logged on (`quser`: no users), ./lab status exits 0
 ```
 
-Verified end to end on a second, freshly prepared PC: download/verify → base VM → clone on → Ansible ×2 (`changed=0` on the second run) → off → destroy with cleanup, plus a no-logon reboot. SSH before logon was verified on 2026-11-06 after `wsl2-ssh-forward.ps1 InstallTask` moved its tasks to boot + S4U: an external LAN PC logged in over SSH before anyone logged on to Windows. After the review fixes (repository at `C:\wsl-vmware-lab`, WSL limited to 4GB/4 CPUs) a single-clone lifecycle passed again, and two clones from one base got distinct BIOS UUIDs, MACs and NAT/management IPs, passed `ansible/check-lab.yml` and were destroyed without leftovers. Not yet verified: SSH before logon after the latest `wsl2-ssh-forward.ps1` changes (needs a reboot), vmrest restart after it crashes (task restart policy).
+Verified end to end on the lab laptop (2026-11-09, `./lab` and `windows/setup.ps1`): setup → up → configure ×2 (`changed=0` the second time) → down → destroy with cleanup; base rebuild → clones replaced with `--allow-destroy`; reboot with nobody logged on → SSH and vmrest up from the boot tasks. Not verified: a PC without VMware yet, Windows firewall profiles enabled.
 
 ## 7. Report format
 

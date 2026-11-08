@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared cloud-init user-data for the base VM and clones. Source after lib/config.sh.
 #
 # The guest user is not configured: cloud-init keeps the image's default user

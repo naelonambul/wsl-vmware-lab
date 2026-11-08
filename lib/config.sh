@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Shared settings loader. Source it from bash scripts in this repository:
 #   source "$LAB_PROJECT_DIR/lib/config.sh" (scripts in lib/: source "$(dirname "${BASH_SOURCE[0]}")/config.sh")
 # Optional settings come from lab.env (gitignored; template lab.env.example).
@@ -149,6 +150,7 @@ lab_terraform_env() {
   export TF_VAR_vms
   LAB_TF_VAR_ARGS=()
   if [[ -f "$LAB_VMS_FILE" ]]; then
+    # shellcheck disable=SC2034 # read by the scripts that source this file
     LAB_TF_VAR_ARGS=(-var-file="$LAB_VMS_FILE")
   elif [[ "$LAB_VMS_FILE_EXPLICIT" == 1 ]]; then
     echo "[ERROR] LAB_VMS_FILE is set but $LAB_VMS_FILE does not exist." >&2

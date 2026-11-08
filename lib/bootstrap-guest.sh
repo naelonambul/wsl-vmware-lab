@@ -47,7 +47,8 @@ CFG
 # The ISO must reside on a Windows drive so Workstation can open it.
 seed_iso="$(dirname "$vmx")/cloud-init-$VM_ID.iso"
 cloud-localds --network-config="$seed_dir/network-config" "$seed_iso" "$seed_dir/user-data" "$seed_dir/meta-data"
-export SEED_WIN="$(wslpath -w "$seed_iso")"
+SEED_WIN="$(wslpath -w "$seed_iso")"
+export SEED_WIN
 export VMX_LINUX="$vmx"
 python3 - <<'PY'
 import os, re
