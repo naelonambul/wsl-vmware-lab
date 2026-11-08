@@ -165,7 +165,7 @@ lab_terraform_env() {
 lab_base_identity() {
   local prepared="$LAB_BASE_DIR/ubuntu-base.prepared" id
   if [[ ! -f "$prepared" ]]; then
-    echo "[ERROR] The base is not prepared ($prepared is missing). Run: bash prepare-base.sh" >&2
+    echo "[ERROR] The base is not prepared ($prepared is missing). Run: ./lab setup" >&2
     echo "        (A base prepared by an older version that works: touch \"$prepared\")" >&2
     return 1
   fi

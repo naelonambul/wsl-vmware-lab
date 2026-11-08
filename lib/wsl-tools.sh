@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Run with: sudo bash setup-wsl-tools.sh
+# Run by ./lab setup when a tool is missing (sudo bash lib/wsl-tools.sh).
 # Install Terraform from HashiCorp's signed apt repository and Ansible plus
 # cloud-image utilities from Ubuntu's repository.
 if [[ "${EUID}" -ne 0 ]]; then
-  echo "Run this script with sudo: sudo bash setup-wsl-tools.sh" >&2
+  echo "Run with sudo: sudo bash lib/wsl-tools.sh" >&2
   exit 1
 fi
 

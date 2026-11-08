@@ -64,7 +64,8 @@ bash wsl-vmware-lab/preflight.sh
 
 | 경로 | 내용 |
 |---|---|
-| `download-ubuntu-image.sh` | Ubuntu 공식 OVA(`noble-server-cloudimg-amd64.ova`) 받기와 서명·체크섬 확인 |
+| `lab` | 유일한 진입점: `setup`, `status`, `up`, `down`, `configure`, `destroy`, `cleanup` |
+| `lib/base.sh` | `./lab setup`: 공식 OVA 받기·서명 확인, 디스크 변환, cloud-init, 베이스 등록·첫 부팅 |
 | `preflight.sh` | 작업 전 점검: 환경 감지, 설정 유무, 도구, vmrest 상태(`--start-vmrest`로 켜기) |
 | `lib/config.sh` | 모든 bash 스크립트가 불러오는 설정 로더 |
 | `lab.env.example` | 설정 예시(가짜 값). `lab.env`로 복사해서 사용 |
@@ -151,7 +152,7 @@ WSL 계정은 `ubuntu`로 만드는 것을 권장합니다. Windows에서 `wsl -
 ./lab cleanup      # 정리가 실패했거나 중간에 끊겼을 때 다시 정리
 ```
 
-`./lab setup`은 디스크를 임시 파일로 변환하고, 검사가 통과해야 `base/ubuntu-base.vmdk`로 바꿉니다(완성 표시 `ubuntu-base.vmdk.complete`). 베이스가 꺼진 것을 확인한 뒤에만 준비 완료 표시(`ubuntu-base.prepared`)를 남기고, 이 표시가 있으면 다시 실행해도 아무것도 하지 않습니다. 이미 있는 베이스 VMX는 덮어쓰지 않습니다. 베이스를 새로 만들려면 베이스를 끄고 `./lab setup --recreate`를 실행합니다(이미 만든 클론은 그대로 남다가, 다음 `./lab up`이 "베이스가 바뀌었다"며 멈춥니다. 클론을 새 베이스로 다시 만들려면 `./lab up --allow-destroy`를 실행합니다. 클론 안의 내용은 모두 사라집니다). 예전 버전으로 만든 베이스는 표시가 없어서 다시 실행하면 거부하며, 이때 출력되는 안내를 따릅니다.
+`./lab setup`은 디스크를 임시 파일로 변환하고, 검사가 통과해야 `base/ubuntu-base.vmdk`로 바꿉니다. 베이스가 꺼진 것을 확인한 뒤에만 준비 완료 표시(`ubuntu-base.prepared`)를 남기고, 이 표시가 있으면 다시 실행해도 아무것도 하지 않습니다. 이미 있는 베이스 VMX는 덮어쓰지 않습니다. 베이스를 새로 만들려면 베이스를 끄고 `./lab setup --recreate`를 실행합니다(이미 만든 클론은 그대로 남다가, 다음 `./lab up`이 "베이스가 바뀌었다"며 멈춥니다. 클론을 새 베이스로 다시 만들려면 `./lab up --allow-destroy`를 실행합니다. 클론 안의 내용은 모두 사라집니다). 예전 버전으로 만든 베이스는 표시가 없어서 다시 실행하면 거부하며, 이때 출력되는 안내를 따릅니다.
 
 VM을 지우기 전에 지울 VM을 `terraform/cleanup-pending.json`에 적어 두고, 정리가 끝난 VM만 목록에서 뺍니다. 정리가 실패하거나 중간에 끊기면 다음 `up`·`destroy`·`cleanup`이 남은 정리를 이어서 합니다. `status`는 정리가 남은 VM을 알려 줍니다.
 
