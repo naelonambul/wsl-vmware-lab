@@ -7,7 +7,7 @@
 #   ... -Action Apply -IncludeBattery   # the same on battery too
 #   ... -Action Restore                 # put back the values saved by the first Apply
 #   ... -Action Apply -WhatIf           # show the changes without making them
-#   ... -Machine                        # one key=value line for preflight.sh
+#   ... -Machine                        # one key=value line for lib/preflight.sh
 #
 # Settings are read and written by GUID (powercfg /qh), so localized powercfg
 # output does not matter. Only the active power plan is changed; switching to

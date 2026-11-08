@@ -18,11 +18,11 @@ If you are already in a WSL shell (for example over SSH), SSH works; do not spen
 ```bash
 # Lists every checkout of this repository (any folder name): WSL home, Windows users, and
 # shallow folders on C:/D: (C:\wsl-vmware-lab when antivirus blocks the user profile).
-{ find "$HOME" /mnt/c/Users -maxdepth 6 -name preflight.sh 2>/dev/null
-  find /mnt/c /mnt/d -maxdepth 3 -name preflight.sh 2>/dev/null; } | sort -u \
-  | while read -r f; do [ -f "$(dirname "$f")/lib/config.sh" ] && dirname "$f"; done
+{ find "$HOME" /mnt/c/Users -maxdepth 6 -type f \( -name lab -o -name preflight.sh \) 2>/dev/null
+  find /mnt/c /mnt/d -maxdepth 3 -type f \( -name lab -o -name preflight.sh \) 2>/dev/null; } | sort -u \
+  | while read -r f; do [ -f "$(dirname "$f")/lib/config.sh" ] && dirname "$f"; done | sort -u
 repo=<the one path printed>     # several printed: ask the user which one
-bash "$repo/preflight.sh"
+"$repo/lab" status
 ```
 
 If nothing is printed, ask the user where the repository is, or whether to clone https://github.com/naelonambul/wsl-vmware-lab. Preflight reports the discovered repository, WSL user, distro, Windows profile, networking mode, which secrets file holds the vmrest account (values hidden) and whether other users can read it, tools and vmrest state. Exit code 0 means vmrest is reachable **and** the stored vmrest account is accepted. It does not test WSL SSH from another PC, the base VM or a clone lifecycle.
@@ -33,7 +33,7 @@ When preflight fails at vmrest:
 
 | Preflight output | Meaning | Next step |
 |---|---|---|
-| `HTTP 000` and `process=False` | vmrest is not running | Ask the user, then `bash "$repo/preflight.sh" --start-vmrest` (starts the `VMware vmrest API` startup task, or runs `windows/start-vmrest.ps1 -NoWait` once) |
+| `HTTP 000` and `process=False` | vmrest is not running | Ask the user, then `"$repo/lab" status --start-vmrest` (starts the `VMware vmrest API` startup task, or runs `windows/start-vmrest.ps1 -NoWait` once) |
 | `HTTP 000` but `process=True listener8697=True` | vmrest runs; WSL cannot reach it | Check `VMWS_ENDPOINT` and mirrored networking. Do not start a second vmrest |
 | `HTTP 404` | endpoint lacks `/api` | Fix `VMWS_ENDPOINT` |
 | `... .env not found` / `lacks VMWS_USERNAME` | no usable secrets file | Look for an existing copy first (another `.env`, an old `vmrest.env`; check variable **names** only). Then ask the user to write `VMWS_USERNAME=` and `VMWS_PASSWORD=` into `%USERPROFILE%\.env`, or point `LAB_SECRETS_FILE` at the existing file |
@@ -75,10 +75,10 @@ Terraform owns VM existence and power. Ansible owns guest software. They do not 
 
 All bash scripts source `lib/config.sh`, which reads optional settings from `lab.env` (gitignored; template `lab.env.example`) or the file named in `LAB_ENV_FILE`, and the vmrest account from the secrets file (`%USERPROFILE%\.env`).
 
-- **VM set.** Without `vms.tfvars`, one VM `LAB_CLONE_NAME` (group `demo`). With `vms.tfvars` in the repository root (template `vms.tfvars.example`, gitignored; `LAB_VMS_FILE` to move it): `vms = { "<name>" = { processors, memory_mb, groups } }`. Each VM is `<LAB_VM_ROOT_WIN>\<name>\<name>.vmx` (default root `%USERPROFILE%\Documents\Virtual Machines`), its hostname and its Ansible host; `groups` become Ansible groups and every VM is also in `lab`. `./lab up` creates only new entries (running VMs stay on). It reads the plan first and refuses to delete or replace any VM unless run as `./lab up --allow-destroy` (which destroys plus cleans entries removed from the list); a missing or mistyped `vms.tfvars` therefore stops instead of deleting VMs. An explicitly set `LAB_VMS_FILE` that does not exist is an error, not the single-VM fallback. Before `on`/`off`, `check-base.py` requires exactly one registered VM with display name `LAB_BASE_NAME`, at `base/ubuntu-base.vmx` (the provider takes the first name match); a duplicate stops with no change, and a clone may not use the base name. A rebuilt base (`./lab setup --recreate`, or another vmrest id or path) makes the plan replace every clone and their bootstrap, so `on` refuses until `--allow-destroy`; clone contents are lost. Pass `--allow-destroy` only when the user asked to remove or rebuild those VMs.
-- **Playbooks.** `configure-guest.sh [PLAYBOOK] [ansible-playbook options]` runs any playbook, also from the user's own project folder (`LAB_PLAYBOOK` sets the default). `ansible/check-lab.yml` checks every VM (SSH, cloud-init, sudo, OS). Keep the user's playbooks and `vms.tfvars` out of this repository's git history unless they ask.
+- **VM set.** Without `vms.tfvars`, one VM `LAB_CLONE_NAME` (group `demo`). With `vms.tfvars` in the repository root (template `vms.tfvars.example`, gitignored; `LAB_VMS_FILE` to move it): `vms = { "<name>" = { processors, memory_mb, groups } }`. Each VM is `<LAB_VM_ROOT_WIN>\<name>\<name>.vmx` (default root `%USERPROFILE%\Documents\Virtual Machines`), its hostname and its Ansible host; `groups` become Ansible groups and every VM is also in `lab`. `./lab up` creates only new entries (running VMs stay on). It reads the plan first and refuses to delete or replace any VM unless run as `./lab up --allow-destroy` (which destroys plus cleans entries removed from the list); a missing or mistyped `vms.tfvars` therefore stops instead of deleting VMs. An explicitly set `LAB_VMS_FILE` that does not exist is an error, not the single-VM fallback. Before `on`/`off`, `lib/check-base.py` requires exactly one registered VM with display name `LAB_BASE_NAME`, at `base/ubuntu-base.vmx` (the provider takes the first name match); a duplicate stops with no change, and a clone may not use the base name. A rebuilt base (`./lab setup --recreate`, or another vmrest id or path) makes the plan replace every clone and their bootstrap, so `on` refuses until `--allow-destroy`; clone contents are lost. Pass `--allow-destroy` only when the user asked to remove or rebuild those VMs.
+- **Playbooks.** `./lab configure [PLAYBOOK] [ansible-playbook options]` runs any playbook, also from the user's own project folder (`LAB_PLAYBOOK` sets the default). `ansible/check-lab.yml` checks every VM (SSH, cloud-init, sudo, OS). Keep the user's playbooks and `vms.tfvars` out of this repository's git history unless they ask.
 - Guest images: Ubuntu cloud images only (default 24.04 noble). Guest-user detection needs `open-vm-tools` inside the guest, which Ubuntu cloud images ship (checked: 22.04, 24.04 manifests) and Debian 12 cloud images do not. For another distribution, stop and ask the user; do not swap images silently.
-- Guest VM user (inside the VM) is not configured: cloud-init keeps the image's default user (`ubuntu` on Ubuntu images) and the guest reports its name through VMware guestinfo on every boot (`lib/cloud-config.sh`, read by `guest-inventory.py`). The WSL user is separate: the account the user SSHes into this PC as (the `User` of their SSH config entry); scripts run as it and never set it.
+- Guest VM user (inside the VM) is not configured: cloud-init keeps the image's default user (`ubuntu` on Ubuntu images) and the guest reports its name through VMware guestinfo on every boot (`lib/cloud-config.sh`, read by `lib/guest-inventory.py`). The WSL user is separate: the account the user SSHes into this PC as (the `User` of their SSH config entry); scripts run as it and never set it.
 - Private files live in `~/.config/wsl-vmware-lab/` (`LAB_PRIVATE_DIR`).
 - Windows scripts take parameters instead: `wsl2-ssh-forward.ps1 -AllowedRemoteAddress <LAN/24> -Distro <name>`, `start-vmrest.ps1 -VmrestPath <exe>`, `install-vmrest-task.ps1 -User <DOMAIN\user>`. Both install scripts copy the script their task runs to `%ProgramFiles%\wsl-vmware-lab` (administrator-only; settings live there too) and refuse a folder other users can write. After updating the repository, re-run both installs (elevated); preflight warns when a task's copy differs from the checkout.
 - vmrest starts at Windows boot before any logon (`VMware vmrest API`: boot trigger, S4U, no time limit, restart 5 x 1 min). A logon-only start is not acceptable.
@@ -88,7 +88,7 @@ All bash scripts source `lib/config.sh`, which reads optional settings from `lab
 1. **User decides.** Propose options with trade-offs before changing a host, and run only what the user picks.
 2. **Secrets.** Never print, copy or commit `lab.env`, vmrest credentials, SSH private keys, Terraform state or generated `inventory.json`. Never type the vmrest password on the user's behalf: the user runs `vmrest.exe -C` and writes the secrets file. Do not enable `set -x` around config loading. New variables get a fake value in `lab.env.example`.
 3. **Preserve.** Never delete or re-prepare the base VM, reset WSL distributions, restore VMware network defaults, or overwrite an existing Terraform state unless the user explicitly asks.
-4. **Check before lifecycle commands.** `./lab status` (or `preflight.sh`) must exit 0 in this session before any Terraform command (section 0). `lab` runs one command at a time per checkout (`flock` on `.lab.lock`); a second one stops at once.
+4. **Check before lifecycle commands.** `./lab status` (or `lib/preflight.sh`) must exit 0 in this session before any Terraform command (section 0). `lab` runs one command at a time per checkout (`flock` on `.lab.lock`); a second one stops at once.
 5. **One runner per state.** One checkout = one state, one VM set, one inventory. Serialize work, or use a fully isolated checkout with its own `lab.env`.
 6. **Destroy via the wrapper.** Use `./lab destroy` (runs cleanup), never bare `terraform destroy`. `0 destroyed` with vmrest down is not success.
 7. **Never disable host key checking globally.** Clone host keys come from guestinfo and are pinned (`StrictHostKeyChecking=yes`); a mismatch means the address reached another VM or the guest is not ready.
@@ -110,8 +110,8 @@ cd "$repo"
 ./lab down                       # refused unless the plan is power changes only
 ./lab destroy                    # interactive; cleanup-aware, every VM
 ./lab cleanup                    # retry cleanup left by a failed or interrupted delete
-bash api-status.sh               # vmrest inventory (JSON; contains VM paths)
-bash check-power.sh [name]       # power state of every VM
+./lab status               # vmrest inventory (JSON; contains VM paths)
+./lab status       # power state of every VM
 ```
 
 Several VMs: `cp vms.tfvars.example vms.tfvars`, edit, then `./lab up`. Changing the list later: edit and run `on` again (removing entries: `./lab up --allow-destroy`, after the user confirms).
@@ -121,15 +121,15 @@ Several VMs: `cp vms.tfvars.example vms.tfvars`, edit, then `./lab up`. Changing
 ## 6. Acceptance checklist (copy and tick)
 
 ```
-- [ ] preflight.sh exit 0 (vmrest 401 unauthenticated, 200 authenticated)
-- [ ] every VM in the list appears in API inventory and is poweredOn (`check-power.sh`)
+- [ ] ./lab status exit 0 (vmrest 401 unauthenticated, 200 authenticated)
+- [ ] every VM in the list appears in API inventory and is poweredOn (`./lab status`)
 - [ ] Ansible run 1: HTTP 200 + expected content, failed=0
 - [ ] Ansible run 2: changed=0 unreachable=0 failed=0
 - [ ] power-off confirmed by API, not only Terraform exit code
 - [ ] destroy removed clone from API/state + VMX, VMDK, seed ISO, clone dir
 - [ ] base VM and unrelated VMs unchanged; shared inventory restored
-- [ ] preflight.sh still exits 0 afterwards
-- [ ] (new or changed host) after a reboot with nobody logged on (`quser`: no users), preflight.sh exits 0
+- [ ] ./lab status still exits 0 afterwards
+- [ ] (new or changed host) after a reboot with nobody logged on (`quser`: no users), ./lab status exits 0
 ```
 
 Verified end to end on a second, freshly prepared PC: download/verify → base VM → clone on → Ansible ×2 (`changed=0` on the second run) → off → destroy with cleanup, plus a no-logon reboot. SSH before logon was verified on 2026-11-06 after `wsl2-ssh-forward.ps1 InstallTask` moved its tasks to boot + S4U: an external LAN PC logged in over SSH before anyone logged on to Windows. After the review fixes (repository at `C:\wsl-vmware-lab`, WSL limited to 4GB/4 CPUs) a single-clone lifecycle passed again, and two clones from one base got distinct BIOS UUIDs, MACs and NAT/management IPs, passed `ansible/check-lab.yml` and were destroyed without leftovers. Not yet verified: SSH before logon after the latest `wsl2-ssh-forward.ps1` changes (needs a reboot), vmrest restart after it crashes (task restart policy).

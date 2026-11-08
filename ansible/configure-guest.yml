@@ -11,6 +11,7 @@
     - name: Wait for cloud-init to complete
       ansible.builtin.command: cloud-init status --wait
       changed_when: false
+      timeout: 900  # a cloud-init that never finishes fails here instead of hanging
 
     - name: Install nginx
       ansible.builtin.apt:

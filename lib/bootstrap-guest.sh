@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # Called by Terraform while the clone is powered off.
 set -euo pipefail
-cd "$(dirname "$0")"
+cd "$(dirname "$0")/.."
 source lib/config.sh
 source lib/cloud-config.sh
 # Refuse unless the clone is positively known to be off: a failed or garbled
 # vmrun answer must stop here, before any file is changed.
 power=0; lab_vm_running "$VMX_WIN" || power=$?
 if [[ $power -eq 0 ]]; then
-  echo 'Power the clone off with Terraform before bootstrap; use terraform-vm.sh on.' >&2
+  echo 'Power the clone off with Terraform before bootstrap; use ./lab up.' >&2
   exit 1
 elif [[ $power -ne 1 ]]; then
   echo '[ERROR] Could not confirm the clone is powered off; not editing it.' >&2

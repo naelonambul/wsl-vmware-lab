@@ -25,13 +25,13 @@ variable "power_state" {
   }
 }
 
-# Set by terraform-vm.sh from lab.env (see lib/config.sh).
+# Set by lib/lifecycle.sh from lab.env (see lib/config.sh).
 variable "base_name" {
   description = "Display name of the registered base VM to clone"
   type        = string
 }
 
-# Set by terraform-vm.sh on/off (lib/config.sh lab_base_identity). Empty
+# Set by lib/lifecycle.sh on/off (lib/config.sh lab_base_identity). Empty
 # skips the id check (destroy, diagnosis without a confirmed base).
 variable "base_id" {
   description = "vmrest id of the confirmed base VM"
@@ -52,7 +52,7 @@ variable "vm_root_win" {
 
 # Default: one VM from LAB_CLONE_NAME/LAB_CLONE_CPUS/LAB_CLONE_MEMORY_MB (lib/config.sh).
 # For a system of several VMs, write vms.tfvars in the repository root
-# (template: vms.tfvars.example); terraform-vm.sh passes it with -var-file.
+# (template: vms.tfvars.example); lib/lifecycle.sh passes it with -var-file.
 variable "vms" {
   description = "Lab VMs to create: name => { processors, memory_mb, groups (Ansible groups) }"
   type = map(object({

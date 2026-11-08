@@ -2,7 +2,7 @@
 # The lab's single entry point (WSL). One lab command at a time per checkout.
 #
 #   ./lab setup [--recreate]       WSL tools, Ubuntu image, cloud-init seed, base VM (once)
-#   ./lab status                   host checks, vmrest, base, VMs (changes nothing)
+#   ./lab status [--start-vmrest | --plan [on|off]]   checks; --plan: what up/down would change
 #   ./lab up [--allow-destroy]     create new VMs from vms.tfvars and power all on
 #   ./lab down                     power the existing VMs off
 #   ./lab configure [PLAYBOOK] [ansible-playbook options]
@@ -40,14 +40,20 @@ case "$cmd" in
     fi
     exec bash "$here/lib/base.sh" "$@" ;;
   status)
+    case "${1:-}" in
+      --plan) shift; exec bash "$here/lib/diagnose.sh" "$@" ;;   # read-only Terraform plan
+      --start-vmrest|'') ;;
+      *) usage ;;
+    esac
     rc=0
-    bash "$here/preflight.sh" || rc=$?
-    bash "$here/terraform-vm.sh" status || rc=$?
+    bash "$here/lib/preflight.sh" "$@" || rc=$?
+    echo '== VMs'
+    bash "$here/lib/lifecycle.sh" status || rc=$?
     exit "$rc" ;;
-  up)        lock; exec bash "$here/terraform-vm.sh" on "$@" ;;
-  down)      lock; exec bash "$here/terraform-vm.sh" off "$@" ;;
-  destroy)   lock; exec bash "$here/terraform-vm.sh" destroy "$@" ;;
-  cleanup)   lock; exec bash "$here/terraform-vm.sh" cleanup "$@" ;;
-  configure) lock; exec bash "$here/configure-guest.sh" "$@" ;;
+  up)        lock; exec bash "$here/lib/lifecycle.sh" on "$@" ;;
+  down)      lock; exec bash "$here/lib/lifecycle.sh" off "$@" ;;
+  destroy)   lock; exec bash "$here/lib/lifecycle.sh" destroy "$@" ;;
+  cleanup)   lock; exec bash "$here/lib/lifecycle.sh" cleanup "$@" ;;
+  configure) lock; exec bash "$here/lib/configure.sh" "$@" ;;
   *) usage ;;
 esac

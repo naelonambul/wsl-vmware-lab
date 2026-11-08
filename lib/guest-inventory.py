@@ -99,7 +99,8 @@ def pick_address(leases, mac, subnet, now):
 
 
 def main():
-    project = Path(__file__).resolve().parent
+    here = Path(__file__).resolve().parent
+    project = here.parent
     try:
         vms = json.loads(subprocess.check_output(
             ['terraform', '-chdir=' + str(project / 'terraform'), 'output', '-json', 'vms'],
@@ -120,12 +121,15 @@ def main():
     if subnet is None:
         fatal('No DHCP subnet for ' + vnet + ' in ' + str(conf_file) + ' (LAB_MGMT_VNET); enable DHCP on it in the Virtual Network Editor')
     vmrun = str(Path(os.environ.get('VMWARE_DIR', '/mnt/c/Program Files/VMware/VMware Workstation')) / 'vmrun.exe')
-    proxy_command = 'bash ' + shlex.quote(str(project / 'guest-proxy.sh')) + ' %h %p'
+    proxy_command = 'bash ' + shlex.quote(str(here / 'guest-proxy.sh')) + ' %h %p'
     now = datetime.now(timezone.utc)
 
     def guest_var(vm, name):
-        return subprocess.run([vmrun, '-T', 'ws', 'readVariable', vm['path'], 'guestVar', name],
-                              capture_output=True, text=True).stdout.strip()
+        try:
+            return subprocess.run([vmrun, '-T', 'ws', 'readVariable', vm['path'], 'guestVar', name],
+                                  capture_output=True, text=True, timeout=30).stdout.strip()
+        except subprocess.TimeoutExpired:
+            return ''  # a hung vmrun counts as not reported yet
 
     hosts, groups, known, waiting = {}, {}, {}, []
     for name, vm in sorted(vms.items()):

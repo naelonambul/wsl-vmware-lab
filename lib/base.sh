@@ -30,7 +30,7 @@ vmx_win=""
 
 register() {
   lab_require_credentials
-  python3 "$LAB_PROJECT_DIR/register-vm.py" "$vmx" "$LAB_BASE_NAME"
+  python3 "$LAB_PROJECT_DIR/lib/register-vm.py" "$vmx" "$LAB_BASE_NAME"
 }
 
 if [[ -f "$prepared" && $recreate -eq 0 ]]; then
@@ -146,7 +146,7 @@ fi
 # 5. Register, first boot, wait for the guest's report, confirmed power-off.
 register
 vmx_win=$(wslpath -w "$vmx")
-"$vmrun" -T ws start "$vmx_win" nogui
+timeout 120 "$vmrun" -T ws start "$vmx_win" nogui
 echo 'Waiting for first-boot cloud-init (guestinfo user report, up to 10 minutes)...'
 reported=""
 for _ in $(seq 1 120); do
@@ -158,7 +158,7 @@ done
 [[ "$reported" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || { echo "[ERROR] The guest reported an unexpected user name: $reported (the base is still running)" >&2; exit 1; }
 echo "[OK] cloud-init reported guest user: $reported"
 sleep 15   # let the remaining runcmd steps finish before the soft shutdown
-"$vmrun" -T ws stop "$vmx_win" soft
+timeout 120 "$vmrun" -T ws stop "$vmx_win" soft
 for _ in $(seq 1 60); do
   power=0; lab_vm_running "$vmx_win" || power=$?
   [[ $power -eq 1 ]] && break
