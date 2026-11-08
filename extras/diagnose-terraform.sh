@@ -24,6 +24,15 @@ else
   echo "[WARN] could not list running VMs: $running"
 fi
 
+echo '== Base VM identity'
+if lab_base_identity; then
+  echo "[OK] exactly one VM is named $LAB_BASE_NAME: $TF_VAR_base_id"
+else
+  echo "[WARN] terraform-vm.sh on/off would stop here (see above); planning without the id check"
+  prepared="$LAB_BASE_DIR/ubuntu-base.prepared"
+  [[ -f "$prepared" ]] && TF_VAR_base_prepared=$(sha256sum < "$prepared" | cut -d' ' -f1) && export TF_VAR_base_prepared
+fi
+
 cd "$LAB_PROJECT_DIR/terraform"
 # init only installs the pinned provider locally; it does not touch VMs.
 terraform init -input=false >/dev/null
@@ -63,5 +72,6 @@ for action, addr in changes:
     print(f"{tag} {action}: {addr}")
 if any(a in ("delete", "replace") for a, _ in changes):
     print("[WARN] the plan deletes or replaces VMs; check the VM list before any terraform-vm.sh command")
+    print("       (replacements of every clone after prepare-base.sh --recreate are expected: on --allow-destroy)")
 PY
 exit "$rc"

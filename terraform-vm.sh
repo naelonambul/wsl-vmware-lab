@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # WSL: bash terraform-vm.sh on [--allow-destroy] | off | status | cleanup | destroy [terraform args]
 # VMs come from vms.tfvars (LAB_VMS_FILE) if present, else one VM from lab.env.
-# on/off read the plan first: on refuses to delete or replace VMs unless
-# --allow-destroy is given; off refuses anything but a power change.
+# on/off check the base VM first (check-base.py) and read the plan: on refuses
+# to delete or replace VMs unless --allow-destroy is given (a rebuilt base
+# replaces every clone); off refuses anything but a power change.
 # VMs that may be deleted are written to terraform/cleanup-pending.json first;
 # their generated files are cleaned once they are gone, and a failed cleanup is
 # retried by the next on/destroy/cleanup.
@@ -21,6 +22,11 @@ if [[ "${1:-status}" != status ]]; then
     exit 1
   fi
 fi
+# on/off clone or power VMs from the base: confirm it is the one VM with the
+# base name first (destroy and cleanup do not need the base).
+case "${1:-status}" in
+  on|off) lab_base_identity || exit 1 ;;
+esac
 terraform init -input=false >/dev/null
 if [[ ${#LAB_TF_VAR_ARGS[@]} -gt 0 ]]; then vm_list_desc="$LAB_VMS_FILE"
 else vm_list_desc="single VM $LAB_CLONE_NAME (no $LAB_VMS_FILE)"; fi
@@ -102,7 +108,8 @@ planned_new_vms() {
     (($3 == "vmworkstation_virtual_machine" && $4 == "vm") || ($3 == "terraform_data" && $4 == "guest_bootstrap")) { print $5 }' | sort -u
 }
 
-# Stop unless the user allowed it when $plan deletes or replaces a VM. A
+# Stop unless the user allowed it when $plan deletes or replaces a VM (args:
+# the plan options, to plan again after removing them). A
 # missing or mistyped vms.tfvars shows up here as deletions.
 guard_vm_destroy() {
   local doomed
@@ -113,10 +120,30 @@ guard_vm_destroy() {
     state_json > "$before"
     # shellcheck disable=SC2086 # names are validated VM keys
     python3 ../cleanup-guest.py record "$journal" "$before" $doomed
+    # Replaced VMs (a rebuilt base replaces every clone) are destroyed on their
+    # own first and cleaned up: Terraform would otherwise create the
+    # replacement right after the destroy, into the same folder that still
+    # holds the old seed ISO and .vmxf, and vmrest refuses that. VMs that are
+    # only deleted stay in the main apply: a targeted destroy also takes the
+    # bootstrap of every other clone with it.
+    local name targets=()
+    for name in $(plan_changes | awk -F'\t' '$1 == "replace" && $3 == "vmworkstation_virtual_machine" { print $5 }' | sort -u); do
+      [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "[ERROR] Unexpected VM name from plan: $name" >&2; exit 1; }
+      targets+=(-target="vmworkstation_virtual_machine.vm[\"$name\"]")
+    done
+    if [[ ${#targets[@]} -gt 0 ]]; then
+      terraform apply -destroy -input=false -auto-approve -parallelism=1 "${LAB_TF_VAR_ARGS[@]}" "${targets[@]}" || exit 1
+      run_cleanup || exit 1
+      run_plan "$@"
+    fi
     return 0
   fi
   echo "[ERROR] This would delete or replace VMs: $(tr '\n' ' ' <<<"$doomed")" >&2
   echo "        VM list in use: $vm_list_desc" >&2
+  if plan_changes | awk -F'\t' '$1 == "update" && $3 == "terraform_data" && $4 == "base_identity" { f = 1 } END { exit !f }'; then
+    echo "        The base VM changed (rebuilt, or re-registered at another id or path):" >&2
+    echo "        its clones are rebuilt from it, losing everything inside them." >&2
+  fi
   echo "        If vms.tfvars is missing or wrong, fix it. To remove these VMs on purpose:" >&2
   echo "        bash terraform-vm.sh on --allow-destroy  (or terraform-vm.sh destroy for all)" >&2
   exit 1
@@ -137,7 +164,7 @@ case "${1:-status}" in
       esac
     done
     run_plan -var=power_state=on
-    guard_vm_destroy
+    guard_vm_destroy -var=power_state=on
     # Bootstrap needs a powered-off clone: create new VMs off first, targeting
     # only them so VMs that are already running stay on.
     new_vms=$(planned_new_vms)
@@ -171,7 +198,10 @@ case "${1:-status}" in
     mapfile -t targets < <(existing_targets)
     if [[ ${#targets[@]} -eq 0 ]]; then echo '[OK] No VMs in the state'; exit 0; fi
     run_plan -var=power_state=off "${targets[@]}"
+    # Recording the base the first time (base_identity create) is harmless; a
+    # changed base shows up as clone replacements and is refused.
     other=$(plan_changes | awk -F'\t' '!($1 == "update" && $3 == "vmworkstation_virtual_machine") &&
+      !(($1 == "create" || $1 == "update") && $3 == "terraform_data" && $4 == "base_identity") &&
       $1 != "no-op" && $1 != "noop" && $1 != "read" { print "  " $1 ": " $2 }')
     if [[ -n "$other" ]]; then
       echo '[ERROR] off would do more than power VMs off; nothing changed:' >&2

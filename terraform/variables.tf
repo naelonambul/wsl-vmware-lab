@@ -31,6 +31,20 @@ variable "base_name" {
   type        = string
 }
 
+# Set by terraform-vm.sh on/off (lib/config.sh lab_base_identity). Empty
+# skips the id check (destroy, diagnosis without a confirmed base).
+variable "base_id" {
+  description = "vmrest id of the confirmed base VM"
+  type        = string
+  default     = ""
+}
+
+variable "base_prepared" {
+  description = "Hash of base/ubuntu-base.prepared; changes when the base is rebuilt"
+  type        = string
+  default     = ""
+}
+
 variable "vm_root_win" {
   description = "Windows folder that holds one folder per clone, e.g. C:\\Users\\<you>\\Documents\\Virtual Machines"
   type        = string
