@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Session preflight for the WSL + VMware lab. Run inside WSL, from anywhere:
-#   bash <repo>/preflight.sh                 # report only, changes nothing
-#   bash <repo>/preflight.sh --start-vmrest  # also start vmrest if it is down
-# Exit code 0 = vmrest reachable AND the stored vmrest account accepted; 1 = not ready.
+# Host checks, run by ./lab status [--start-vmrest] (WSL).
+#   ./lab status                 # report only, changes nothing
+#   ./lab status --start-vmrest  # also start vmrest if it is down
+# Exit code 0 = vmrest listens on loopback only, refuses requests without
+# credentials and accepts the stored account; 1 = not ready. VM state is
+# reported separately (lib/lifecycle.sh status).
 # Never prints secrets.
 set -uo pipefail
 
@@ -15,7 +17,7 @@ case "${1:-}" in
 esac
 
 # shellcheck source=lib/config.sh
-source "$(dirname "${BASH_SOURCE[0]}")/lib/config.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
 
 ok()   { printf '[OK]   %s\n' "$*"; }
 warn() { printf '[WARN] %s\n' "$*"; }
@@ -137,6 +139,12 @@ for exe in vmrun.exe vmrest.exe; do
 done
 
 echo '== vmrest API'
+# vmrest must stay on loopback (#21): the endpoint itself, and the listener below.
+ep_host=$(sed -E 's#^[a-z]+://(\[[^]]+\]|[^:/]+).*#\1#' <<<"$VMWS_ENDPOINT")
+case "$ep_host" in
+  127.0.0.1|localhost|'[::1]') ok "endpoint is loopback: $VMWS_ENDPOINT" ;;
+  *) fail "VMWS_ENDPOINT host is $ep_host; the lab expects vmrest on 127.0.0.1 only (mirrored networking)"; exit 1 ;;
+esac
 probe() {
   curl --connect-timeout 3 --max-time 8 -s -o /dev/null -w '%{http_code}' "${VMWS_ENDPOINT%/}/vms" 2>/dev/null
 }
@@ -184,11 +192,25 @@ if [[ "$code" == 000 ]]; then
   fi
 fi
 case "$code" in
-  401) ok "vmrest answers at ${VMWS_ENDPOINT} (HTTP 401 without credentials = running)" ;;
-  200) warn "vmrest answered 200 without credentials; authentication may be disabled" ;;
+  401) ok "vmrest answers at ${VMWS_ENDPOINT} and refuses requests without credentials (HTTP 401)" ;;
+  200) fail "vmrest answered HTTP 200 without credentials: authentication is off. Configure the account with vmrest.exe -C and restart vmrest"; exit 1 ;;
   404) fail "HTTP 404 - VMWS_ENDPOINT must end with /api"; exit 1 ;;
   *)   fail "unexpected HTTP $code from ${VMWS_ENDPOINT}"; exit 1 ;;
 esac
+if $interop; then
+  listen=$(timeout 30 "$PS" -NoProfile -NonInteractive -Command \
+    '(Get-NetTCPConnection -State Listen -LocalPort 8697 -ErrorAction SilentlyContinue).LocalAddress | Sort-Object -Unique' 2>/dev/null | tr -d '\r' | tr '\n' ' ')
+  nonloop=$(tr ' ' '\n' <<<"$listen" | grep -v -E '^(127\.0\.0\.1|::1|)$' || true)
+  if [[ -z "${listen// /}" ]]; then
+    warn "could not read the Windows listener for port 8697; loopback-only not confirmed"
+  elif [[ -n "$nonloop" ]]; then
+    fail "vmrest listens on a non-loopback address: $(tr '\n' ' ' <<<"$nonloop")- other machines on the network can reach it"; exit 1
+  else
+    ok "vmrest listens on loopback only ($listen)"
+  fi
+else
+  warn "no Windows interop: loopback-only listener not confirmed"
+fi
 
 # Windows-side setup that matters after a reboot or for authentication.
 # vmrest.cfg (written by `vmrest.exe -C`) holds the API account; observed in
@@ -327,4 +349,4 @@ else
   fail "authenticated GET /vms: HTTP $auth_code"
   exit 1
 fi
-echo '== Ready: vmrest reachable and credentials accepted'
+echo '== Ready: vmrest on loopback, authentication required, stored account accepted (VMs: see below)'

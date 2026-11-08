@@ -119,7 +119,7 @@ This flow (update, resources, Ubuntu install, restart/resume, account, tools, vm
 
 ## 3. Configure Linux SSH and remote access
 
-Section 2 does not install an SSH server, and `preflight.sh` does not check WSL sshd. When the user will reach this WSL from another PC, do this section before moving on to tools and VMware; do not assume SSH exists because WSL, tools and vmrest work.
+Section 2 does not install an SSH server, and `lib/preflight.sh` does not check WSL sshd. When the user will reach this WSL from another PC, do this section before moving on to tools and VMware; do not assume SSH exists because WSL, tools and vmrest work.
 
 Inside Ubuntu:
 
@@ -165,7 +165,7 @@ This takes ownership of SSH startup in that distribution; do not run a competing
 
 ### Keep the PC awake
 
-Sleep or hibernation stops WSL, sshd, vmrest and the VMs; from another PC this looks exactly like a broken SSH setup (port 22 timeout). Display-off timeouts are harmless. `bash preflight.sh` reads the active power plan through `windows/configure-power.ps1 -Machine` and warns when, on AC power, Windows sleeps or hibernates after a timeout or the lid action is not "do nothing" (and separately for battery on PCs that have one). Show the current values with `windows/configure-power.ps1` (no arguments, read only), then, with the user's OK, have the user run `-Action Apply` in Windows PowerShell (`-IncludeBattery` to cover battery too; `-WhatIf` to preview). Apply saves the original values once to `%LOCALAPPDATA%\wsl-vmware-lab\power-backup.json`; `-Action Restore` puts them back. Only the active plan changes, and a Group Policy power setting overrides it. Acceptance: preflight shows `[OK] power (plugged in)`.
+Sleep or hibernation stops WSL, sshd, vmrest and the VMs; from another PC this looks exactly like a broken SSH setup (port 22 timeout). Display-off timeouts are harmless. `./lab status` reads the active power plan through `windows/configure-power.ps1 -Machine` and warns when, on AC power, Windows sleeps or hibernates after a timeout or the lid action is not "do nothing" (and separately for battery on PCs that have one). Show the current values with `windows/configure-power.ps1` (no arguments, read only), then, with the user's OK, have the user run `-Action Apply` in Windows PowerShell (`-IncludeBattery` to cover battery too; `-WhatIf` to preview). Apply saves the original values once to `%LOCALAPPDATA%\wsl-vmware-lab\power-backup.json`; `-Action Restore` puts them back. Only the active plan changes, and a Group Policy power setting overrides it. Acceptance: preflight shows `[OK] power (plugged in)`.
 
 ## 4. Install VMware Workstation Pro using computer use
 
@@ -197,7 +197,7 @@ For NAT WSL, do not assume localhost reaches Windows. Discover the Windows-facin
 
 vmrest must start at Windows **boot, before any logon**. Install it with `windows/install-vmrest-task.ps1` from an elevated PowerShell: task `VMware vmrest API`, boot trigger, S4U as the Windows user who ran `vmrest.exe -C`, no time limit, restart 5 times 1 minute apart, running an administrator-only copy of `start-vmrest.ps1` in `%ProgramFiles%\wsl-vmware-lab`; `start-vmrest.ps1` stays running while vmrest runs so the restart policy applies. If another tool already registered a vmrest task, disable it (do not delete) so only one launcher remains. Acceptance: reboot, then confirm with nobody logged on (`quser` reports no users) that `curl` from WSL gets HTTP 401. A logon-triggered start is not acceptable.
 
-Store the scripts' copy of the vmrest account in `%USERPROFILE%\.env` as `VMWS_USERNAME=` and `VMWS_PASSWORD=` lines: the user writes the same values given to `vmrest.exe -C`, and keeps the file readable only by their own Windows account. Never type these values for the user. `bash preflight.sh` then confirms authenticated HTTP 200 and checks the file permissions. Windows Credential Manager does not work here: it is locked in the no-logon boot session.
+Store the scripts' copy of the vmrest account in `%USERPROFILE%\.env` as `VMWS_USERNAME=` and `VMWS_PASSWORD=` lines: the user writes the same values given to `vmrest.exe -C`, and keeps the file readable only by their own Windows account. Never type these values for the user. `./lab status` then confirms authenticated HTTP 200 and checks the file permissions. Windows Credential Manager does not work here: it is locked in the no-logon boot session.
 
 ## 6. Install Linux automation tools
 
@@ -224,11 +224,11 @@ The repository implements the following artifacts. If you rebuild them elsewhere
 | `terraform/main.tf`, `variables.tf` | Pin `elsudano/vmworkstation` 2.0.1 for reproducing the tested example; endpoint includes `/api`; explicit base and unique clone name/path; 2 vCPU and 2048 MB test RAM if resources permit |
 | Base preparation scripts | Verify official Ubuntu 24.04 amd64 cloud-image checksum; extract/convert VMDK; generate VMX and base seed; register VMX via API without GUI |
 | Registration client | Authenticated `POST /api/vms/registration`; first list inventory and match normalized Windows path to avoid duplicate registration |
-| `bootstrap-guest.sh` | While clone is OFF, attach per-clone cloud-init ISO on Windows storage and configure NAT plus host-only management NIC |
-| `terraform-vm.sh` | Initialize; apply OFF for initial creation/bootstrap, then ON; explicit OFF/status; cleanup-aware destroy |
-| `guest-inventory.py` | Read state VMX path, management MAC and DHCP leases; select the current lease on the management subnet; pin the guest-reported SSH host key; write private inventory |
-| `guest-proxy.sh`, `tcp-relay.ps1` | Optional per-connection Windows TCP relay if WSL cannot reach the management subnet |
-| `configure-guest.sh`, Ansible playbook | Wait for SSH/cloud-init; install nginx; deploy fixed test page; enable service; assert HTTP 200 and expected content; support idempotent rerun |
+| `lib/bootstrap-guest.sh` | While clone is OFF, attach per-clone cloud-init ISO on Windows storage and configure NAT plus host-only management NIC |
+| `lib/lifecycle.sh` | Initialize; apply OFF for initial creation/bootstrap, then ON; explicit OFF/status; cleanup-aware destroy |
+| `lib/guest-inventory.py` | Read state VMX path, management MAC and DHCP leases; select the current lease on the management subnet; pin the guest-reported SSH host key; write private inventory |
+| `lib/guest-proxy.sh`, `windows/tcp-relay.ps1` | Optional per-connection Windows TCP relay if WSL cannot reach the management subnet |
+| `lib/configure.sh`, Ansible playbook | Wait for SSH/cloud-init; install nginx; deploy fixed test page; enable service; assert HTTP 200 and expected content; support idempotent rerun |
 | Cleanup helper | After successful destroy, remove only the recorded clone seed ISO and verified empty clone directory; preserve base |
 
 Download Ubuntu cloud images only from the official Ubuntu cloud-image service. Verify SHA256 against the official manifest; verify the manifest signature when tooling permits. A checksum downloaded from an unrelated mirror is not evidence of provenance.

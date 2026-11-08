@@ -1,5 +1,5 @@
 # Shared settings loader. Source it from bash scripts in this repository:
-#   source "$(dirname "${BASH_SOURCE[0]}")/lib/config.sh"
+#   source "$LAB_PROJECT_DIR/lib/config.sh" (scripts in lib/: source "$(dirname "${BASH_SOURCE[0]}")/config.sh")
 # Optional settings come from lab.env (gitignored; template lab.env.example).
 # The vmrest account comes from a secrets file in the Windows user folder
 # (default %USERPROFILE%\.env), read on demand by lab_require_credentials.
@@ -169,7 +169,7 @@ lab_base_identity() {
     echo "        (A base prepared by an older version that works: touch \"$prepared\")" >&2
     return 1
   fi
-  id=$(python3 "$LAB_PROJECT_DIR/check-base.py" "$LAB_BASE_DIR/ubuntu-base.vmx" "$LAB_BASE_NAME") || return 1
+  id=$(python3 "$LAB_PROJECT_DIR/lib/check-base.py" "$LAB_BASE_DIR/ubuntu-base.vmx" "$LAB_BASE_NAME") || return 1
   export TF_VAR_base_id="$id"
   TF_VAR_base_prepared=$(sha256sum < "$prepared" | cut -d' ' -f1)
   export TF_VAR_base_prepared
@@ -184,7 +184,7 @@ lab_norm_win_path() { local p="${1//\//\\}"; printf '%s' "${p,,}"; }
 lab_vm_running() {
   local target out line
   target=$(lab_norm_win_path "$1")
-  if ! out=$("${VMWARE_DIR}/vmrun.exe" -T ws list 2>&1); then
+  if ! out=$(timeout 60 "${VMWARE_DIR}/vmrun.exe" -T ws list 2>&1); then
     echo "vmrun could not list running VMs: ${out//$'\r'/}" >&2
     return 2
   fi

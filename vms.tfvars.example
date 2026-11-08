@@ -1,6 +1,6 @@
 # Copy to vms.tfvars (gitignored) to build a system of several VMs:
 #   cp vms.tfvars.example vms.tfvars
-# terraform-vm.sh passes it with -var-file; without it, one VM comes from lab.env.
+# lib/lifecycle.sh passes it with -var-file; without it, one VM comes from lab.env.
 #
 # Key = VM name (lowercase letters, digits, '-'): it becomes the Windows folder
 # <LAB_VM_ROOT_WIN>\<name>\<name>.vmx, the guest hostname and the Ansible host.

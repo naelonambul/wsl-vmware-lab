@@ -2,12 +2,12 @@
 # Read-only Terraform diagnosis: shows the VM list in use, the state, the base
 # VM's power state and what a plan would change. It never applies, destroys or
 # powers anything off. Use terraform-vm.sh for changes.
-# WSL: bash extras/diagnose-terraform.sh [on|off]   (power_state to plan with; default off)
+# ./lab status --plan [on|off]   (power_state to plan with; default off)
 set -euo pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/../lib/config.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
 lab_terraform_env
 power="${1:-off}"
-[[ "$power" == on || "$power" == off ]] || { echo 'Usage: bash extras/diagnose-terraform.sh [on|off]' >&2; exit 2; }
+[[ "$power" == on || "$power" == off ]] || { echo 'Usage: ./lab status --plan [on|off]' >&2; exit 2; }
 
 echo '== VM list'
 if [[ ${#LAB_TF_VAR_ARGS[@]} -gt 0 ]]; then
@@ -18,7 +18,7 @@ fi
 
 echo '== Base VM power'
 base_vmx=$(wslpath -w "${LAB_BASE_DIR}/ubuntu-base.vmx")
-if running=$("${VMWARE_DIR}/vmrun.exe" -T ws list 2>&1 | tr -d '\r'); then
+if running=$(timeout 60 "${VMWARE_DIR}/vmrun.exe" -T ws list 2>&1 | tr -d '\r'); then
   if grep -Fxiq "$base_vmx" <<<"$running"; then echo "[INFO] base is running: $base_vmx"; else echo "[OK] base is not running"; fi
 else
   echo "[WARN] could not list running VMs: $running"

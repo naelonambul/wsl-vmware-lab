@@ -42,7 +42,7 @@ __pycache__/
 *.pyc
 *.part
 
-# Cleanup journal for deleted clones (terraform-vm.sh)
+# Cleanup journal for deleted clones (lib/lifecycle.sh)
 cleanup-pending.json
 cleanup-pending.json.tmp
 

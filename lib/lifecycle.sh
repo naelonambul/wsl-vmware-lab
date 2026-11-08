@@ -9,7 +9,7 @@
 # their generated files are cleaned once they are gone, and a failed cleanup is
 # retried by the next on/destroy/cleanup.
 set -euo pipefail
-source "$(dirname "${BASH_SOURCE[0]}")/lib/config.sh"
+source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
 lab_terraform_env
 cd "$LAB_PROJECT_DIR/terraform"
 if [[ "${1:-status}" != status ]]; then
@@ -43,7 +43,7 @@ journal="$LAB_PROJECT_DIR/terraform/cleanup-pending.json"
 # failures for the next run).
 run_cleanup() {
   state_json > "$after"
-  python3 ../cleanup-guest.py run "$journal" "$after"
+  python3 ../lib/cleanup-guest.py run "$journal" "$after"
 }
 
 # Apply, then clean up after VMs the apply removed. VMs the plan deletes were
@@ -55,7 +55,7 @@ apply_and_clean() {
   state_json > "$before"
   terraform apply -input=false -auto-approve -parallelism=1 "${LAB_TF_VAR_ARGS[@]}" "$@" || rc=$?
   state_json > "$after"
-  python3 ../cleanup-guest.py record "$journal" "$before" --gone "$after"
+  python3 ../lib/cleanup-guest.py record "$journal" "$before" --gone "$after"
   run_cleanup || { [[ $rc -ne 0 ]] || rc=1; }
   return "$rc"
 }
@@ -120,7 +120,7 @@ guard_vm_destroy() {
     echo "[WARN] --allow-destroy: deleting or replacing VMs: $(tr '\n' ' ' <<<"$doomed")"
     state_json > "$before"
     # shellcheck disable=SC2086 # names are validated VM keys
-    python3 ../cleanup-guest.py record "$journal" "$before" $doomed
+    python3 ../lib/cleanup-guest.py record "$journal" "$before" $doomed
     # Replaced VMs (a rebuilt base replaces every clone) are destroyed on their
     # own first and cleaned up: Terraform would otherwise create the
     # replacement right after the destroy, into the same folder that still
@@ -207,17 +207,26 @@ case "${1:-status}" in
     if [[ -n "$other" ]]; then
       echo '[ERROR] off would do more than power VMs off; nothing changed:' >&2
       echo "$other" >&2
-      echo "        VM list in use: $vm_list_desc. Fix vms.tfvars, or review with: bash extras/diagnose-terraform.sh off" >&2
+      echo "        VM list in use: $vm_list_desc. Fix vms.tfvars, or review with: ./lab status --plan" >&2
       exit 1
     fi
     terraform apply -input=false -auto-approve -parallelism=1 "${LAB_TF_VAR_ARGS[@]}" \
       -var=power_state=off "${targets[@]}"
     ;;
   status)
-    terraform show -no-color
+    # Short summary: each VM of this checkout and its power state (vmrest).
+    vms=$(terraform output -json vms 2>/dev/null || echo '{}')
+    python3 -c 'import json,sys; [print(k, v["id"]) for k, v in sorted(json.loads(sys.argv[1]).items())]' "$vms" |
+    while read -r name id; do
+      [[ "$id" =~ ^[A-Za-z0-9_-]+$ ]] || continue
+      p=$(curl --connect-timeout 3 --max-time 10 -fsS -K - "${TF_VAR_vmrest_endpoint%/}/vms/$id/power" < <(lab_curl_auth) 2>/dev/null |
+          python3 -c 'import json,sys; print(json.load(sys.stdin).get("power_state", "?"))' 2>/dev/null || echo unknown)
+      echo "[VM] $name: $p"
+    done
+    [[ "$vms" == '{}' ]] && echo '[OK] No VMs in this checkout'
     if [[ -f "$journal" ]]; then
       echo '[WARN] Cleanup pending for deleted VMs (run: ./lab cleanup):'
-      python3 ../cleanup-guest.py list "$journal" | sed 's/^/       /'
+      python3 ../lib/cleanup-guest.py list "$journal" | sed 's/^/       /'
     fi
     ;;
   cleanup)
@@ -226,7 +235,7 @@ case "${1:-status}" in
     ;;
   destroy)
     state_json > "$before"
-    python3 ../cleanup-guest.py record "$journal" "$before" --all
+    python3 ../lib/cleanup-guest.py record "$journal" "$before" --all
     rc=0
     terraform destroy -parallelism=1 "${LAB_TF_VAR_ARGS[@]}" "${@:2}" || rc=$?
     run_cleanup || { [[ $rc -ne 0 ]] || rc=1; }

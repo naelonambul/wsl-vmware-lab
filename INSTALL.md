@@ -1,6 +1,6 @@
 # Install the `vmware-wsl-lab` skill (instructions for Claude Code and Codex)
 
-> 사람용 요약: Claude Code나 Codex에게 "https://github.com/naelonambul/wsl-vmware-lab/blob/main/INSTALL.md 를 읽고 설치해 줘"라고 말하면, 아래 절차대로 저장소를 받고 스킬을 설치한 뒤 `preflight.sh`로 점검합니다. 직접 하려면 같은 명령을 순서대로 실행하면 됩니다.
+> 사람용 요약: Claude Code나 Codex에게 "https://github.com/naelonambul/wsl-vmware-lab/blob/main/INSTALL.md 를 읽고 설치해 줘"라고 말하면, 아래 절차대로 저장소를 받고 스킬을 설치한 뒤 `./lab status`로 점검합니다. 직접 하려면 같은 명령을 순서대로 실행하면 됩니다.
 
 You are an AI coding agent (Claude Code or OpenAI Codex) installing the `vmware-wsl-lab` skill and the repository it drives. The skill only works together with a checkout of this repository (it runs the repository's scripts), so install both. Follow the steps in order and keep the user informed.
 
@@ -26,9 +26,9 @@ uname -s; uname -r; echo "WSL_DISTRO_NAME=${WSL_DISTRO_NAME:-}"
 Look for an existing checkout first (any folder name):
 
 ```bash
-{ find "$HOME" /mnt/c/Users -maxdepth 6 -name preflight.sh 2>/dev/null
-  find /mnt/c /mnt/d -maxdepth 3 -name preflight.sh 2>/dev/null; } | sort -u \
-  | while read -r f; do [ -f "$(dirname "$f")/lib/config.sh" ] && dirname "$f"; done
+{ find "$HOME" /mnt/c/Users -maxdepth 6 -type f \( -name lab -o -name preflight.sh \) 2>/dev/null
+  find /mnt/c /mnt/d -maxdepth 3 -type f \( -name lab -o -name preflight.sh \) 2>/dev/null; } | sort -u \
+  | while read -r f; do [ -f "$(dirname "$f")/lib/config.sh" ] && dirname "$f"; done | sort -u
 ```
 
 - One path printed: use it, and offer `git -C <path> pull --ff-only` to update.
@@ -73,7 +73,7 @@ A replaced skill is kept as `vmware-wsl-lab.bak.<time>`; tell the user, and dele
 ## 4. Check the lab with preflight
 
 ```bash
-bash "$repo/preflight.sh"; echo "exit=$?"
+"$repo/lab" status; echo "exit=$?"
 ```
 
 - `exit=0`: vmrest answers and the stored account is accepted. The API side is ready; preflight does not test SSH from another PC, the base VM or a clone lifecycle (the skill's verification checklist does).
