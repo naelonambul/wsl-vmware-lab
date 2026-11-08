@@ -74,7 +74,7 @@ mkdir -p ~/.agents/skills && cp -r wsl-vmware-lab/.agents/skills/vmware-wsl-lab 
 | `terraform/` | `main.tf`, `variables.tf` (provider `elsudano/vmworkstation` 2.0.1 고정) |
 | `ansible/` | `configure-guest.yml`(nginx 예제), `check-lab.yml`(모든 VM 동작 확인) |
 | `vms.tfvars.example` | 여러 VM 시스템용 VM 목록 예시. `vms.tfvars`로 복사해서 사용 |
-| `windows/` | Windows에서 실행: SSH 포워딩(1편), vmrest 자동 실행(2편), 절전 방지 전원 설정(`configure-power.ps1`) |
+| `windows/` | `setup.ps1`(부팅 작업·방화벽·전원, 관리자 PowerShell), `tcp-relay.ps1`(게스트 SSH 중계) |
 | `lib/` | 진단·호환용 스크립트와 예전 NAT 방식 브리지. 실습에는 필요 없음 |
 | `.claude/skills/vmware-wsl-lab/` | Claude Code용 설치·운영 스킬 (원본. 여기서 고침) |
 | `.agents/skills/vmware-wsl-lab/` | Codex용 같은 스킬. `bash tools/sync-agent-skills.sh`로 복사하고, CI가 두 사본이 같은지 확인 |
@@ -118,23 +118,20 @@ cp lab.env.example lab.env
 | 클론 CPU / 메모리 (`vms.tfvars` 없을 때) | 2 / 2048 MB | `LAB_CLONE_CPUS` / `LAB_CLONE_MEMORY_MB` |
 | 네트워크 | NAT `VMnet8`, 관리용 host-only `VMnet1` | `LAB_NAT_VNET` / `LAB_MGMT_VNET` |
 
-Windows 스크립트는 설정 파일 대신 매개변수를 받습니다.
+Windows 쪽 설정은 관리자 PowerShell에서 한 번 실행합니다. WSL은 미러드 네트워크(`%USERPROFILE%\.wslconfig`의 `[wsl2]`에 `networkingMode=mirrored`)여야 합니다.
 
 ```powershell
-# 관리자 PowerShell. 방화벽 허용 대역은 자신의 LAN으로 바꾼다
-# Install: Windows 방화벽 규칙, (미러드) Hyper-V 방화벽 규칙, (NAT) portproxy. 값은 저장되어 이후 Refresh가 그대로 씀
-.\windows\wsl2-ssh-forward.ps1 Install -AllowedRemoteAddress 192.168.0.0/24 -Distro Ubuntu-24.04
-# InstallTask: 부팅 시 로그온 없이(S4U) + 로그온 때 실행되는 작업 2개를 만들고, sshd 유지 작업을 바로 실행
-.\windows\wsl2-ssh-forward.ps1 InstallTask -AllowedRemoteAddress 192.168.0.0/24 -Distro Ubuntu-24.04
-# vmrest 자동 실행(관리자 PowerShell)
-powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\install-vmrest-task.ps1
+# 관리자 PowerShell, 저장소의 windows 폴더에서. 허용 대역은 자신의 LAN으로 바꾼다
+.\setup.ps1 Install -AllowedRemoteAddress 192.168.1.0/24   # 부팅 작업 2개, 방화벽, 절전 끄기, 그다음 22·8697 확인
+.\setup.ps1 Status                                          # 읽기만 함
+.\setup.ps1 Remove                                          # 작업과 방화벽 규칙 제거 (전원 설정은 그대로)
 ```
 
-예약 작업은 저장소의 스크립트를 직접 실행하지 않습니다. 두 설치 스크립트가 실행할 스크립트를 `%ProgramFiles%\wsl-vmware-lab\`에 복사하고, 작업은 그 사본을 실행합니다. 이 폴더는 관리자만 고칠 수 있어서, 다른 사용자나 관리자 권한 없는 프로그램이 저장소 파일을 고쳐도 작업이 실행하는 코드는 바뀌지 않습니다. 설정 파일(`wsl2-ssh-forward.settings.json`)도 이 폴더에 둡니다. 이 파일에는 스크립트가 만든 portproxy도 기록해서, 다른 도구가 만든 `0.0.0.0:22` 규칙이나 같은 이름의 Hyper-V 방화벽 규칙은 고치거나 지우지 않고 알린 뒤 멈춥니다. 저장소를 업데이트(`git pull`)한 뒤에는 위 두 명령을 관리자 PowerShell에서 다시 실행해야 사본이 바뀝니다. `./lab status`가 작업의 사본과 저장소 파일이 다르면 알려 줍니다.
-
-`VMware vmrest API` 작업은 **Windows 부팅 때 로그온 없이** vmrest를 켭니다. 부팅 트리거, S4U(로그온 없이 해당 사용자로 실행, 비밀번호 저장 안 함), 시간 제한 없음, 실패 시 1분 간격 5회 재시작으로 등록됩니다. `start-vmrest.ps1`이 vmrest가 떠 있는 동안 계속 기다리기 때문에, vmrest가 죽으면 작업이 다시 켭니다. 작업보다 먼저 같은 사용자로 떠 있던 vmrest도 지켜보다가 죽으면 다시 켜고, 다른 사용자의 vmrest면 실패로 알립니다. 재시작 동작 자체는 아직 일부러 죽여서 시험해 보지 않았습니다. 다른 도구가 만든 vmrest 작업이 있으면 경고하니, 하나만 남기고 나머지는 사용 안 함으로 바꾸세요. 재부팅 후 아무도 로그온하지 않은 상태에서 vmrest가 응답(`401`)하는 것을 확인했습니다.
-
-`start-vmrest.ps1`은 기본으로 `%ProgramFiles%\VMware\VMware Workstation\vmrest.exe`를 실행합니다. 다른 곳에 설치했다면 `install-vmrest-task.ps1 -VmrestPath <경로>`로 등록하면 작업에도 그 경로가 들어갑니다. 수동으로 한 번만 켤 때는 `-NoWait`를 붙입니다.
+- **작업 2개:** `WSL2 SSH Service Start`(WSL 안에서 sshd를 포그라운드로 실행, WSL도 계속 켜 둠)와 `VMware vmrest API`(vmrest.exe, 127.0.0.1:8697). 둘 다 **Windows 부팅 때 로그온 없이**(S4U, 비밀번호 저장 안 함) 시작하고, 끝나면 1분 간격으로 5번까지 다시 시작합니다. 작업은 저장소의 스크립트가 아니라 `wsl.exe`, `vmrest.exe`를 직접 실행하므로 저장소를 옮겨도 됩니다.
+- **방화벽:** Windows 방화벽과 Hyper-V 방화벽(WSL)에 TCP 22를 `-AllowedRemoteAddress`에서만 허용합니다.
+- **전원:** 전원 연결 시 절전·최대 절전을 끄고 덮개를 닫아도 아무것도 하지 않게 합니다(`-IncludeBattery`면 배터리일 때도, `-SkipPower`면 건드리지 않음). 되돌리기 기능은 없습니다.
+- **준비 완료:** 22번(WSL sshd)과 127.0.0.1:8697(vmrest)이 실제로 열린 것을 확인한 뒤에만 출력합니다.
+- **예전 설치에서 옮기기:** 예전 버전이 만든 작업(`WSL2 SSH Port Forward Refresh` 등)과 `%ProgramFiles%\wsl-vmware-lab`의 사본을 지웁니다.
 
 ## 실행 순서 (WSL Ubuntu, 저장소 최상위)
 
@@ -189,16 +186,7 @@ cp vms.tfvars.example vms.tfvars             # VM 이름, CPU, 메모리, Ansibl
 ## 주의
 
 - **검증 범위:** 2026-11-06 한 PC(VMware Workstation 기설치, 미러드 네트워크, Windows·Hyper-V 방화벽 꺼짐)에서 이 저장소판으로 WSL 설치부터 베이스 VM, Terraform 복제, Ansible 2회(두 번째 `changed=0`), 정리, 재부팅 후 로그온 전 vmrest·SSH까지 확인했습니다. VMware가 없는 새 PC, NAT 모드, 방화벽이 켜진 PC는 아직 확인하지 않았습니다. 처음 쓸 때는 결과를 단계마다 확인하세요.
-- **SSH는 부팅 때 시작:** `wsl2-ssh-forward.ps1 InstallTask`는 vmrest처럼 Windows 부팅 시 로그온 없이(S4U) WSL sshd를 켜고, 로그온 때도 한 번 더 실행합니다. 등록 직후에도 sshd 유지 작업을 바로 실행하고 22번이 열렸는지 확인합니다. sshd는 이 유지 작업 하나만 띄웁니다. 예전에 등록한 PC는 관리자 PowerShell에서 `InstallTask`를 다시 실행하세요.
-- **절전하면 접속이 끊김:** Windows가 절전이나 최대 절전으로 들어가면 WSL SSH, vmrest, VM이 모두 멈춥니다. 다른 PC에서는 22번 포트 타임아웃으로 보여서 SSH 설정 문제와 헷갈리기 쉽습니다. 화면 끄기는 상관없습니다. `lib/preflight.sh`가 전원 설정을 읽어 경고하고, 아래 스크립트로 바꿀 수 있습니다. 바꾸기 전 값은 `%LOCALAPPDATA%\wsl-vmware-lab\power-backup.json`에 저장되고 `-Action Restore`로 되돌립니다. 지금 쓰는 전원 계획에만 적용되며, 그룹 정책이 전원 설정을 관리하면 그쪽이 우선합니다.
-  ```powershell
-  cd <저장소>\windows
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\configure-power.ps1                  # 현재 값 보기(바꾸지 않음)
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\configure-power.ps1 -Action Apply    # 전원 연결 시: 절전·최대 절전 안 함, 덮개 닫아도 동작 없음
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\configure-power.ps1 -Action Apply -IncludeBattery   # 배터리일 때도 같게
-  powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\configure-power.ps1 -Action Restore  # 원래 값으로
-  ```
-  `-WhatIf`를 붙이면 바꿀 내용만 보여 줍니다. 노트북을 실습 호스트로 쓰면 전원을 연결해 두세요.
+- **절전하면 접속이 끊김:** Windows가 절전이나 최대 절전으로 들어가면 WSL SSH, vmrest, VM이 모두 멈춥니다. 다른 PC에서는 22번 포트 타임아웃으로 보여서 SSH 설정 문제와 헷갈리기 쉽습니다. `setup.ps1 Install`이 전원 연결 시 절전을 끄고, `./lab status`가 지금 값을 보여 줍니다. 노트북을 실습 호스트로 쓰면 전원을 연결해 두세요.
 - **올리면 안 되는 파일:** `lab.env`, `%USERPROFILE%\.env`, SSH 개인키, `*.tfstate`, `inventory.json`, VM 디스크·ISO는 `.gitignore`에 들어 있습니다. 커밋하지 마세요.
 - **비공식 provider:** `elsudano/vmworkstation`은 HashiCorp나 Broadcom이 아닌 커뮤니티 provider입니다. 버전을 올리기 전에 스키마를 확인하세요(`terraform providers schema -json`).
 - **진단 스크립트:** `./lab status --plan`는 읽기 전용입니다. 사용 중인 VM 목록, state, 베이스 VM 전원 상태, plan이 바꿀 내용(삭제·교체는 경고)만 보여 주고 아무것도 적용하지 않습니다.
