@@ -109,6 +109,7 @@ cp lab.env.example lab.env
 | Windows 쪽 VM 폴더 | VMware Workstation의 기본 VM 위치(편집 > 기본 설정 > 작업 공간, 기본값 `%USERPROFILE%\Documents\Virtual Machines`). vmrest는 Terraform이 요청한 경로와 상관없이 이 위치에 클론을 만들므로 둘이 같아야 함(preflight가 확인). 사용자 폴더 밖에 두려면 Workstation 설정을 먼저 바꾸고 vmrest를 다시 시작한 뒤 같은 값으로 지정. 바꿔도 이미 만든 VM은 옮겨지지 않음 | `LAB_VM_ROOT_WIN` |
 | 기본 플레이북 | `ansible/configure-guest.yml` (nginx 예제) | `LAB_PLAYBOOK` |
 | 게스트 VM 사용자 (VM 안) | 설정하지 않음. 이미지 기본 사용자(Ubuntu 이미지는 `ubuntu`)를 쓰고, 게스트가 부팅할 때마다 VMware guestinfo로 이름을 알려 줌 | 없음 |
+| 게스트 SSH 호스트 키 | 게스트가 guestinfo로 알려 준 키만 믿고 접속(`StrictHostKeyChecking=yes`). DHCP 임대 기록에서는 관리망(VMnet1)의 현재 임대만 씀 | 없음 |
 | WSL 사용자 | 설정하지 않음. 이 PC에 SSH로 접속하는 계정(SSH config의 `User`)으로 스크립트를 실행하면 그 계정을 씀 | 없음 |
 | 개인 파일(SSH 키, inventory, known_hosts) | `~/.config/wsl-vmware-lab/` | `LAB_PRIVATE_DIR` |
 | VMware 설치 경로 | `/mnt/c/Program Files/VMware/VMware Workstation` | `VMWARE_DIR` |

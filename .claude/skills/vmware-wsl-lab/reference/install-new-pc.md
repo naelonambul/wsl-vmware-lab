@@ -226,7 +226,7 @@ The repository implements the following artifacts. If you rebuild them elsewhere
 | Registration client | Authenticated `POST /api/vms/registration`; first list inventory and match normalized Windows path to avoid duplicate registration |
 | `bootstrap-guest.sh` | While clone is OFF, attach per-clone cloud-init ISO on Windows storage and configure NAT plus host-only management NIC |
 | `terraform-vm.sh` | Initialize; apply OFF for initial creation/bootstrap, then ON; explicit OFF/status; cleanup-aware destroy |
-| `guest-inventory.py` | Read state VMX path, management MAC and DHCP leases; select real guest IP; write private inventory |
+| `guest-inventory.py` | Read state VMX path, management MAC and DHCP leases; select the current lease on the management subnet; pin the guest-reported SSH host key; write private inventory |
 | `guest-proxy.sh`, `tcp-relay.ps1` | Optional per-connection Windows TCP relay if WSL cannot reach the management subnet |
 | `configure-guest.sh`, Ansible playbook | Wait for SSH/cloud-init; install nginx; deploy fixed test page; enable service; assert HTTP 200 and expected content; support idempotent rerun |
 | Cleanup helper | After successful destroy, remove only the recorded clone seed ISO and verified empty clone directory; preserve base |

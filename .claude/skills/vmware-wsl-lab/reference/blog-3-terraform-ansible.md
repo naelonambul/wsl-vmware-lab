@@ -74,7 +74,7 @@ cloud-init: accounts, SSH keys, DHCP. Ansible: packages.
 
 ## IP discovery and playbook
 
-`guest-inventory.py`: reads VM path and mgmt NIC MAC from state, finds the IP in VMware DHCP leases for that MAC, ignores provider `0.0.0.0/0`.
+`guest-inventory.py`: reads VM path and mgmt NIC MAC from state, finds the IP in VMware DHCP leases for that MAC (current lease on the management subnet only), ignores provider `0.0.0.0/0`, and pins the SSH host key the guest reported through guestinfo.
 
 `configure-guest.yml`: wait for SSH + cloud-init → install nginx → deploy page, start service → assert HTTP 200 and the deployed string from inside the guest.
 
