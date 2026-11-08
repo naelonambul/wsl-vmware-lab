@@ -148,7 +148,7 @@ def cmd_run(journal, state_file):
     save_journal(journal, pending)
     if failed:
         print('[ERROR] Cleanup still pending for: ' + ' '.join(failed) +
-              '. Fix the cause above, then run: bash terraform-vm.sh cleanup', file=sys.stderr)
+              '. Fix the cause above, then run: ./lab cleanup', file=sys.stderr)
         return 1
     return 0
 

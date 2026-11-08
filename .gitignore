@@ -45,3 +45,6 @@ __pycache__/
 # Cleanup journal for deleted clones (terraform-vm.sh)
 cleanup-pending.json
 cleanup-pending.json.tmp
+
+# lab command lock
+.lab.lock

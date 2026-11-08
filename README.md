@@ -139,24 +139,21 @@ powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\windows\install-vmrest
 
 WSL 계정은 `ubuntu`로 만드는 것을 권장합니다. Windows에서 `wsl --install -d Ubuntu-24.04`를 실행한 뒤, 첫 실행 화면에서 사용자 이름을 `ubuntu`로 입력하면 됩니다. 저장소는 VM 파일과 같이 Windows 드라이브(예: `/mnt/c/...`)에 두세요.
 
+모든 작업은 `./lab` 명령 하나로 합니다. 같은 체크아웃에서 `lab` 명령은 한 번에 하나만 실행되고, 이미 실행 중이면 두 번째는 바로 멈춥니다.
+
 ```bash
-sudo bash setup-wsl-tools.sh                 # Terraform(HashiCorp apt), Ansible, 이미지 도구
-bash download-ubuntu-image.sh               # 공식 OVA 받기 + 서명(gpgv)·체크섬 확인
-bash extract-ubuntu-image.sh
-bash prepare-cloud-init.sh
-bash preflight.sh                            # vmrest 확인. 꺼져 있으면 --start-vmrest
-bash prepare-base.sh                         # 1회만: 베이스 VMX 생성, API 등록, 첫 부팅 (다시 실행하면 건너뜀)
-bash api-status.sh                           # 등록된 VM 목록
-bash terraform-vm.sh on                      # 복제 -> cloud-init/NIC 준비 -> 전원 ON
-ANSIBLE_TIMEOUT=60 bash configure-guest.sh   # nginx 설치, HTTP 확인 (두 번째 실행 changed=0)
-bash terraform-vm.sh off                     # 전원만 끔. plan에 다른 변경이 있으면 거부
-bash terraform-vm.sh destroy                 # 삭제 + seed ISO/빈 폴더 정리
-bash terraform-vm.sh cleanup                 # 정리가 실패했거나 중간에 끊겼을 때 다시 정리
+./lab setup        # 1회만: WSL 도구(없으면 sudo로 설치), 공식 OVA 받기·서명 확인, cloud-init, 베이스 VM 준비 (다시 실행하면 건너뜀)
+./lab status       # 점검만: 도구, vmrest, 전원 설정, Terraform 상태
+./lab up           # 복제 -> cloud-init/NIC 준비 -> 전원 ON
+./lab configure    # nginx 설치, HTTP 확인 (두 번째 실행 changed=0)
+./lab down         # 전원만 끔. plan에 다른 변경이 있으면 거부
+./lab destroy      # 삭제 + seed ISO/빈 폴더 정리
+./lab cleanup      # 정리가 실패했거나 중간에 끊겼을 때 다시 정리
 ```
 
-`prepare-base.sh`는 디스크를 임시 파일로 변환하고, 검사가 통과해야 `base/ubuntu-base.vmdk`로 바꿉니다(완성 표시 `ubuntu-base.vmdk.complete`). 베이스가 꺼진 것을 확인한 뒤에만 준비 완료 표시(`ubuntu-base.prepared`)를 남기고, 이 표시가 있으면 다시 실행해도 아무것도 하지 않습니다. 이미 있는 베이스 VMX는 덮어쓰지 않습니다. 베이스를 새로 만들려면 베이스를 끄고 `bash prepare-base.sh --recreate`를 실행합니다(이미 만든 클론은 그대로 남다가, 다음 `bash terraform-vm.sh on`이 "베이스가 바뀌었다"며 멈춥니다. 클론을 새 베이스로 다시 만들려면 `on --allow-destroy`를 실행합니다. 클론 안의 내용은 모두 사라집니다). 예전 버전으로 만든 베이스는 표시가 없어서 다시 실행하면 거부하며, 이때 출력되는 안내를 따릅니다.
+`./lab setup`은 디스크를 임시 파일로 변환하고, 검사가 통과해야 `base/ubuntu-base.vmdk`로 바꿉니다(완성 표시 `ubuntu-base.vmdk.complete`). 베이스가 꺼진 것을 확인한 뒤에만 준비 완료 표시(`ubuntu-base.prepared`)를 남기고, 이 표시가 있으면 다시 실행해도 아무것도 하지 않습니다. 이미 있는 베이스 VMX는 덮어쓰지 않습니다. 베이스를 새로 만들려면 베이스를 끄고 `./lab setup --recreate`를 실행합니다(이미 만든 클론은 그대로 남다가, 다음 `./lab up`이 "베이스가 바뀌었다"며 멈춥니다. 클론을 새 베이스로 다시 만들려면 `./lab up --allow-destroy`를 실행합니다. 클론 안의 내용은 모두 사라집니다). 예전 버전으로 만든 베이스는 표시가 없어서 다시 실행하면 거부하며, 이때 출력되는 안내를 따릅니다.
 
-VM을 지우기 전에 지울 VM을 `terraform/cleanup-pending.json`에 적어 두고, 정리가 끝난 VM만 목록에서 뺍니다. 정리가 실패하거나 중간에 끊기면 다음 `on`·`destroy`·`cleanup`이 남은 정리를 이어서 합니다. `status`는 정리가 남은 VM을 알려 줍니다.
+VM을 지우기 전에 지울 VM을 `terraform/cleanup-pending.json`에 적어 두고, 정리가 끝난 VM만 목록에서 뺍니다. 정리가 실패하거나 중간에 끊기면 다음 `up`·`destroy`·`cleanup`이 남은 정리를 이어서 합니다. `status`는 정리가 남은 VM을 알려 줍니다.
 
 ## 내 시스템 올리기: 여러 VM + 내 플레이북
 
@@ -164,26 +161,25 @@ VM을 지우기 전에 지울 VM을 `terraform/cleanup-pending.json`에 적어 �
 
 ```bash
 cp vms.tfvars.example vms.tfvars             # VM 이름, CPU, 메모리, Ansible 그룹 (git에 올라가지 않음)
-bash terraform-vm.sh on                      # 목록대로 생성. 나중에 항목을 추가하면 새 VM만 만들고, 켜져 있는 VM은 그대로
-ANSIBLE_TIMEOUT=60 bash configure-guest.sh ansible/check-lab.yml   # 모든 VM 접속·cloud-init·sudo 확인
-ANSIBLE_TIMEOUT=60 bash configure-guest.sh ~/my-system/site.yml    # 내 플레이북 (다른 폴더에 둬도 됨)
-bash check-power.sh                          # VM별 전원 상태
+./lab up                                     # 목록대로 생성. 나중에 항목을 추가하면 새 VM만 만들고, 켜져 있는 VM은 그대로
+./lab configure ansible/check-lab.yml        # 모든 VM 접속·cloud-init·sudo 확인
+./lab configure ~/my-system/site.yml         # 내 플레이북 (다른 폴더에 둬도 됨)
 ```
 
 - `vms.tfvars`의 키가 VM 이름입니다. Windows 폴더 이름, 게스트 hostname, Ansible 호스트 이름이 모두 이 이름이 됩니다.
 - `groups`에 적은 그룹이 Ansible 그룹이 되고, 모든 VM은 `lab` 그룹에도 들어갑니다. 플레이북에서 `hosts: web`, `hosts: db`처럼 씁니다.
-- `on`과 `off`는 먼저 plan을 확인합니다. `on`은 VM을 삭제하거나 교체해야 하면 그 이름을 보여 주고 멈추고, `off`는 전원 변경 말고 다른 변경이 있으면 거부합니다. `vms.tfvars`가 없어지거나 이름이 틀려도 기존 VM이 지워지지 않습니다.
-- `on`/`off`는 시작하기 전에 베이스 이름(`LAB_BASE_NAME`)을 가진 VM이 정확히 하나이고 `base/ubuntu-base.vmx`인지 확인합니다. 같은 이름이 둘이면 아무것도 바꾸지 않고 멈춥니다. VM 이름을 베이스 이름과 같게 지을 수 없습니다.
-- 목록에서 항목을 일부러 지웠다면 `bash terraform-vm.sh on --allow-destroy`로 그 VM을 삭제합니다. seed ISO, known_hosts 같은 관련 파일도 정리됩니다.
+- `up`과 `down`은 먼저 plan을 확인합니다. `up`은 VM을 삭제하거나 교체해야 하면 그 이름을 보여 주고 멈추고, `down`은 전원 변경 말고 다른 변경이 있으면 거부합니다. `vms.tfvars`가 없어지거나 이름이 틀려도 기존 VM이 지워지지 않습니다.
+- `up`/`down`은 시작하기 전에 베이스 이름(`LAB_BASE_NAME`)을 가진 VM이 정확히 하나이고 `base/ubuntu-base.vmx`인지 확인합니다. 같은 이름이 둘이면 아무것도 바꾸지 않고 멈춥니다. VM 이름을 베이스 이름과 같게 지을 수 없습니다.
+- 목록에서 항목을 일부러 지웠다면 `./lab up --allow-destroy`로 그 VM을 삭제합니다. seed ISO, known_hosts 같은 관련 파일도 정리됩니다.
 - `LAB_VMS_FILE`을 직접 지정했는데 파일이 없으면 기본 VM 1대로 바꾸지 않고 오류로 멈춥니다.
-- `configure-guest.sh` 뒤에 붙인 옵션은 그대로 `ansible-playbook`에 넘어갑니다(예: `--limit web1`, `-e key=value`).
+- `./lab configure PLAYBOOK` 뒤에 붙인 옵션은 그대로 `ansible-playbook`에 넘어갑니다(예: `--limit web1`, `-e key=value`).
 
 자세한 설명과 함정은 블로그 글과 [`.claude/skills/vmware-wsl-lab/reference/pitfalls.md`](.claude/skills/vmware-wsl-lab/reference/pitfalls.md)를 참고하세요.
 
-## 작업 전 점검: `preflight.sh`
+## 작업 전 점검: `./lab status`
 
 ```bash
-bash preflight.sh                 # 점검만 하고 아무것도 바꾸지 않음. vmrest가 응답하면 종료 코드 0
+./lab status                      # 점검만 하고 아무것도 바꾸지 않음. vmrest가 응답하면 종료 코드 0
 bash preflight.sh --start-vmrest  # vmrest가 꺼져 있으면 'VMware vmrest API' 작업을 시작하고 최대 30초 대기
 ```
 

@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# The lab's single entry point (WSL). One lab command at a time per checkout.
+#
+#   ./lab setup [--recreate]       WSL tools, Ubuntu image, cloud-init seed, base VM (once)
+#   ./lab status                   host checks, vmrest, base, VMs (changes nothing)
+#   ./lab up [--allow-destroy]     create new VMs from vms.tfvars and power all on
+#   ./lab down                     power the existing VMs off
+#   ./lab configure [PLAYBOOK] [ansible-playbook options]
+#   ./lab destroy [-auto-approve]  delete every VM of this checkout
+#   ./lab cleanup                  retry cleanup left by an interrupted delete
+set -euo pipefail
+here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+cmd="${1:-}"
+[[ $# -gt 0 ]] && shift
+
+usage() { sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+
+# Two lab commands on the same checkout (two terminals, an agent and a person)
+# would race on the Terraform state, the base and the inventory.
+lock() {
+  exec 9>"$here/.lab.lock"
+  if ! flock -n 9; then
+    echo "[ERROR] Another lab command is running in $here; wait for it to finish." >&2
+    exit 1
+  fi
+}
+
+case "$cmd" in
+  setup)
+    lock
+    [[ $# -eq 0 || "$*" == --recreate ]] || usage
+    source "$here/lib/config.sh"
+    if [[ -f "$LAB_BASE_DIR/ubuntu-base.prepared" && $# -eq 0 ]]; then
+      echo "[OK] Base already prepared ($LAB_BASE_DIR/ubuntu-base.prepared); nothing to do. To rebuild it: ./lab setup --recreate"
+      exit 0
+    fi
+    missing=()
+    for tool in terraform ansible-playbook qemu-img cloud-localds gpgv; do
+      command -v "$tool" >/dev/null || missing+=("$tool")
+    done
+    if [[ ${#missing[@]} -gt 0 ]]; then
+      echo "[INFO] Installing WSL tools (missing: ${missing[*]}); sudo asks for your WSL password"
+      sudo bash "$here/setup-wsl-tools.sh"
+    fi
+    bash "$here/download-ubuntu-image.sh"
+    [[ -f "$LAB_BASE_DIR/ubuntu-noble-24.04-cloudimg.vmdk" && $# -eq 0 ]] || bash "$here/extract-ubuntu-image.sh"
+    bash "$here/prepare-cloud-init.sh"
+    exec bash "$here/prepare-base.sh" "$@" ;;
+  status)
+    rc=0
+    bash "$here/preflight.sh" || rc=$?
+    bash "$here/terraform-vm.sh" status || rc=$?
+    exit "$rc" ;;
+  up)        lock; exec bash "$here/terraform-vm.sh" on "$@" ;;
+  down)      lock; exec bash "$here/terraform-vm.sh" off "$@" ;;
+  destroy)   lock; exec bash "$here/terraform-vm.sh" destroy "$@" ;;
+  cleanup)   lock; exec bash "$here/terraform-vm.sh" cleanup "$@" ;;
+  configure) lock; exec bash "$here/configure-guest.sh" "$@" ;;
+  *) usage ;;
+esac

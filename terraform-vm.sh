@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# WSL: bash terraform-vm.sh on [--allow-destroy] | off | status | cleanup | destroy [terraform args]
+# Internal: called by ./lab (up -> on, down -> off, status, cleanup, destroy).
+# bash terraform-vm.sh on [--allow-destroy] | off | status | cleanup | destroy [terraform args]
 # VMs come from vms.tfvars (LAB_VMS_FILE) if present, else one VM from lab.env.
 # on/off check the base VM first (check-base.py) and read the plan: on refuses
 # to delete or replace VMs unless --allow-destroy is given (a rebuilt base
@@ -145,7 +146,7 @@ guard_vm_destroy() {
     echo "        its clones are rebuilt from it, losing everything inside them." >&2
   fi
   echo "        If vms.tfvars is missing or wrong, fix it. To remove these VMs on purpose:" >&2
-  echo "        bash terraform-vm.sh on --allow-destroy  (or terraform-vm.sh destroy for all)" >&2
+  echo "        ./lab up --allow-destroy  (or ./lab destroy for all)" >&2
   exit 1
 }
 
@@ -215,7 +216,7 @@ case "${1:-status}" in
   status)
     terraform show -no-color
     if [[ -f "$journal" ]]; then
-      echo '[WARN] Cleanup pending for deleted VMs (run: bash terraform-vm.sh cleanup):'
+      echo '[WARN] Cleanup pending for deleted VMs (run: ./lab cleanup):'
       python3 ../cleanup-guest.py list "$journal" | sed 's/^/       /'
     fi
     ;;
@@ -231,5 +232,5 @@ case "${1:-status}" in
     run_cleanup || { [[ $rc -ne 0 ]] || rc=1; }
     exit "$rc"
     ;;
-  *) echo 'Usage: bash terraform-vm.sh on [--allow-destroy] | off | status | cleanup | destroy [terraform args]' >&2; exit 2 ;;
+  *) echo 'Usage: bash terraform-vm.sh on [--allow-destroy] | off | status | cleanup | destroy [terraform args] (normally via ./lab)' >&2; exit 2 ;;
 esac

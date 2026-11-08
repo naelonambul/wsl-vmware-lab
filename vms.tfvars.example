@@ -7,8 +7,8 @@
 # groups = Ansible groups for your playbooks. Every VM is also in group "lab".
 # Omitted values default to 2 vCPU, 2048 MB and groups ["demo"].
 #
-# Adding an entry and running `terraform-vm.sh on` creates only the new VM
-# (running VMs stay on). Removing an entry needs `terraform-vm.sh on --allow-destroy`,
+# Adding an entry and running `./lab up` creates only the new VM
+# (running VMs stay on). Removing an entry needs `./lab up --allow-destroy`,
 # which destroys that VM and cleans its files; plain `on` refuses to delete VMs.
 
 vms = {

@@ -105,7 +105,7 @@ def main():
             ['terraform', '-chdir=' + str(project / 'terraform'), 'output', '-json', 'vms'],
             text=True, stderr=subprocess.DEVNULL))
     except subprocess.CalledProcessError:
-        fatal('No Terraform output "vms"; run bash terraform-vm.sh on first')
+        fatal('No Terraform output "vms"; run ./lab up first')
     if not vms:
         fatal('No lab VMs in the Terraform state')
 
@@ -133,7 +133,7 @@ def main():
             fatal(name + ': unexpected VM id ' + repr(vm['id']))
         vmx_file = Path(subprocess.check_output(['wslpath', '-u', vm['path']], text=True).strip())
         if not vmx_file.is_file():
-            waiting.append(name + ': VMX missing (' + vm['path'] + '); run bash terraform-vm.sh on to reconcile')
+            waiting.append(name + ': VMX missing (' + vm['path'] + '); run ./lab up to reconcile')
             continue
         match = re.search(r'(?m)^\s*ethernet1\.generatedAddress\s*=\s*"([0-9A-Fa-f:]{17})"', vmx_file.read_text())
         if not match:

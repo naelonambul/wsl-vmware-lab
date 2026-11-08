@@ -160,7 +160,7 @@ lab_terraform_env() {
 # Confirm the base VM before Terraform clones it (check-base.py) and pass its
 # identity to Terraform: TF_VAR_base_id makes the plan stop if the provider's
 # name lookup finds another VM, and TF_VAR_base_prepared (a hash of the
-# base's prepared marker, new with every prepare-base.sh --recreate) makes the
+# base's prepared marker, new with every ./lab setup --recreate) makes the
 # plan replace clones of an older base. Run after lab_terraform_env.
 lab_base_identity() {
   local prepared="$LAB_BASE_DIR/ubuntu-base.prepared" id

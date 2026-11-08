@@ -75,7 +75,7 @@ Terraform owns VM existence and power. Ansible owns guest software. They do not 
 
 All bash scripts source `lib/config.sh`, which reads optional settings from `lab.env` (gitignored; template `lab.env.example`) or the file named in `LAB_ENV_FILE`, and the vmrest account from the secrets file (`%USERPROFILE%\.env`).
 
-- **VM set.** Without `vms.tfvars`, one VM `LAB_CLONE_NAME` (group `demo`). With `vms.tfvars` in the repository root (template `vms.tfvars.example`, gitignored; `LAB_VMS_FILE` to move it): `vms = { "<name>" = { processors, memory_mb, groups } }`. Each VM is `<LAB_VM_ROOT_WIN>\<name>\<name>.vmx` (default root `%USERPROFILE%\Documents\Virtual Machines`), its hostname and its Ansible host; `groups` become Ansible groups and every VM is also in `lab`. `terraform-vm.sh on` creates only new entries (running VMs stay on). It reads the plan first and refuses to delete or replace any VM unless run as `on --allow-destroy` (which destroys plus cleans entries removed from the list); a missing or mistyped `vms.tfvars` therefore stops instead of deleting VMs. An explicitly set `LAB_VMS_FILE` that does not exist is an error, not the single-VM fallback. Before `on`/`off`, `check-base.py` requires exactly one registered VM with display name `LAB_BASE_NAME`, at `base/ubuntu-base.vmx` (the provider takes the first name match); a duplicate stops with no change, and a clone may not use the base name. A rebuilt base (`prepare-base.sh --recreate`, or another vmrest id or path) makes the plan replace every clone and their bootstrap, so `on` refuses until `--allow-destroy`; clone contents are lost. Pass `--allow-destroy` only when the user asked to remove or rebuild those VMs.
+- **VM set.** Without `vms.tfvars`, one VM `LAB_CLONE_NAME` (group `demo`). With `vms.tfvars` in the repository root (template `vms.tfvars.example`, gitignored; `LAB_VMS_FILE` to move it): `vms = { "<name>" = { processors, memory_mb, groups } }`. Each VM is `<LAB_VM_ROOT_WIN>\<name>\<name>.vmx` (default root `%USERPROFILE%\Documents\Virtual Machines`), its hostname and its Ansible host; `groups` become Ansible groups and every VM is also in `lab`. `./lab up` creates only new entries (running VMs stay on). It reads the plan first and refuses to delete or replace any VM unless run as `./lab up --allow-destroy` (which destroys plus cleans entries removed from the list); a missing or mistyped `vms.tfvars` therefore stops instead of deleting VMs. An explicitly set `LAB_VMS_FILE` that does not exist is an error, not the single-VM fallback. Before `on`/`off`, `check-base.py` requires exactly one registered VM with display name `LAB_BASE_NAME`, at `base/ubuntu-base.vmx` (the provider takes the first name match); a duplicate stops with no change, and a clone may not use the base name. A rebuilt base (`./lab setup --recreate`, or another vmrest id or path) makes the plan replace every clone and their bootstrap, so `on` refuses until `--allow-destroy`; clone contents are lost. Pass `--allow-destroy` only when the user asked to remove or rebuild those VMs.
 - **Playbooks.** `configure-guest.sh [PLAYBOOK] [ansible-playbook options]` runs any playbook, also from the user's own project folder (`LAB_PLAYBOOK` sets the default). `ansible/check-lab.yml` checks every VM (SSH, cloud-init, sudo, OS). Keep the user's playbooks and `vms.tfvars` out of this repository's git history unless they ask.
 - Guest images: Ubuntu cloud images only (default 24.04 noble). Guest-user detection needs `open-vm-tools` inside the guest, which Ubuntu cloud images ship (checked: 22.04, 24.04 manifests) and Debian 12 cloud images do not. For another distribution, stop and ask the user; do not swap images silently.
 - Guest VM user (inside the VM) is not configured: cloud-init keeps the image's default user (`ubuntu` on Ubuntu images) and the guest reports its name through VMware guestinfo on every boot (`lib/cloud-config.sh`, read by `guest-inventory.py`). The WSL user is separate: the account the user SSHes into this PC as (the `User` of their SSH config entry); scripts run as it and never set it.
@@ -88,9 +88,9 @@ All bash scripts source `lib/config.sh`, which reads optional settings from `lab
 1. **User decides.** Propose options with trade-offs before changing a host, and run only what the user picks.
 2. **Secrets.** Never print, copy or commit `lab.env`, vmrest credentials, SSH private keys, Terraform state or generated `inventory.json`. Never type the vmrest password on the user's behalf: the user runs `vmrest.exe -C` and writes the secrets file. Do not enable `set -x` around config loading. New variables get a fake value in `lab.env.example`.
 3. **Preserve.** Never delete or re-prepare the base VM, reset WSL distributions, restore VMware network defaults, or overwrite an existing Terraform state unless the user explicitly asks.
-4. **Check before lifecycle commands.** `preflight.sh` must exit 0 in this session before any Terraform command (section 0).
+4. **Check before lifecycle commands.** `./lab status` (or `preflight.sh`) must exit 0 in this session before any Terraform command (section 0). `lab` runs one command at a time per checkout (`flock` on `.lab.lock`); a second one stops at once.
 5. **One runner per state.** One checkout = one state, one VM set, one inventory. Serialize work, or use a fully isolated checkout with its own `lab.env`.
-6. **Destroy via the wrapper.** Use `bash terraform-vm.sh destroy` (runs cleanup), never bare `terraform destroy`. `0 destroyed` with vmrest down is not success.
+6. **Destroy via the wrapper.** Use `./lab destroy` (runs cleanup), never bare `terraform destroy`. `0 destroyed` with vmrest down is not success.
 7. **Never disable host key checking globally.** Clone host keys come from guestinfo and are pinned (`StrictHostKeyChecking=yes`); a mismatch means the address reached another VM or the guest is not ready.
 8. **Never disable Hyper-V / VBS / Secure Boot** to make VMware start; WSL2 needs them.
 9. **Verification.** Report a step as done only with the command and its actual output. Historical results in references are not fresh evidence. A test passes only under the conditions it claims: for example, a credential written and read in the same session proves nothing about a fresh boot.
@@ -101,21 +101,20 @@ All bash scripts source `lib/config.sh`, which reads optional settings from `lab
 
 ```bash
 cd "$repo"
-bash preflight.sh                          # must exit 0 first
-bash api-status.sh                         # vmrest inventory (JSON; contains VM paths)
-bash terraform-vm.sh status                # state (contains details; report only non-secret findings)
-bash terraform-vm.sh on                    # new VMs: OFF create -> bootstrap -> ON; then all ON
-bash check-power.sh                        # power state of every VM (or: check-power.sh <name>)
-ANSIBLE_TIMEOUT=60 bash configure-guest.sh ansible/check-lab.yml   # every VM ready?
-ANSIBLE_TIMEOUT=60 bash configure-guest.sh # example: nginx + HTTP assertions on group demo
-ANSIBLE_TIMEOUT=60 bash configure-guest.sh # idempotence: expect changed=0 failed=0
-ANSIBLE_TIMEOUT=60 bash configure-guest.sh ~/my-system/site.yml    # the user's own playbook
-bash terraform-vm.sh off                   # targeted apply; refused unless the plan is power changes only
-bash terraform-vm.sh destroy               # interactive; cleanup-aware, every VM
-bash terraform-vm.sh cleanup               # retry cleanup left by a failed or interrupted delete
+./lab status                     # must exit 0 first (host checks, vmrest, Terraform state; changes nothing)
+./lab setup                      # once: WSL tools, image, cloud-init seed, base VM (skips a prepared base)
+./lab up                         # new VMs: OFF create -> bootstrap -> ON; then all ON
+./lab configure ansible/check-lab.yml   # every VM ready?
+./lab configure                  # example: nginx + HTTP assertions on group demo; again: changed=0 failed=0
+./lab configure ~/my-system/site.yml    # the user's own playbook
+./lab down                       # refused unless the plan is power changes only
+./lab destroy                    # interactive; cleanup-aware, every VM
+./lab cleanup                    # retry cleanup left by a failed or interrupted delete
+bash api-status.sh               # vmrest inventory (JSON; contains VM paths)
+bash check-power.sh [name]       # power state of every VM
 ```
 
-Several VMs: `cp vms.tfvars.example vms.tfvars`, edit, then `terraform-vm.sh on`. Changing the list later: edit and run `on` again (removing entries: `on --allow-destroy`, after the user confirms).
+Several VMs: `cp vms.tfvars.example vms.tfvars`, edit, then `./lab up`. Changing the list later: edit and run `on` again (removing entries: `./lab up --allow-destroy`, after the user confirms).
 
 `ANSIBLE_TIMEOUT=60` avoids the known 12-second privilege-escalation prompt timeout.
 
