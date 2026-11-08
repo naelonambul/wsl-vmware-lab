@@ -17,7 +17,7 @@ Use this when the lab is already installed and you are in a WSL shell on it (loc
 ## Start here
 
 1. Run preflight as described in SKILL.md section 0, and continue only when it exits 0.
-2. `bash terraform-vm.sh status`: inspect the current state and report only non-secret findings.
+2. `./lab status`: inspect the current state and report only non-secret findings.
 3. Read the repository `README.md` if settings look unusual.
 4. Preserve the base VM and any existing clone unless the user explicitly authorizes changes.
 
@@ -63,11 +63,11 @@ Preflight reports whether `.wslconfig` uses mirrored networking. Do not change `
 
 ```bash
 bash api-status.sh
-bash terraform-vm.sh status
-bash terraform-vm.sh on
-ANSIBLE_TIMEOUT=60 bash configure-guest.sh
-bash terraform-vm.sh off        # a Terraform apply; review state first
-bash terraform-vm.sh destroy    # interactive; runs cleanup-guest.py afterwards
+./lab status
+./lab up
+./lab configure
+./lab down        # a Terraform apply; review state first
+./lab destroy    # interactive; runs cleanup-guest.py afterwards
 ```
 
 `destroy` saves state metadata, runs Terraform destroy, then removes only the generated seed ISO and an empty clone directory after verifying VMX/VMDK are gone. Bare `terraform destroy` skips this. It also removes a leftover `<clone>.vmxf` that names the clone's VMX, then that clone id's `known_hosts-<id>` and `seed-<id>/` (only the generated cloud-init files) under `LAB_PRIVATE_DIR`; other files are left and reported.

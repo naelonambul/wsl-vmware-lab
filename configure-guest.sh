@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# bash configure-guest.sh [PLAYBOOK] [ansible-playbook options...]
+# ./lab configure [PLAYBOOK] [ansible-playbook options...]
 # Writes the inventory for every lab VM (waits until all are ready), then runs
 # PLAYBOOK against it. Default playbook: LAB_PLAYBOOK, else the nginx example
 # ansible/configure-guest.yml. PLAYBOOK may live in your own project folder;
 # relative paths are taken from the directory you run this from.
 # Groups: each VM's `groups` from vms.tfvars, plus `lab` (all VMs).
-# Terraform must have created and powered on the VMs first (terraform-vm.sh on).
+# Terraform must have created and powered on the VMs first (./lab up).
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 source "$here/lib/config.sh"

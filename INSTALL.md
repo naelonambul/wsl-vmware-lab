@@ -88,4 +88,4 @@ Report: where you run, the repository path, the skill path (and any `.bak` copy)
 - Claude Code watches existing skill folders and picks the new skill up in the running session. If the `skills` folder did not exist when the session started, run `/reload-skills` (or restart). It is invoked as `/vmware-wsl-lab`, or automatically when the request matches.
 - Codex detects new skills automatically; if it does not show up in `/skills`, restart Codex. It is invoked with `$vmware-wsl-lab`, or automatically when the request matches.
 - Update later: `git -C <repo> pull --ff-only`, then repeat step 3.
-- Remove: delete the skill folder from step 3 (ask first). The repository and any VMs are separate; remove VMs with `bash terraform-vm.sh destroy`, never by deleting folders.
+- Remove: delete the skill folder from step 3 (ask first). The repository and any VMs are separate; remove VMs with `./lab destroy`, never by deleting folders.

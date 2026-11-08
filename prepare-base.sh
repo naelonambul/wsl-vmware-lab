@@ -4,7 +4,7 @@
 # A finished base is marked with base/ubuntu-base.prepared; running this again
 # then does nothing. --recreate rebuilds the base from the cloud image (the
 # base must be powered off). Existing clones stay until the next
-# terraform-vm.sh on, which then asks for --allow-destroy to rebuild them.
+# ./lab up, which then asks for --allow-destroy to rebuild them.
 set -euo pipefail
 cd "$(dirname "$0")"
 source lib/config.sh
@@ -19,7 +19,7 @@ done
 
 prepared="${LAB_BASE_DIR}/ubuntu-base.prepared"
 if [[ -f "$prepared" && ${#recreate[@]} -eq 0 ]]; then
-  echo "[OK] Base already prepared ($prepared); nothing to do. To rebuild it: bash prepare-base.sh --recreate"
+  echo "[OK] Base already prepared ($prepared); nothing to do. To rebuild it: ./lab setup --recreate"
   exit 0
 fi
 
@@ -39,7 +39,7 @@ for _ in $(seq 1 120); do
 done
 if [[ -z "$reported" ]]; then
   echo "[ERROR] the guest did not report its user within 10 minutes; the base is still running." >&2
-  echo "        Check the VM console and cloud-init, then shut it down and run: bash prepare-base.sh --recreate" >&2
+  echo "        Check the VM console and cloud-init, then shut it down and run: ./lab setup --recreate" >&2
   exit 1
 fi
 if [[ ! "$reported" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]]; then

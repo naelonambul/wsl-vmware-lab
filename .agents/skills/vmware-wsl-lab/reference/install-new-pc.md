@@ -248,11 +248,11 @@ Implement a cleanup trap before creating resources. Preserve any shared inventor
 Run the prepared project's commands, adapting filenames if implementation differs:
 
 ```bash
-bash terraform-vm.sh on
-ANSIBLE_TIMEOUT=60 bash configure-guest.sh
-ANSIBLE_TIMEOUT=60 bash configure-guest.sh
-bash terraform-vm.sh off
-bash terraform-vm.sh destroy
+./lab up
+./lab configure
+./lab configure
+./lab down
+./lab destroy
 ```
 
 For an explicitly authorized disposable test, the wrapper can accept Terraform's `-auto-approve -input=false` destroy arguments. Review the state target first. Use bounded waits and report failures precisely.

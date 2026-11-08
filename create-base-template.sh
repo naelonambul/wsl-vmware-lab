@@ -52,7 +52,7 @@ fi
 
 if [[ -f "$vm_disk" && ! -f "$disk_marker" ]]; then
   echo "[ERROR] $vm_disk exists without $disk_marker: it may be a partial conversion." >&2
-  echo "        Rebuild it: bash prepare-base.sh --recreate" >&2
+  echo "        Rebuild it: ./lab setup --recreate" >&2
   echo "        (A base prepared by an older version that works: touch \"$disk_marker\" \"$prepared\")" >&2
   exit 1
 fi
@@ -122,7 +122,7 @@ if [[ -f "$vmx" && $recreate -eq 0 ]]; then
   if [[ -n "$mismatch" ]]; then
     echo "[ERROR] $vmx exists with different settings; left unchanged:" >&2
     printf '%s' "$mismatch" | sed 's/^/        /' >&2
-    echo "        Fix lab.env (LAB_BASE_NAME), or rebuild the base: bash prepare-base.sh --recreate" >&2
+    echo "        Fix lab.env (LAB_BASE_NAME), or rebuild the base: ./lab setup --recreate" >&2
     exit 1
   fi
   echo "[OK] Base VMX already in place: $vmx"
