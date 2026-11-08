@@ -15,11 +15,13 @@ playbook="${1:-${LAB_PLAYBOOK:-$here/ansible/configure-guest.yml}}"
 [[ -f "$playbook" ]] || { echo "[ERROR] Playbook not found: $playbook" >&2; exit 2; }
 ready=false
 for attempt in $(seq 1 30); do
-  if python3 "$here/guest-inventory.py"; then ready=true; break; fi
+  rc=0; python3 "$here/guest-inventory.py" || rc=$?
+  if [[ $rc -eq 0 ]]; then ready=true; break; fi
+  [[ $rc -eq 3 ]] && exit 1   # an error a retry cannot fix (message above)
   sleep 5
 done
 if [[ "$ready" != true ]]; then
-  echo 'Guests not ready after 150 s: no management DHCP lease, or a guest never reported its user through guestinfo.' >&2
+  echo 'Guests not ready after 150 s: no current management DHCP lease, or a guest never reported its user or SSH host key through guestinfo.' >&2
   echo 'The guest image must ship open-vm-tools (Ubuntu cloud images do; Debian 12 cloud images do not). Only Ubuntu cloud images are supported.' >&2
   exit 1
 fi

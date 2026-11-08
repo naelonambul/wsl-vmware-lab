@@ -94,7 +94,7 @@ All bash scripts source `lib/config.sh`, which reads optional settings from `lab
 4. **Check before lifecycle commands.** `preflight.sh` must exit 0 in this session before any Terraform command (section 0).
 5. **One runner per state.** One checkout = one state, one VM set, one inventory. Serialize work, or use a fully isolated checkout with its own `lab.env`.
 6. **Destroy via the wrapper.** Use `bash terraform-vm.sh destroy` (runs cleanup), never bare `terraform destroy`. `0 destroyed` with vmrest down is not success.
-7. **Never disable host key checking globally.** Remove only the verified clone's stale entry.
+7. **Never disable host key checking globally.** Clone host keys come from guestinfo and are pinned (`StrictHostKeyChecking=yes`); a mismatch means the address reached another VM or the guest is not ready.
 8. **Never disable Hyper-V / VBS / Secure Boot** to make VMware start; WSL2 needs them.
 9. **Verification.** Report a step as done only with the command and its actual output. Historical results in references are not fresh evidence. A test passes only under the conditions it claims: for example, a credential written and read in the same session proves nothing about a fresh boot.
 10. **Hosts that differ from the skill.** When a host was set up another way (a vmrest task with another name or a logon trigger, the account in another file or under `VMWS_USER`, the OVA under an old name), do not work around it silently. Show the difference, propose converting the host to the skill's way, and on the user's OK convert it: disable rather than delete foreign tasks and keep foreign files. Then re-run preflight. If the difference reveals a gap in the skill itself, fix the skill and repository too.

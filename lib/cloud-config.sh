@@ -5,10 +5,14 @@
 # user. On every boot a small unit reports the name of the user that holds the
 # lab key through VMware guestinfo, so WSL can read it with
 #   vmrun readVariable <vmx> guestVar wsl-vmware-lab.guest_user
-# instead of assuming a name. This needs open-vm-tools (vmware-rpctool) in the
+# instead of assuming a name. The same unit reports the guest's SSH host key
+# (wsl-vmware-lab.host_key): guestinfo belongs to that VM, so WSL connects only
+# to a host holding that key, never to another VM that got an old DHCP address
+# (guest-inventory.py). This needs open-vm-tools (vmware-rpctool) in the
 # guest: Ubuntu cloud images ship it, which is why only they are supported.
 
 LAB_GUESTINFO_USER_VAR=wsl-vmware-lab.guest_user
+LAB_GUESTINFO_HOSTKEY_VAR=wsl-vmware-lab.host_key
 
 # Usage: lab_cloud_config_users "<public key line>"
 lab_cloud_config_users() {
@@ -28,7 +32,8 @@ write_files:
     permissions: '0755'
     content: |
       #!/bin/sh
-      # Report the user that holds the lab SSH key to the VMware host.
+      # Report the user that holds the lab SSH key and the SSH host key to the
+      # VMware host.
       found=\$(getent passwd | awk -F: '\$3 >= 1000 && \$3 < 60000 {print \$1 ":" \$6}' |
         while IFS=: read -r user home; do
           if grep -qsF '${keybody}' "\$home/.ssh/authorized_keys"; then
@@ -36,11 +41,13 @@ write_files:
           fi
         done)
       [ -n "\$found" ] || exit 1
-      exec vmware-rpctool "info-set guestinfo.${LAB_GUESTINFO_USER_VAR} \$found"
+      vmware-rpctool "info-set guestinfo.${LAB_GUESTINFO_USER_VAR} \$found" || exit 1
+      hostkey=\$(cut -d' ' -f1,2 /etc/ssh/ssh_host_ed25519_key.pub) || exit 1
+      exec vmware-rpctool "info-set guestinfo.${LAB_GUESTINFO_HOSTKEY_VAR} \$hostkey"
   - path: /etc/systemd/system/wsl-vmware-lab-guestinfo.service
     content: |
       [Unit]
-      Description=Report the lab guest user through VMware guestinfo
+      Description=Report the lab guest user and SSH host key through VMware guestinfo
       After=open-vm-tools.service
       [Service]
       Type=oneshot

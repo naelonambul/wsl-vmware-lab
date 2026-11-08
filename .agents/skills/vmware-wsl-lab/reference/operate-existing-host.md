@@ -36,6 +36,7 @@ The shell is Bash inside WSL2, not PowerShell. Run Windows commands through `/mn
 | Private directory | `~/.config/wsl-vmware-lab/` | `LAB_PRIVATE_DIR` |
 | Guest VM user | image default, reported via guestinfo | none (`LAB_GUEST_USER` is ignored) |
 | DHCP leases | `/mnt/c/ProgramData/VMware/vmnetdhcp.leases` | `LAB_DHCP_LEASES` |
+| DHCP config (management subnet) | `/mnt/c/ProgramData/VMware/vmnetdhcp.conf` | `LAB_DHCP_CONF` |
 
 Use `wslpath -w` for arguments passed to Windows tools and `wslpath -u` for paths read from Terraform. VM disks and ISO files must be on a Windows drive.
 
@@ -56,7 +57,7 @@ Preflight reports whether `.wslconfig` uses mirrored networking. Do not change `
 - vmrest account: secrets file `%USERPROFILE%\.env` (`LAB_SECRETS_FILE`), lines `VMWS_USERNAME=`/`VMWS_USER=` and `VMWS_PASSWORD=`, parsed (not executed) by `lib/config.sh`. Environment variables or `lab.env` override it. Terraform receives `TF_VAR_vmrest_*` from `lib/config.sh`.
 - Private files: `lab_ed25519` key pair, `inventory.json`, `known_hosts-<vm-id>`, `seed-<vm-id>/` under `LAB_PRIVATE_DIR`.
 - Never print or copy credentials, keys, Terraform state or inventory into chat, logs, commits or docs. Never enable `set -x` around config loading.
-- Guest user: cloud-init keeps the image's default user; a guest unit writes its name to guestinfo `wsl-vmware-lab.guest_user` on every boot and `guest-inventory.py` reads it with `vmrun readVariable ... guestVar`. Until the guest reports it, inventory generation retries.
+- Guest user: cloud-init keeps the image's default user; a guest unit writes its name to guestinfo `wsl-vmware-lab.guest_user` on every boot and `guest-inventory.py` reads it with `vmrun readVariable ... guestVar`; the same unit reports the SSH host key as `wsl-vmware-lab.host_key`. Until the guest reports both, inventory generation retries; the inventory and known_hosts files are written only once every VM checked out.
 
 ## Routine commands
 
@@ -80,7 +81,7 @@ bash terraform-vm.sh destroy    # interactive; runs cleanup-guest.py afterwards
 | `vms.tfvars.example` | template for a multi-VM system (`web1` in `demo`+`web`, `db1` in `db`) |
 | `terraform-vm.sh` | loads config, API precheck, passes `vms.tfvars`; `on`/`off` first confirm the base with `check-base.py` (exactly one VM with the base name, at the base VMX); `on` checks the plan (refuses VM delete/replace, including clones of a rebuilt base, without `--allow-destroy`) → creates new VMs off (targeted) → bootstrap → all ON; cleans VMs removed with `--allow-destroy`; `off` refuses a plan with anything but power changes; VMs about to be deleted are journaled in `terraform/cleanup-pending.json` and cleaned once gone (failed cleanup is retried by the next `on`/`destroy`/`cleanup`; `status` lists pending entries); cleanup-aware destroy |
 | `bootstrap-guest.sh` | refuses a running clone; per-VM cloud-init seed (hostname = VM name); attaches ISO and management NIC |
-| `guest-inventory.py` | per VM: VMX management MAC → DHCP lease, guestinfo user, direct SSH or proxy → private inventory with groups + `lab` |
+| `guest-inventory.py` | per VM: VMX management MAC → current DHCP lease on the management subnet, guestinfo user and SSH host key (pinned), direct SSH or proxy → private inventory with groups + `lab`, written atomically |
 | `configure-guest.sh` | `[PLAYBOOK] [ansible options]`; retries inventory 30 times (all VMs), then runs the playbook |
 | `ansible/configure-guest.yml` | example: wait SSH/cloud-init; nginx; page; service; HTTP 200 + content assertion (group `demo`) |
 | `ansible/check-lab.yml` | smoke test for group `lab`: SSH, cloud-init, sudo, OS facts |
@@ -118,7 +119,7 @@ Lessons from running such a deployment:
 
 ## Known operational lessons
 
-- Recreating the same clone path can reuse VM ID and IP → stale host key. Verify the clone by API path and management MAC/lease, then remove only that clone's entry with `ssh-keygen -f <clone-known-hosts> -R <ip>`.
+- Host keys are not learned on first contact: each clone reports its SSH host key through guestinfo (`wsl-vmware-lab.host_key`), `guest-inventory.py` writes it to `known_hosts-<id>` under the alias `wsl-vmware-lab-<id>`, and SSH runs with `StrictHostKeyChecking=yes`. A different key at the address (another VM got it) fails the connection instead of configuring the wrong VM.
 - Default Ansible privilege-escalation wait (12 s) intermittently timed out; `ANSIBLE_TIMEOUT=60` fixed it. Root cause of the latency was not confirmed.
 - After a reboot vmrest may be absent (HTTP 000). Start the `VMware vmrest API` task before retrying Terraform; `0 destroyed` with vmrest down is not success.
 - SSH scheduled tasks start at boot without logon (S4U) and again at logon when registered by the current `wsl2-ssh-forward.ps1 InstallTask`; hosts set up earlier may still have logon-only tasks. Do not restart WSL or edit those tasks during an active remote session without console access.
