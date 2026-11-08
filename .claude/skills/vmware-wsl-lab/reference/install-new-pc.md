@@ -8,7 +8,7 @@ Use this document as an execution instruction for an agent with Windows terminal
 - Objective and boundaries / Execution rules
 - 1. Discover the machine and create a checkpoint
 - 2. Update WSL, set resources, prepare Ubuntu, and resume after restart
-- 3. Configure Linux SSH and remote access (firewall, NAT portproxy, start at boot, keep the PC awake)
+- 3. Configure Linux SSH and remote access (firewall, start at boot, keep the PC awake: windows\setup.ps1)
 - 4. Install VMware Workstation Pro using computer use
 - 5. Configure and keep vmrest available
 - 6. Install Linux automation tools
@@ -133,9 +133,9 @@ ss -lnt
 
 If systemd is not available, inspect `/etc/wsl.conf` and the distribution's supported systemd configuration before selecting a service-start mechanism. Provision the external agent's public key in the intended user's `~/.ssh/authorized_keys` with directory mode 700 and file mode 600. Verify key login before considering password-login changes. Never write a private SSH key into documentation.
 
-For mirrored mode, inspect both Windows and Hyper-V firewall rules. Create an inbound TCP 22 rule scoped to the intended LAN subnet and WSL creator ID; avoid a broad default inbound allow policy. `windows/wsl2-ssh-forward.ps1 Install` creates both (Windows rule `WSL2 SSH 22`, Hyper-V rule `WSL-SSH-Inbound-TCP22-LAN`) and saves the range for later `Refresh` runs. On a host whose firewall profiles are disabled, a successful login does not prove the range restriction works; test from an address outside the range when it matters. Microsoft documents `New-NetFirewallHyperVRule` and the WSL creator ID on its networking page. Check port ownership first: Windows OpenSSH and WSL SSH must not compete for the same externally reached endpoint. Choose a deliberate alternate port if necessary rather than stopping an unrelated service.
+Inspect both Windows and Hyper-V firewall rules. Create an inbound TCP 22 rule scoped to the intended LAN subnet and WSL creator ID; avoid a broad default inbound allow policy. `windows/setup.ps1 Install -AllowedRemoteAddress <LAN>` creates both (Windows rule `WSL2 SSH 22`, Hyper-V rule `WSL-SSH-Inbound-TCP22-LAN`). On a host whose firewall profiles are disabled, a successful login does not prove the range restriction works; test from an address outside the range when it matters. Microsoft documents `New-NetFirewallHyperVRule` and the WSL creator ID on its networking page. Windows OpenSSH must not hold port 22 (setup.ps1 stops if it does; it never stops that service).
 
-For NAT mode, use Windows `netsh interface portproxy` to forward the chosen Windows listening port to the current WSL IPv4 and port 22. Restrict its Windows firewall rule to the approved subnet. WSL NAT addresses can change, so implement a refresh action that discovers the current distribution address. Do not install a NAT portproxy for the mirrored path just because an older tutorial does so.
+The repository supports mirrored networking only. A NAT-era `0.0.0.0:22` portproxy collides with WSL sshd in mirrored mode; `setup.ps1` reports it and the user removes it.
 
 Diagnose a failed external login in this order, from read-only evidence, before changing firewall rules:
 
@@ -161,11 +161,11 @@ A one-shot `systemctl start ssh` command was insufficient to keep WSL reachable 
 wsl.exe -d <Distro> -u root -- /bin/sh -c 'systemctl stop ssh.socket ssh.service; mkdir -p /run/sshd; exec /usr/sbin/sshd -D -e'
 ```
 
-This takes ownership of SSH startup in that distribution; do not run a competing daemon on port 22. Register it with a boot trigger and S4U (run whether or not the user is logged on, without storing a password), plus a logon trigger, like the vmrest task. This repository's `wsl2-ssh-forward.ps1 InstallTask` does this and starts it once immediately; its tasks (one of them elevated) run an administrator-only copy of the script in `%ProgramFiles%\wsl-vmware-lab`, never a file in the user-writable checkout. A task registered but not started leaves WSL to shut down when idle, taking sshd with it, until the next trigger fires. Confirm the `sshd -D -e` process keeps running (its `etime` grows across checks) before asking the user to test. Configure no execution time limit, ignore duplicate instances, and record the exact task name/action. Elevated privileges are needed for firewall/portproxy setup, not necessarily for the long-running user task. In NAT mode maintain a separate forwarding-refresh task. Verify with a real reboot: before anyone logs on (`quser` shows no users), log in over SSH from another LAN PC. Keep a recovery console available. A logon-only trigger is not acceptable for unattended use.
+This takes ownership of SSH startup in that distribution; do not run a competing daemon on port 22. `windows/setup.ps1 Install` registers task `WSL2 SSH Service Start` with a boot trigger and S4U (run whether or not the user is logged on, without storing a password) plus a logon trigger; its action is `wsl.exe -d <distro> -u root -- /bin/sh -c "...exec /usr/sbin/sshd -D -e"`, no script in between. No execution time limit, duplicate instances ignored, restart on failure. Install starts the tasks and reports ready only when WSL listens on :22 and vmrest on 127.0.0.1:8697. Verify with a real reboot: before anyone logs on (`quser` shows no users), log in over SSH from another LAN PC. Keep a recovery console available. A logon-only trigger is not acceptable for unattended use.
 
 ### Keep the PC awake
 
-Sleep or hibernation stops WSL, sshd, vmrest and the VMs; from another PC this looks exactly like a broken SSH setup (port 22 timeout). Display-off timeouts are harmless. `./lab status` reads the active power plan through `windows/configure-power.ps1 -Machine` and warns when, on AC power, Windows sleeps or hibernates after a timeout or the lid action is not "do nothing" (and separately for battery on PCs that have one). Show the current values with `windows/configure-power.ps1` (no arguments, read only), then, with the user's OK, have the user run `-Action Apply` in Windows PowerShell (`-IncludeBattery` to cover battery too; `-WhatIf` to preview). Apply saves the original values once to `%LOCALAPPDATA%\wsl-vmware-lab\power-backup.json`; `-Action Restore` puts them back. Only the active plan changes, and a Group Policy power setting overrides it. Acceptance: preflight shows `[OK] power (plugged in)`.
+Sleep or hibernation stops WSL, sshd, vmrest and the VMs; from another PC this looks exactly like a broken SSH setup (port 22 timeout). Display-off timeouts are harmless. `setup.ps1 Install` sets the active power plan on AC to never sleep or hibernate and the lid action to do nothing (`-IncludeBattery` for battery too, `-SkipPower` to leave power alone; there is no restore). `./lab status` shows the current values in its Windows section. A Group Policy power setting overrides it.
 
 ## 4. Install VMware Workstation Pro using computer use
 
@@ -195,7 +195,7 @@ HTTP 401 demonstrates reachability and an authentication requirement. HTTP 000/t
 
 For NAT WSL, do not assume localhost reaches Windows. Discover the Windows-facing route and implement the narrowest necessary API bridge/bind/firewall configuration, documenting its authentication and exposure. Never apply a broad LAN rule to an unauthenticated endpoint.
 
-vmrest must start at Windows **boot, before any logon**. Install it with `windows/install-vmrest-task.ps1` from an elevated PowerShell: task `VMware vmrest API`, boot trigger, S4U as the Windows user who ran `vmrest.exe -C`, no time limit, restart 5 times 1 minute apart, running an administrator-only copy of `start-vmrest.ps1` in `%ProgramFiles%\wsl-vmware-lab`; `start-vmrest.ps1` stays running while vmrest runs so the restart policy applies. If another tool already registered a vmrest task, disable it (do not delete) so only one launcher remains. Acceptance: reboot, then confirm with nobody logged on (`quser` reports no users) that `curl` from WSL gets HTTP 401. A logon-triggered start is not acceptable.
+vmrest must start at Windows **boot, before any logon**. `windows/setup.ps1 Install` registers task `VMware vmrest API`: boot trigger, S4U as the Windows user who ran `vmrest.exe -C` (the account lives in that user's profile), no time limit, restart 5 times 1 minute apart, action `vmrest.exe` itself. If another tool already registered a vmrest task, disable it (do not delete) so only one launcher remains. Acceptance: reboot, then confirm with nobody logged on (`quser` reports no users) that `curl` from WSL gets HTTP 401. A logon-triggered start is not acceptable.
 
 Store the scripts' copy of the vmrest account in `%USERPROFILE%\.env` as `VMWS_USERNAME=` and `VMWS_PASSWORD=` lines: the user writes the same values given to `vmrest.exe -C`, and keeps the file readable only by their own Windows account. Never type these values for the user. `./lab status` then confirms authenticated HTTP 200 and checks the file permissions. Windows Credential Manager does not work here: it is locked in the no-logon boot session.
 
@@ -277,7 +277,7 @@ Capture the current screen before interacting. Identify controls by visible text
 
 For UAC, login, firmware or restart blockers, state the exact required human action and the checkpoint to resume. For package or API failures, inspect command exit status and logs first. Do not repeatedly rerun an installer, regenerate the base or reset networks as a generic repair.
 
-If SSH drops, recover through the Windows console and inspect the selected distribution, foreground sshd task and mode-specific firewall/portproxy. If API times out, inspect Windows vmrest process/listener and account before touching Terraform. If creation fails, distinguish API/authentication/schema/base-registration/NIC errors. On every failure, attempt scoped clone cleanup and report anything left behind.
+If SSH drops, recover through the Windows console and inspect the selected distribution, the `WSL2 SSH Service Start` task and the firewall rules (`windows\setup.ps1 Status`). If API times out, inspect Windows vmrest process/listener and account before touching Terraform. If creation fails, distinguish API/authentication/schema/base-registration/NIC errors. On every failure, attempt scoped clone cleanup and report anything left behind.
 
 ## 10. Handoff deliverables
 

@@ -163,11 +163,7 @@ start_it() {
       >/dev/null 2>&1; then
     ok "started scheduled task 'VMware vmrest API'"
   else
-    local launcher
-    launcher="$(wslpath -w "$LAB_PROJECT_DIR/windows/start-vmrest.ps1")"
-    warn "startup task absent; running windows/start-vmrest.ps1 once (install the task with windows/install-vmrest-task.ps1)"
-    "$PS" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$launcher" -NoWait -VmrestPath "$(wslpath -w "$VMWARE_DIR/vmrest.exe")" \
-      || { fail "start-vmrest.ps1 failed; check %LOCALAPPDATA%\\WSL-VMware\\vmrest-error.log"; return 1; }
+    fail "startup task 'VMware vmrest API' absent: run windows\\setup.ps1 Install (elevated PowerShell)"; return 1
   fi
 }
 
@@ -212,120 +208,12 @@ else
   warn "no Windows interop: loopback-only listener not confirmed"
 fi
 
-# Windows-side setup that matters after a reboot or for authentication.
-# vmrest.cfg (written by `vmrest.exe -C`) holds the API account; observed in
-# %USERPROFILE% of the Windows user running vmrest. Only its presence is checked.
-# A task must run the administrator-only copy in %ProgramFiles%\wsl-vmware-lab
-# (installed by the install scripts), and that copy should match this checkout.
-check_task_script() {  # task name, Windows path, SHA-256 of it, script name, install command
-  local task="$1" file="$2" hash="$3" name="$4" install="$5" repo_hash
-  if [[ "${file,,}" != *'\program files\wsl-vmware-lab\'"${name,,}" ]]; then
-    warn "task '$task' runs $file, which non-administrators may be able to change; re-run $install (elevated) to install the protected copy"
-    return
-  fi
-  repo_hash="$(sha256sum "$LAB_PROJECT_DIR/windows/$name" | cut -d' ' -f1)"
-  if [[ "${repo_hash^^}" == "${hash^^}" ]]; then
-    ok "task '$task' runs the protected copy $file (matches this repository)"
-  else
-    warn "task '$task' runs $file, which differs from this repository's windows/$name; re-run $install (elevated) to update it"
-  fi
-}
-
+# Windows side (boot tasks, firewall, power): read only, reported by
+# windows/setup.ps1 Status; not part of the exit code.
 if $interop; then
-  # vmrest must come up at BOOT, before any logon: the task needs a boot
-  # trigger and S4U (run whether the user is logged on or not).
-  extra="$("$PS" -NoProfile -NonInteractive -Command '
-    $t = Get-ScheduledTask -TaskName "VMware vmrest API" -ErrorAction SilentlyContinue
-    $c = Test-Path (Join-Path $env:USERPROFILE "vmrest.cfg")
-    $q = [char]34
-    $file = if ($t -and ("$($t.Actions.Arguments)" -match ("-File " + $q + "([^" + $q + "]+)" + $q))) { $Matches[1] } else { "" }
-    $fileok = [bool]($file -and (Test-Path -LiteralPath $file))
-    $hash = if ($fileok) { (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash } else { "" }
-    $boot = [bool]($t.Triggers | Where-Object { $_.CimClass.CimClassName -eq "MSFT_TaskBootTrigger" })
-    $others = (Get-ScheduledTask | Where-Object { $_.TaskName -ne "VMware vmrest API" -and $_.Settings.Enabled -and
-      ($_.Actions | Where-Object { "$($_.Execute) $($_.Arguments)" -match "vmrest" }) }).TaskName -join ";"
-    "task=$(if ($t) { $(if ($t.Settings.Enabled) { "enabled" } else { "disabled" }) } else { "absent" }) boot=$boot logon=$($t.Principal.LogonType) cfg=$c fileok=$fileok hash=$hash others=[$others] file=<$file>"' 2>/dev/null | tr -d '\r')"
-  others="$(sed -nE 's/.*others=\[([^]]*)\].*/\1/p' <<<"$extra")"
-  if [[ "$extra" == *"task=absent"* ]]; then
-    warn "startup task 'VMware vmrest API' absent: vmrest will not start at boot (install with windows/install-vmrest-task.ps1, elevated)"
-  elif [[ "$extra" == *"task=disabled"* ]]; then
-    warn "startup task 'VMware vmrest API' is disabled: vmrest will not start at boot"
-  elif [[ "$extra" == *"boot=True logon=S4U"* ]]; then
-    ok "startup task 'VMware vmrest API': boot trigger, runs without logon (S4U)"
-  elif [[ -n "$extra" ]]; then
-    warn "task 'VMware vmrest API' does not start vmrest at boot without logon; re-run windows/install-vmrest-task.ps1 (elevated)"
-  fi
-  task_file="$(sed -nE 's/.*file=<([^>]*)>.*/\1/p' <<<"$extra")"
-  if [[ "$extra" != *"task=absent"* && "$extra" == *"fileok=False"* ]]; then
-    warn "task 'VMware vmrest API' runs a missing script (${task_file:-unknown}); the repository moved? re-run windows/install-vmrest-task.ps1 (elevated)"
-  elif [[ -n "$task_file" ]]; then
-    check_task_script "VMware vmrest API" "$task_file" "$(sed -nE 's/.*hash=([0-9A-F]*) .*/\1/p' <<<"$extra")" \
-      start-vmrest.ps1 "windows/install-vmrest-task.ps1"
-  fi
-  [[ -n "$others" ]] && warn "other enabled task(s) also start vmrest: ${others} (keep one launcher; disable the others)"
-  # WSL SSH keep-alive task (windows/wsl2-ssh-forward.ps1 InstallTask): boot + S4U, script present.
-  ssh_task="$("$PS" -NoProfile -NonInteractive -Command '
-    $t = Get-ScheduledTask -TaskName "WSL2 SSH Service Start" -ErrorAction SilentlyContinue
-    if (-not $t) { "absent"; exit }
-    $boot = [bool]($t.Triggers | Where-Object { $_.CimClass.CimClassName -eq "MSFT_TaskBootTrigger" })
-    $q = [char]34
-    $file = if ("$($t.Actions.Arguments)" -match ("-File " + $q + "([^" + $q + "]+)" + $q)) { $Matches[1] } else { "" }
-    $fileok = [bool]($file -and (Test-Path -LiteralPath $file))
-    $hash = if ($fileok) { (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash } else { "" }
-    "state=$($t.State) boot=$boot logon=$($t.Principal.LogonType) fileok=$fileok hash=$hash file=<$file>"' 2>/dev/null | tr -d '\r')"
-  case "$ssh_task" in
-    absent|"") warn "SSH task 'WSL2 SSH Service Start' absent: WSL SSH from other PCs is not set up (windows/wsl2-ssh-forward.ps1 InstallTask, elevated)" ;;
-    *fileok=False*) warn "SSH task runs a missing script; re-run windows/wsl2-ssh-forward.ps1 InstallTask (elevated) from this repository" ;;
-    *"boot=True logon=S4U"*) ok "SSH task 'WSL2 SSH Service Start': boot trigger, runs without logon (S4U), ${ssh_task%% *}" ;;
-    *) warn "SSH task 'WSL2 SSH Service Start' does not start at boot without logon (${ssh_task%% hash=*}); re-run wsl2-ssh-forward.ps1 InstallTask (elevated)" ;;
-  esac
-  ssh_file="$(sed -nE 's/.*file=<([^>]*)>.*/\1/p' <<<"$ssh_task")"
-  if [[ -n "$ssh_file" && "$ssh_task" == *fileok=True* ]]; then
-    check_task_script "WSL2 SSH Service Start" "$ssh_file" "$(sed -nE 's/.*hash=([0-9A-F]*) .*/\1/p' <<<"$ssh_task")" \
-      wsl2-ssh-forward.ps1 "windows/wsl2-ssh-forward.ps1 InstallTask"
-  fi
-  if [[ "$extra" == *"cfg=False"* ]]; then
-    warn "no vmrest.cfg in the Windows user profile: the API account may not be set up (the user runs vmrest.exe -C)"
-  elif [[ "$extra" == *"cfg=True"* ]]; then
-    ok "vmrest account file present in the Windows user profile (not read)"
-  fi
-
-  # Sleep or hibernation stops WSL SSH, vmrest and the VMs; from another PC it
-  # looks like an SSH timeout on port 22. Read only here: values come from
-  # windows/configure-power.ps1 (by GUID, so localized powercfg output is fine).
-  power="$("$PS" -NoProfile -NonInteractive -ExecutionPolicy Bypass \
-    -File "$(wslpath -w "$LAB_PROJECT_DIR/windows/configure-power.ps1")" -Machine 2>/dev/null | tr -d '\r')"
-  power_value() { tr ' ' '\n' <<<"$power" | sed -n "s/^$1=//p"; }
-  # Prints what makes the PC stop answering, or nothing when the value is safe.
-  power_risk() {
-    local v="$2"
-    [[ -z "$v" || "$v" == n/a || "$v" == 0 ]] && return
-    if [[ "$1" == lid ]]; then
-      case "$v" in 1) echo "closing the lid sleeps" ;; 2) echo "closing the lid hibernates" ;;
-                   3) echo "closing the lid shuts down" ;; *) echo "lid action $v" ;; esac
-      return
-    fi
-    (( v >= 31536000 )) && return   # a year or more never fires in practice
-    echo "$1 after $(( (v + 59) / 60 )) min"
-  }
-  power_fix="windows/configure-power.ps1 -Action Apply in Windows PowerShell (no -Action: show only; -Action Restore: undo)"
-  if [[ "$power" != *sleep_ac=* ]]; then
-    warn "power settings could not be read; make sure Windows does not sleep while the lab is used remotely"
-  else
-    ac_risks=() dc_risks=()
-    for k in sleep hibernate lid; do
-      r="$(power_risk "$k" "$(power_value "${k}_ac")")"; [[ -n "$r" ]] && ac_risks+=("$r")
-      r="$(power_risk "$k" "$(power_value "${k}_dc")")"; [[ -n "$r" ]] && dc_risks+=("$r")
-    done
-    if (( ${#ac_risks[@]} )); then
-      warn "power (plugged in): $(printf '%s; ' "${ac_risks[@]}")SSH, vmrest and the VMs stop while Windows sleeps. Fix: $power_fix"
-    else
-      ok "power (plugged in): no sleep or hibernation timeout, closing the lid (if any) does nothing"
-    fi
-    if [[ "$(power_value battery)" == True ]] && (( ${#dc_risks[@]} )); then
-      warn "power (on battery): $(printf '%s; ' "${dc_risks[@]}")keep the PC plugged in, or add -IncludeBattery to the fix above"
-    fi
-  fi
+  echo '== Windows (windows/setup.ps1 Status)'
+  timeout 90 "$PS" -NoProfile -NonInteractive -ExecutionPolicy Bypass \
+    -File "$(wslpath -w "$LAB_PROJECT_DIR/windows/setup.ps1")" Status 2>&1 | tr -d '\r' | sed 's/^/  /' || true
 fi
 
 if ! $have_creds; then
