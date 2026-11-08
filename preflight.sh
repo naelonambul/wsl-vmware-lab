@@ -130,7 +130,7 @@ ok "private dir: $LAB_PRIVATE_DIR$([[ -d "$LAB_PRIVATE_DIR" ]] || echo ' (not cr
 
 echo '== Tools'
 for tool in terraform ansible-playbook python3 qemu-img cloud-localds curl; do
-  if command -v "$tool" >/dev/null 2>&1; then ok "$tool"; else warn "$tool missing (sudo bash setup-wsl-tools.sh)"; fi
+  if command -v "$tool" >/dev/null 2>&1; then ok "$tool"; else warn "$tool missing (./lab setup installs it)"; fi
 done
 for exe in vmrun.exe vmrest.exe; do
   if [[ -f "$VMWARE_DIR/$exe" ]]; then ok "$exe in $VMWARE_DIR"; else fail "$exe not found in VMWARE_DIR=$VMWARE_DIR"; fi

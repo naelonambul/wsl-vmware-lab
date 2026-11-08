@@ -112,7 +112,7 @@ def main():
     private = Path(os.environ.get('LAB_PRIVATE_DIR', str(Path.home() / '.config/wsl-vmware-lab')))
     key = Path(os.environ.get('LAB_SSH_KEY', str(private / 'lab_ed25519')))
     if not key.is_file():
-        fatal('Missing lab SSH key: ' + str(key) + ' (run prepare-cloud-init.sh)')
+        fatal('Missing lab SSH key: ' + str(key) + ' (run ./lab setup)')
     leases = parse_leases(Path(os.environ.get('LAB_DHCP_LEASES', '/mnt/c/ProgramData/VMware/vmnetdhcp.leases')).read_text())
     conf_file = Path(os.environ.get('LAB_DHCP_CONF', '/mnt/c/ProgramData/VMware/vmnetdhcp.conf'))
     vnet = os.environ.get('LAB_MGMT_VNET', 'VMnet1')

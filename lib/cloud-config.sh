@@ -27,6 +27,10 @@ ssh_authorized_keys:
   - ${pubkey}
 ssh_pwauth: false
 disable_root: true
+# Clones start from the base disk, which already booted once: give every new
+# instance its own machine-id (cloud-init regenerates the SSH host keys itself).
+bootcmd:
+  - [cloud-init-per, instance, wsl-vmware-lab-machine-id, sh, -c, 'rm -f /etc/machine-id && systemd-machine-id-setup']
 write_files:
   - path: /usr/local/sbin/wsl-vmware-lab-guestinfo
     permissions: '0755'

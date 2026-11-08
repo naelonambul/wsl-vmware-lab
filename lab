@@ -29,23 +29,16 @@ case "$cmd" in
   setup)
     lock
     [[ $# -eq 0 || "$*" == --recreate ]] || usage
-    source "$here/lib/config.sh"
-    if [[ -f "$LAB_BASE_DIR/ubuntu-base.prepared" && $# -eq 0 ]]; then
-      echo "[OK] Base already prepared ($LAB_BASE_DIR/ubuntu-base.prepared); nothing to do. To rebuild it: ./lab setup --recreate"
-      exit 0
-    fi
     missing=()
     for tool in terraform ansible-playbook qemu-img cloud-localds gpgv; do
       command -v "$tool" >/dev/null || missing+=("$tool")
     done
+    [[ -f /usr/share/keyrings/ubuntu-cloudimage-keyring.gpg ]] || missing+=(ubuntu-cloudimage-keyring)
     if [[ ${#missing[@]} -gt 0 ]]; then
       echo "[INFO] Installing WSL tools (missing: ${missing[*]}); sudo asks for your WSL password"
-      sudo bash "$here/setup-wsl-tools.sh"
+      sudo bash "$here/lib/wsl-tools.sh"
     fi
-    bash "$here/download-ubuntu-image.sh"
-    [[ -f "$LAB_BASE_DIR/ubuntu-noble-24.04-cloudimg.vmdk" && $# -eq 0 ]] || bash "$here/extract-ubuntu-image.sh"
-    bash "$here/prepare-cloud-init.sh"
-    exec bash "$here/prepare-base.sh" "$@" ;;
+    exec bash "$here/lib/base.sh" "$@" ;;
   status)
     rc=0
     bash "$here/preflight.sh" || rc=$?

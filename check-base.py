@@ -61,7 +61,7 @@ def main(argv):
                     'cannot be told apart from them. Remove stale entries from VMware '
                     "Workstation's library, then retry:", unreadable)
     if not matches:
-        return fail('No registered VM is named "' + name + '". Run: bash register-base.sh')
+        return fail('No registered VM is named "' + name + '". Run: ./lab setup (registers the base)')
     if len(matches) > 1:
         return fail(str(len(matches)) + ' registered VMs are named "' + name + '"; Terraform '
                     'could clone any of them. Rename or remove all but the base ' + expected + ':',

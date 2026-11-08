@@ -16,8 +16,8 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 | Terraform hangs reading base VM, then fails; `curl` gives HTTP `000` | vmrest not running, no 8697 listener (common after reboot) | `bash preflight.sh` shows the Windows process/listener/task state; with the user's OK, `bash preflight.sh --start-vmrest` starts it and waits for 401 |
 | Terraform 404 | endpoint missing `/api` | `http://127.0.0.1:8697/api` |
 | WSL cannot reach `127.0.0.1:8697` | WSL in NAT mode; vmrest bound to loopback | Use mirrored mode. Do not expose Basic-auth vmrest to the LAN |
-| VM missing from `/api/vms` | VMX/disk exist but not registered | `bash register-base.sh` (idempotent by path) |
-| `register-base.sh` gets HTTP 500; VMware log shows a VMX syntax error | `lab.env` written from Windows with CRLF line endings put `\r` into the VM name (older checkouts) | `lib/config.sh` now strips CR when loading `lab.env` and preflight warns about CRLF; on an older checkout convert it with `sed -i 's/\r$//' lab.env`, regenerate the base VMX and register again |
+| VM missing from `/api/vms` | VMX/disk exist but not registered | `./lab setup` (registration is idempotent by path) |
+| base registration gets HTTP 500; VMware log shows a VMX syntax error | `lab.env` written from Windows with CRLF line endings put `\r` into the VM name (older checkouts) | `lib/config.sh` now strips CR when loading `lab.env` and preflight warns about CRLF; on an older checkout convert it with `sed -i 's/\r$//' lab.env`, regenerate the base VMX and register again |
 | `vmrest -C` fails with piped password | requires interactive input | user types it interactively |
 | Unauthenticated 401 works, authenticated request also 401 (Terraform/provider auth errors) | secrets file (`%USERPROFILE%\.env` or `LAB_SECRETS_FILE`) differs from the vmrest API account (`vmrest.exe -C`, stored in `vmrest.cfg`; password not readable) | user corrects the file, or re-runs `vmrest.exe -C`, writes the same values and restarts vmrest. Never read or print the values |
 | preflight cannot find the account although one exists | it is in another file or under `VMWS_USER` instead of `VMWS_USERNAME` | both names are accepted; point `LAB_SECRETS_FILE` at the file |
@@ -50,17 +50,16 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `sha256sum -c SHA256SUMS`: `no file was verified` | OVA saved under the old blog name; Ubuntu lists `noble-server-cloudimg-amd64.ova` | `bash download-ubuntu-image.sh` (official name, signature + checksum) |
+| `sha256sum -c SHA256SUMS`: `no file was verified` | OVA saved under the old blog name; Ubuntu lists `noble-server-cloudimg-amd64.ova` | `./lab setup` (official name, signature + checksum) |
 | VM crashes on boot | hand-written VMX lacks PCIe slot for `e1000e` | use `e1000` |
 | `Host key verification failed` / `REMOTE HOST IDENTIFICATION HAS CHANGED` | the address answers with a key other than the one the clone reported through guestinfo: another VM got the address, or the guest is still on the base's key | nothing to remove: `known_hosts-<id>` is rewritten from guestinfo by every `configure-guest.sh` run. Check the lease (`api-status.sh`, `vmnetdhcp.leases`) and retry once the guest finished booting. Never disable host key checking |
 | `guest has not reported its SSH host key through guestinfo yet` | guest still booting, or a clone created before host-key reporting (its seed lacks it) | wait; an older clone never reports it: recreate it (remove from `vms.tfvars` + `./lab up --allow-destroy`, add back + `on`) |
 | `Timeout (12s) waiting for privilege escalation prompt` | short default become wait (latency source unconfirmed; sudo itself verified passwordless) | `configure-guest.sh` now defaults `ANSIBLE_TIMEOUT=60`; raise it further if needed |
 | WSL cannot SSH to guest mgmt IP | host-only range not reachable from mirrored WSL | inventory falls back to `guest-proxy.sh` + `tcp-relay.ps1` (no listening port created) |
 | App/replica connects to an old subnet | stale separate copy of the deployment env file | keep one private env file (symlink copies to it); check addresses and inventory before deploy |
-| `base` boot "done" after 45 s (older checkouts) | fixed sleep in `prepare-base.sh` | `prepare-base.sh` now waits (up to 10 min) for the guestinfo user report from first-boot cloud-init before shutting the base down |
+| `base` boot "done" after 45 s (older checkouts) | fixed sleep in the old base script | `./lab setup` now waits (up to 10 min) for the guestinfo user report from first-boot cloud-init before shutting the base down |
 | `N registered VMs are named "<base>"` | another VM (a copy, an old base, a clone) has the base display name; the provider would clone the first match | rename or remove the others in Workstation's library (`bash api-status.sh`); nothing was changed |
 | `on` refuses: "The base VM changed" | base rebuilt (`./lab setup --recreate`) or re-registered at another id/path | `./lab up --allow-destroy` rebuilds the clones from the new base (contents lost), after the user confirms |
-| `ubuntu-base.vmdk exists without ubuntu-base.vmdk.complete` | interrupted conversion, or a base made by an older version | rebuild with `./lab setup --recreate` (base off); for a known-good older base, touch the two markers the message names |
 
 ## WSL SSH access
 
