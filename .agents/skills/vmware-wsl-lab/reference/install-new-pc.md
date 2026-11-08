@@ -211,7 +211,7 @@ qemu-img --version
 cloud-localds --help
 ```
 
-These commands assume the package repositories have already been prepared; Terraform is installed in the preceding official apt step. Record exact installed versions. Ansible runs in WSL as the control node; native Windows is not the control-node target of this architecture.
+Versions verified on the original lab: Terraform 1.17.1, Ansible 2.16.3, provider `elsudano/vmworkstation` 2.0.1. These commands assume the package repositories have already been prepared; Terraform is installed in the preceding official apt step. Record exact installed versions. Ansible runs in WSL as the control node; native Windows is not the control-node target of this architecture.
 
 ## 7. Prepare portable project files and a base VM
 
