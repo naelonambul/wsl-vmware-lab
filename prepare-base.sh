@@ -3,7 +3,8 @@
 # Usage: bash prepare-base.sh [--recreate]
 # A finished base is marked with base/ubuntu-base.prepared; running this again
 # then does nothing. --recreate rebuilds the base from the cloud image (the
-# base must be powered off; existing clones are full copies and stay as they are).
+# base must be powered off). Existing clones stay until the next
+# terraform-vm.sh on, which then asks for --allow-destroy to rebuild them.
 set -euo pipefail
 cd "$(dirname "$0")"
 source lib/config.sh

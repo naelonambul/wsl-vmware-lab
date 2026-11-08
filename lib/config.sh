@@ -156,6 +156,24 @@ lab_terraform_env() {
   fi
 }
 
+# Confirm the base VM before Terraform clones it (check-base.py) and pass its
+# identity to Terraform: TF_VAR_base_id makes the plan stop if the provider's
+# name lookup finds another VM, and TF_VAR_base_prepared (a hash of the
+# base's prepared marker, new with every prepare-base.sh --recreate) makes the
+# plan replace clones of an older base. Run after lab_terraform_env.
+lab_base_identity() {
+  local prepared="$LAB_BASE_DIR/ubuntu-base.prepared" id
+  if [[ ! -f "$prepared" ]]; then
+    echo "[ERROR] The base is not prepared ($prepared is missing). Run: bash prepare-base.sh" >&2
+    echo "        (A base prepared by an older version that works: touch \"$prepared\")" >&2
+    return 1
+  fi
+  id=$(python3 "$LAB_PROJECT_DIR/check-base.py" "$LAB_BASE_DIR/ubuntu-base.vmx" "$LAB_BASE_NAME") || return 1
+  export TF_VAR_base_id="$id"
+  TF_VAR_base_prepared=$(sha256sum < "$prepared" | cut -d' ' -f1)
+  export TF_VAR_base_prepared
+}
+
 # Windows path compared case-insensitively, with / and \ treated alike.
 lab_norm_win_path() { local p="${1//\//\\}"; printf '%s' "${p,,}"; }
 

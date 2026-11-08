@@ -153,7 +153,7 @@ bash terraform-vm.sh destroy                 # 삭제 + seed ISO/빈 폴더 정�
 bash terraform-vm.sh cleanup                 # 정리가 실패했거나 중간에 끊겼을 때 다시 정리
 ```
 
-`prepare-base.sh`는 디스크를 임시 파일로 변환하고, 검사가 통과해야 `base/ubuntu-base.vmdk`로 바꿉니다(완성 표시 `ubuntu-base.vmdk.complete`). 베이스가 꺼진 것을 확인한 뒤에만 준비 완료 표시(`ubuntu-base.prepared`)를 남기고, 이 표시가 있으면 다시 실행해도 아무것도 하지 않습니다. 이미 있는 베이스 VMX는 덮어쓰지 않습니다. 베이스를 새로 만들려면 베이스를 끄고 `bash prepare-base.sh --recreate`를 실행합니다(이미 만든 클론은 그대로 남습니다). 예전 버전으로 만든 베이스는 표시가 없어서 다시 실행하면 거부하며, 이때 출력되는 안내를 따릅니다.
+`prepare-base.sh`는 디스크를 임시 파일로 변환하고, 검사가 통과해야 `base/ubuntu-base.vmdk`로 바꿉니다(완성 표시 `ubuntu-base.vmdk.complete`). 베이스가 꺼진 것을 확인한 뒤에만 준비 완료 표시(`ubuntu-base.prepared`)를 남기고, 이 표시가 있으면 다시 실행해도 아무것도 하지 않습니다. 이미 있는 베이스 VMX는 덮어쓰지 않습니다. 베이스를 새로 만들려면 베이스를 끄고 `bash prepare-base.sh --recreate`를 실행합니다(이미 만든 클론은 그대로 남다가, 다음 `bash terraform-vm.sh on`이 "베이스가 바뀌었다"며 멈춥니다. 클론을 새 베이스로 다시 만들려면 `on --allow-destroy`를 실행합니다. 클론 안의 내용은 모두 사라집니다). 예전 버전으로 만든 베이스는 표시가 없어서 다시 실행하면 거부하며, 이때 출력되는 안내를 따릅니다.
 
 VM을 지우기 전에 지울 VM을 `terraform/cleanup-pending.json`에 적어 두고, 정리가 끝난 VM만 목록에서 뺍니다. 정리가 실패하거나 중간에 끊기면 다음 `on`·`destroy`·`cleanup`이 남은 정리를 이어서 합니다. `status`는 정리가 남은 VM을 알려 줍니다.
 
@@ -172,6 +172,7 @@ bash check-power.sh                          # VM별 전원 상태
 - `vms.tfvars`의 키가 VM 이름입니다. Windows 폴더 이름, 게스트 hostname, Ansible 호스트 이름이 모두 이 이름이 됩니다.
 - `groups`에 적은 그룹이 Ansible 그룹이 되고, 모든 VM은 `lab` 그룹에도 들어갑니다. 플레이북에서 `hosts: web`, `hosts: db`처럼 씁니다.
 - `on`과 `off`는 먼저 plan을 확인합니다. `on`은 VM을 삭제하거나 교체해야 하면 그 이름을 보여 주고 멈추고, `off`는 전원 변경 말고 다른 변경이 있으면 거부합니다. `vms.tfvars`가 없어지거나 이름이 틀려도 기존 VM이 지워지지 않습니다.
+- `on`/`off`는 시작하기 전에 베이스 이름(`LAB_BASE_NAME`)을 가진 VM이 정확히 하나이고 `base/ubuntu-base.vmx`인지 확인합니다. 같은 이름이 둘이면 아무것도 바꾸지 않고 멈춥니다. VM 이름을 베이스 이름과 같게 지을 수 없습니다.
 - 목록에서 항목을 일부러 지웠다면 `bash terraform-vm.sh on --allow-destroy`로 그 VM을 삭제합니다. seed ISO, known_hosts 같은 관련 파일도 정리됩니다.
 - `LAB_VMS_FILE`을 직접 지정했는데 파일이 없으면 기본 VM 1대로 바꾸지 않고 오류로 멈춥니다.
 - `configure-guest.sh` 뒤에 붙인 옵션은 그대로 `ansible-playbook`에 넘어갑니다(예: `--limit web1`, `-e key=value`).

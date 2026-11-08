@@ -98,7 +98,7 @@ Put only the SSH **public** key into cloud-init.
 bash prepare-base.sh
 ```
 
-`prepare-base.sh` → `create-base-template.sh` (VMX + disk) → `register-base.sh` (register) → first boot → confirmed power-off → marker `base/ubuntu-base.prepared`. The disk is converted to `ubuntu-base.vmdk.partial` and renamed after it checks out (`ubuntu-base.vmdk.complete`); an existing VMX is kept (refused if its display name, disk or seed path differ). Re-running a prepared base does nothing; `--recreate` rebuilds it from the cloud image and needs the base powered off. A base made by an older version has no markers and is refused; touch both markers only if that base is known to work.
+`prepare-base.sh` → `create-base-template.sh` (VMX + disk) → `register-base.sh` (register) → first boot → confirmed power-off → marker `base/ubuntu-base.prepared`. The disk is converted to `ubuntu-base.vmdk.partial` and renamed after it checks out (`ubuntu-base.vmdk.complete`); an existing VMX is kept (refused if its display name, disk or seed path differ). Re-running a prepared base does nothing; `--recreate` rebuilds it from the cloud image and needs the base powered off. A base made by an older version has no markers and is refused; touch both markers only if that base is known to work. Clones made before a `--recreate` stay until `terraform-vm.sh on`, which then refuses until `on --allow-destroy` rebuilds them from the new base (Terraform `terraform_data.base_identity` holds the base id, path and a hash of the prepared marker).
 
 ```bash
 bash register-base.sh

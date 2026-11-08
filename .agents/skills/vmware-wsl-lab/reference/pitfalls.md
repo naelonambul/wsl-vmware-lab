@@ -58,6 +58,8 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 | WSL cannot SSH to guest mgmt IP | host-only range not reachable from mirrored WSL | inventory falls back to `guest-proxy.sh` + `tcp-relay.ps1` (no listening port created) |
 | App/replica connects to an old subnet | stale separate copy of the deployment env file | keep one private env file (symlink copies to it); check addresses and inventory before deploy |
 | `base` boot "done" after 45 s (older checkouts) | fixed sleep in `prepare-base.sh` | `prepare-base.sh` now waits (up to 10 min) for the guestinfo user report from first-boot cloud-init before shutting the base down |
+| `N registered VMs are named "<base>"` | another VM (a copy, an old base, a clone) has the base display name; the provider would clone the first match | rename or remove the others in Workstation's library (`bash api-status.sh`); nothing was changed |
+| `on` refuses: "The base VM changed" | base rebuilt (`prepare-base.sh --recreate`) or re-registered at another id/path | `on --allow-destroy` rebuilds the clones from the new base (contents lost), after the user confirms |
 | `ubuntu-base.vmdk exists without ubuntu-base.vmdk.complete` | interrupted conversion, or a base made by an older version | rebuild with `prepare-base.sh --recreate` (base off); for a known-good older base, touch the two markers the message names |
 
 ## WSL SSH access
