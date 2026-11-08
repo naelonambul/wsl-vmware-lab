@@ -59,10 +59,7 @@ Do not run Terraform until preflight exits 0.
 **Something failed** (timeout, 404, 409, HTTP 000, host key changed, Ansible become timeout, NIC error)
 → Read [reference/pitfalls.md](reference/pitfalls.md) and match the symptom before retrying.
 
-**Need the original step-by-step explanation of one layer**
-- WSL2 SSH on Windows port 22, scheduled tasks, `.wslconfig` → [reference/blog-1-ssh-forwarding.md](reference/blog-1-ssh-forwarding.md)
-- Tools install, vmrest, base VM image and API registration → [reference/blog-2-tools-base-vm.md](reference/blog-2-tools-base-vm.md)
-- Terraform clone, Ansible nginx, destroy/cleanup → [reference/blog-3-terraform-ansible.md](reference/blog-3-terraform-ansible.md)
+**Need the background of one layer** → the Korean blog series linked at the top of the repository README (parts 0-3). The repository has changed since; when they differ, the scripts and these references win.
 
 ## 2. Architecture (both paths)
 
