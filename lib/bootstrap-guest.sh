@@ -33,15 +33,6 @@ printf 'wsl-vmware-lab-%s %s\n' "$VM_ID" "$(cut -d' ' -f1,2 "$keydir/key.pub")" 
 mv -f -- "$known_hosts.tmp" "$known_hosts"
 echo "[OK] Pinned a new SSH host key for ${VM_NAME:-$LAB_CLONE_NAME}"
 printf 'instance-id: %s\nlocal-hostname: %s\n' "$VM_ID" "${VM_NAME:-$LAB_CLONE_NAME}" > "$seed_dir/meta-data"
-cat > "$seed_dir/network-config" <<'CFG'
-version: 2
-ethernets:
-  demo_interfaces:
-    match:
-      name: "en*"
-    dhcp4: true
-    dhcp-identifier: mac
-CFG
 # LAN NIC (vms.tfvars lan / lan_ip). cloud-init renames a NIC on first boot
 # only when it is matched by MAC, so the NIC gets a static MAC from VMware's
 # static range (00:50:56:00-3f:xx:xx), derived from this PC and VM id: unique
@@ -51,6 +42,19 @@ CFG
 lan="${VM_LAN:-none}"
 h=$(printf '%s %s' "$(hostname)" "$VM_ID" | sha256sum | cut -c1-6)
 lan_mac=$(printf '00:50:56:%02x:%s:%s' $((16#${h:0:2} % 64)) "${h:2:2}" "${h:4:2}")
+# The NAT and management NICs (e1000) get DHCP. With a LAN NIC, match them by
+# driver instead of name: on first boot the vmxnet3 LAN NIC is still en* until
+# it is renamed lan0, and would otherwise take a DHCP lease and default route.
+if [[ "$lan" == none ]]; then nic_match='name: "en*"'; else nic_match='driver: e1000'; fi
+cat > "$seed_dir/network-config" <<CFG
+version: 2
+ethernets:
+  demo_interfaces:
+    match:
+      $nic_match
+    dhcp4: true
+    dhcp-identifier: mac
+CFG
 case "$lan" in
   none) ;;
   dhcp)
