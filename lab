@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # The lab's single entry point (WSL). One lab command at a time per checkout.
 #
+#   ./lab account [--lock]         vmrest API account + secrets file (once; --lock: permissions only)
 #   ./lab setup [--recreate]       WSL tools, Ubuntu image, cloud-init seed, base VM (once)
 #   ./lab status [--start-vmrest | --plan [on|off]]   checks; --plan: what up/down would change
 #   ./lab up [--allow-destroy]     create new VMs from vms.tfvars and power all on
@@ -13,7 +14,7 @@ here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cmd="${1:-}"
 [[ $# -gt 0 ]] && shift
 
-usage() { sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 # Two lab commands on the same checkout (two terminals, an agent and a person)
 # would race on the Terraform state, the base and the inventory.
@@ -39,6 +40,9 @@ case "$cmd" in
       sudo bash "$here/lib/wsl-tools.sh"
     fi
     exec bash "$here/lib/base.sh" "$@" ;;
+  account)
+    [[ $# -eq 0 || "$*" == --lock ]] || usage
+    exec bash "$here/lib/account.sh" "$@" ;;
   status)
     case "${1:-}" in
       --plan) shift; exec bash "$here/lib/diagnose.sh" "$@" ;;   # read-only Terraform plan

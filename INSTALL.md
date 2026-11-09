@@ -7,7 +7,7 @@ You are an AI coding agent (Claude Code or OpenAI Codex) installing the `vmware-
 ## Rules
 
 - Ask before every step that changes the machine: cloning, copying the skill, overwriting an existing skill, installing packages. Show the exact path first.
-- Never ask for, read, print or write the vmrest password. The user writes `%USERPROFILE%\.env` themselves (see the README).
+- Never ask for, read, print or write the vmrest password. The user creates it with `./lab account` in their own terminal (see the README).
 - Do not install VMware Workstation, WSL, Terraform or Ansible as part of this file. If preflight reports them missing, stop and offer the skill's new-PC path (`reference/install-new-pc.md`) instead.
 - Host name, Windows user, WSL user, distro and folders differ on every PC. Discover them; never copy values from examples.
 
@@ -77,7 +77,7 @@ A replaced skill is kept as `vmware-wsl-lab.bak.<time>`; tell the user, and dele
 ```
 
 - `exit=0`: vmrest answers and the stored account is accepted. The API side is ready; preflight does not test SSH from another PC, the base VM or a clone lifecycle (the skill's verification checklist does).
-- Anything else: read the `[ERROR]`/`[WARN]` lines and use the failure table in the skill's `SKILL.md` section 0. Typical first-time results: the vmrest account file `%USERPROFILE%\.env` does not exist yet (the user creates it; README section "vmrest 계정"), vmrest is not running, or tools are missing (new-PC path). Ask before fixing anything.
+- Anything else: read the `[ERROR]`/`[WARN]` lines and use the failure table in the skill's `SKILL.md` section 0. Typical first-time results: the vmrest account file `%USERPROFILE%\.env` does not exist yet (the user runs `./lab account`; README 설치 2단계), vmrest is not running, or tools are missing (new-PC path). Ask before fixing anything.
 
 Installing the skill is done even when preflight fails; report both results separately.
 
