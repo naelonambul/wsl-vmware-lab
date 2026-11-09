@@ -1,121 +1,168 @@
 # wsl-vmware-lab
 
-Windows PC 한 대에서 **Terraform + Ansible로 시스템을 구성하고 시험하는** 실습 기반입니다. WSL2 Ubuntu의 Terraform이 **VMware Workstation**에 VM을 1대 또는 여러 대 만들고, Ansible이 그 VM들에 **여러분의 플레이북**을 실행합니다. 들어 있는 Ubuntu VM 1대 + nginx는 예제이자 동작 확인용입니다.
+**English** · [한국어](README.ko.md)
+
+A lab base for **building, testing, and deploying systems with Terraform + Ansible** on a single Windows PC. Terraform in WSL2 Ubuntu creates one or more VMs in **VMware Workstation** through the `elsudano/vmworkstation` provider and the `vmrest` REST API, and Ansible runs **your playbooks** against those VMs over SSH. The default single Ubuntu VM + nginx setup (`ubuntu24-demo` and `ansible/configure-guest.yml`) is only an example and smoke test.
 
 ```
-다른 PC --SSH:22--> Windows (mirrored) --> WSL2 Ubuntu
-WSL Terraform --> vmrest http://127.0.0.1:8697/api --> VMware Workstation --> 실습 VM
-WSL Ansible --SSH--> 실습 VM
+other PC --SSH:22--> Windows (mirrored) --> WSL2 Ubuntu sshd
+WSL Terraform --> vmrest http://127.0.0.1:8697/api --> VMware Workstation --> lab VMs
+WSL Ansible --SSH--> lab VMs (VMnet1 host-only mgmt; VMnet8 NAT)
 ```
 
-배경 설명은 블로그 연재에 있습니다(그 뒤로 저장소가 바뀌었으니, 다르면 이 README가 기준입니다): [0편](https://naelonambul.tistory.com/210) · [1편](https://naelonambul.tistory.com/207) · [2편](https://naelonambul.tistory.com/208) · [3편](https://naelonambul.tistory.com/209)
+Background posts (the repository has evolved since publication; where they differ, **this README wins**):
+- English complete guide: [Complete Guide](https://naelonambul.tistory.com/212)
+- Korean series: [Part 0 — WSL](https://naelonambul.tistory.com/210) · [Part 1 — VMware + vmrest account](https://naelonambul.tistory.com/211) · [Part 2 — SSH + boot tasks (`setup.ps1`)](https://naelonambul.tistory.com/207) · [Part 3 — Base VM (`./lab setup`)](https://naelonambul.tistory.com/208) · [Part 4 — Terraform/Ansible (`./lab`)](https://naelonambul.tistory.com/209)
 
-## 준비물
+## Requirements
 
-- Windows 11, WSL2 Ubuntu 24.04, **미러드 네트워크**(`%USERPROFILE%\.wslconfig`의 `[wsl2]`에 `networkingMode=mirrored`)
-- **VMware Workstation Pro는 사람이 직접 설치합니다.** 공식 설치 파일은 Broadcom 계정으로만 받을 수 있어 자동화하지 않습니다. API 계정(Windows·Ubuntu 로그인과 별개)은 설치 2단계의 `./lab account`로 만듭니다.
-- 게스트는 **Ubuntu 클라우드 이미지(24.04)만** 지원합니다. 게스트가 VMware guestinfo로 사용자 이름과 SSH 호스트 키를 알려 주는데, 여기에 이미지 안의 `open-vm-tools`가 필요합니다.
-- 저장소는 Windows 드라이브(예: `C:\wsl-vmware-lab`, WSL에서 `/mnt/c/...`)에 둡니다. 베이스 VM 파일이 저장소 안에 만들어집니다.
+- **Windows 11** with **WSL2 Ubuntu 24.04** (`Ubuntu-24.04`) and **mirrored networking** (`networkingMode=mirrored` under `[wsl2]` in `%USERPROFILE%\.wslconfig`).
+- **VMware Workstation Pro installed manually.** The official installer requires a Broadcom account and is not automated. Its API account (separate from Windows and Ubuntu logins) is created in step 2 with `./lab account`.
+- **Ubuntu 24.04 cloud image only** (`noble-server-cloudimg-amd64.ova`). On every boot, each guest reports its default username (`wsl-vmware-lab.guest_user`) and SSH host key (`wsl-vmware-lab.host_key`) to the host through VMware `guestinfo` (`vmware-rpctool`), which requires `open-vm-tools` preinstalled in the cloud image.
+- **Repository on a Windows drive** (for example `C:\wsl-vmware-lab`, `/mnt/c/wsl-vmware-lab` in WSL). The base VM files (`base/ubuntu-base.vmx` and `base/ubuntu-base.vmdk`) are built inside the repository, so VMware Workstation must be able to open them from a Windows path.
 
-## 설치
+## Installation
 
-1. **저장소 받기 (WSL):** Windows 드라이브에 받습니다.
+1. **Clone the repository on a Windows drive (in WSL):**
    ```bash
    cd /mnt/c && git clone https://github.com/naelonambul/wsl-vmware-lab.git && cd wsl-vmware-lab
    ```
-2. **vmrest 계정 (WSL, 사람이 직접 입력):**
+
+2. **Create the `vmrest` API account (in WSL, interactive terminal):**
    ```bash
-   ./lab account          # vmrest.exe -C 실행 → 같은 비밀번호를 한 번 더 받아 %USERPROFILE%\.env 작성·잠금
-   ./lab account --lock   # (.env 권한만 다시 잠그기)
+   ./lab account          # runs vmrest.exe -C, writes %USERPROFILE%\.env, locks ACLs
+   ./lab account --lock   # only re-locks %USERPROFILE%\.env permissions
    ```
-   - 공식 `vmrest.exe -C` 프롬프트에서 아이디와 비밀번호를 정합니다. 그 비밀번호를 한 번 더 입력하면 Windows 사용자 폴더의 `.env`에 `VMWS_USERNAME`·`VMWS_PASSWORD` 줄을 쓰고(다른 줄은 그대로), 본인·SYSTEM·Administrators만 열 수 있게 잠급니다.
-   - 2단계의 부팅 작업이 있으면 vmrest를 다시 시작해 인증(HTTP 200)까지 확인합니다. 처음 설치라 작업이 아직 없으면 확인은 `./lab status`가 합니다.
-   - 터미널에서만 동작합니다. 에이전트는 비밀번호를 대신 입력하지 않습니다.
-3. **Windows 쪽 (관리자 PowerShell, 저장소의 `windows` 폴더에서, 한 번):**
+   - Runs official `vmrest.exe -C` (backing up an existing `%USERPROFILE%\vmrest.cfg` first) so you can choose the API username and password.
+   - Reads `username=` from `vmrest.cfg`, prompts for the same password once more, and writes `VMWS_USERNAME` and `VMWS_PASSWORD` to `%USERPROFILE%\.env` (`LAB_SECRETS_FILE`) while preserving any other lines in that file.
+   - Locks `%USERPROFILE%\.env` NTFS permissions (inheritance disabled) so only your Windows account, `SYSTEM`, and `Administrators` can read it.
+   - If the `VMware vmrest API` scheduled task already exists, restarts `vmrest` and checks that an authenticated `GET /vms` returns HTTP `200`. On a first install before step 3, `./lab status` performs that check in step 4.
+   - Must be run in an interactive terminal by a person. AI agents never ask for, read, or type the password.
+
+3. **Configure Windows boot tasks, firewall, and power (elevated PowerShell in `windows\`):**
    ```powershell
-   .\setup.ps1 Install -AllowedRemoteAddress 192.168.1.0/24   # 허용 대역은 자신의 LAN으로
-   .\setup.ps1 Status                                          # 읽기만 함
-   .\setup.ps1 Remove                                          # 작업과 방화벽 규칙 제거 (전원 설정은 그대로)
+   .\setup.ps1 Install -AllowedRemoteAddress 192.168.1.0/24   # replace with your LAN subnet
+   .\setup.ps1 Status                                          # read-only check (no elevation needed)
+   .\setup.ps1 Remove                                          # removes tasks and firewall rules (keeps power settings)
    ```
-   - 부팅 작업 2개를 만듭니다: `WSL2 SSH Service Start`(WSL 안의 sshd, WSL도 계속 켜 둠)와 `VMware vmrest API`(127.0.0.1:8697). 둘 다 **로그온 없이 부팅 때**(S4U) 시작하고, 끝나면 다시 시작합니다. `wsl.exe`, `vmrest.exe`를 직접 실행하므로 저장소를 옮겨도 됩니다.
-   - TCP 22를 `-AllowedRemoteAddress`에서만 허용합니다(Windows 방화벽 + Hyper-V 방화벽).
-   - 전원 연결 시 절전·최대 절전을 끄고 덮개를 닫아도 아무것도 하지 않게 합니다(`-IncludeBattery`: 배터리도, `-SkipPower`: 건드리지 않음). 절전하면 SSH·vmrest·VM이 모두 멈춥니다.
-   - 22번과 8697번이 실제로 열린 뒤에만 준비 완료를 출력합니다. 예전 버전이 만든 작업과 `%ProgramFiles%\wsl-vmware-lab` 사본은 지웁니다.
-4. **WSL 쪽:**
+   Options for `windows\setup.ps1`:
+   - `-Action`: `Install`, `Status` (default), or `Remove`
+   - `-AllowedRemoteAddress <subnet>`: required for `Install`; source range allowed on TCP 22 (for example `192.168.1.0/24`)
+   - `-Distro <name>`: WSL distribution name (default `Ubuntu-24.04`)
+   - `-VmrestPath <path>`: path to `vmrest.exe` (default `$env:ProgramFiles\VMware\VMware Workstation\vmrest.exe`)
+   - `-IncludeBattery`: also disable sleep, hibernation, and lid-close action on battery power
+   - `-SkipPower`: leave Windows power settings unchanged
+
+   What `Install` does:
+   - Verifies WSL mirrored networking in `%USERPROFILE%\.wslconfig`, checks that `vmrest.exe` exists, and ensures Windows OpenSSH Server is not holding port 22.
+   - Registers two scheduled tasks that run at boot (`AtStartup`, S4U logon without requiring a Windows sign-in, `RestartCount 5` every 1 minute, no execution time limit):
+     - `WSL2 SSH Service Start` (at boot and at logon): runs `wsl.exe -d <Distro> -u root` to stop `ssh.socket`/`ssh.service` and run `/usr/sbin/sshd -D -e` in the foreground, keeping WSL running.
+     - `VMware vmrest API` (at boot): runs `vmrest.exe` listening on `127.0.0.1:8697`.
+     - Both tasks execute system binaries (`wsl.exe` and `vmrest.exe`) directly, so moving the repository does not break them.
+   - Allows inbound TCP 22 from `-AllowedRemoteAddress` in Windows Firewall (`WSL2 SSH 22`) and Hyper-V Firewall for WSL (`WSL-SSH-Inbound-TCP22-LAN`).
+   - Sets AC power (`-IncludeBattery` for DC as well) to never sleep, never hibernate, and do nothing when closing the lid, unless `-SkipPower` is passed.
+   - Removes legacy tasks and old files under `%ProgramFiles%\wsl-vmware-lab`, starts both tasks, and waits until port `22` in WSL and `127.0.0.1:8697` on Windows are actively listening before reporting ready.
+
+4. **Prepare the base VM and check the host (in WSL):**
    ```bash
-   ./lab setup     # 1회: 도구(없으면 sudo로 설치), 공식 이미지 받기·서명 확인, 베이스 VM 준비
-   ./lab status    # 점검 (아무것도 바꾸지 않음)
+   ./lab setup     # once: installs missing WSL tools via sudo, verifies Ubuntu image, builds base VM
+   ./lab status    # read-only check of environment, vmrest, Windows tasks/power, and VMs
    ```
+   - If `terraform`, `ansible-playbook`, `qemu-img`, `cloud-localds`, `gpgv` or the `ubuntu-cloudimage-keyring` is missing, `./lab setup` first runs `sudo bash lib/wsl-tools.sh` (asks for your WSL password). It then downloads `noble-server-cloudimg-amd64.ova` and verifies its GPG-signed `SHA256SUMS`, converts the image to `base/ubuntu-base.vmdk`, creates `~/.config/wsl-vmware-lab/lab_ed25519` and `cloud-init/seed.iso`, writes and registers `base/ubuntu-base.vmx` (`ubuntu24-base`), boots it once until `cloud-init` reports the default user over `guestinfo`, powers it off cleanly, and writes `base/ubuntu-base.prepared`.
+   - `./lab status` checks the host configuration, `vmrest` loopback listener and credentials, Windows scheduled tasks and power settings, and the power state of any lab VMs without modifying anything.
 
-AI 에이전트(Claude Code, Codex)에게 맡기려면 "https://github.com/naelonambul/wsl-vmware-lab/blob/main/INSTALL.md 를 읽고 설치해 줘"라고 말하면 됩니다. 저장소의 스킬(`.claude/skills/vmware-wsl-lab`, Codex용 사본 `.agents/skills/vmware-wsl-lab`)을 설치하고 `./lab status`로 점검합니다. vmrest 비밀번호는 묻지도 읽지도 않습니다.
+### Installing with an AI Agent
 
-## 사용: `./lab`
+To have Claude Code or OpenAI Codex set up or inspect the repository, tell the agent:
+
+> Read https://github.com/naelonambul/wsl-vmware-lab/blob/main/INSTALL.md and install it.
+
+Following [`INSTALL.md`](INSTALL.md), the agent finds or clones the repository on a Windows drive, installs the `vmware-wsl-lab` skill from `.claude/skills/vmware-wsl-lab` (or the identical Codex copy in `.agents/skills/vmware-wsl-lab`), and runs `./lab status`. The agent never asks for, reads, prints, or types the `vmrest` password.
+
+## `./lab` Command Reference
 
 ```bash
-./lab account [--lock]            # vmrest 계정 + .env (사람이 입력) / 권한만 잠그기
-./lab status [--start-vmrest]     # 점검: 도구, vmrest(루프백·인증), Windows 작업·전원, VM 전원
-./lab status --plan [on|off]      # up/down이 바꿀 내용을 미리 보기 (읽기 전용)
-./lab up [--allow-destroy]        # vms.tfvars의 VM 만들기(새 VM은 꺼서 준비한 뒤 켬) + 모두 켜기
-./lab configure [PLAYBOOK] [옵션] # Ansible 실행. 기본은 nginx 예제, 옵션은 ansible-playbook에 그대로
-./lab down                        # 전원만 끔
-./lab destroy                     # 이 체크아웃의 VM 모두 삭제 + 관련 파일 정리
-./lab cleanup                     # 중간에 끊긴 정리 이어서 하기
-./lab setup --recreate            # 베이스를 새로 만들기 (베이스가 꺼져 있어야 함)
+./lab account [--lock]         # vmrest API account + secrets file (once; --lock: permissions only)
+./lab setup [--recreate]       # WSL tools, Ubuntu image, cloud-init seed, base VM (once)
+./lab status [--start-vmrest | --plan [on|off]]   # checks; --plan: what up/down would change
+./lab up [--allow-destroy]     # create new VMs from vms.tfvars and power all on
+./lab down                     # power the existing VMs off
+./lab configure [PLAYBOOK] [ansible-playbook options]
+./lab destroy [-auto-approve]  # delete every VM of this checkout
+./lab cleanup                  # retry cleanup left by an interrupted delete
 ```
 
-같은 체크아웃에서 `lab` 명령은 한 번에 하나만 실행됩니다(두 번째는 바로 멈춤).
+Only one `lab` command runs at a time per checkout (`flock` on `.lab.lock`); a second concurrent command exits immediately.
 
-### 내 시스템 올리기
+### Building Your Own System
 
 ```bash
-cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, 메모리, Ansible 그룹 (git에 올라가지 않음)
+cp vms.tfvars.example vms.tfvars           # define VM names, CPUs, memory_mb, and Ansible groups (gitignored)
 ./lab up
-./lab configure ansible/check-lab.yml      # 모든 VM 접속·cloud-init·sudo 확인
-./lab configure ~/my-system/site.yml       # 내 플레이북 (다른 폴더에 둬도 됨)
+./lab configure ansible/check-lab.yml      # verify SSH, cloud-init, passwordless sudo, and OS facts on all VMs
+./lab configure ~/my-system/site.yml       # run your own playbook (can live outside this repository)
 ```
 
-- `vms.tfvars`의 키가 VM 이름입니다(Windows 폴더, 게스트 hostname, Ansible 호스트 이름). `groups`가 Ansible 그룹이 되고, 모든 VM은 `lab` 그룹에도 들어갑니다.
-- 목록에 항목을 더하고 `up`하면 새 VM만 만들고, 켜져 있는 VM은 그대로 둡니다.
+- Each key in `vms = { ... }` in `vms.tfvars` is the VM name (`^[a-z0-9][a-z0-9-]{0,62}$`, lowercase letters, digits, and `-`, and not equal to `LAB_BASE_NAME`). It becomes the Windows folder and VMX path (`<LAB_VM_ROOT_WIN>\<name>\<name>.vmx`), the guest hostname, and the Ansible host name.
+- Omitted fields default to `processors = 2`, `memory_mb = 2048`, and `groups = ["demo"]`.
+- Group names in `groups` must match `^[a-z_][a-z0-9_]*$`. Every VM is placed in its listed `groups` and is always added to the `lab` group (`ansible/check-lab.yml` runs on `lab`; the default `ansible/configure-guest.yml` runs on `demo`).
+- Adding an entry to `vms.tfvars` and running `./lab up` creates and bootstraps only the new VM (created powered off, bootstrapped, then powered on) while already-running VMs stay on.
 
-## 지켜 주는 것
+## Safety Guarantees
 
-- **지우기 전에 멈춤:** `up`은 VM을 삭제·교체해야 하면 이름을 보여 주고 멈춥니다. 정말 지울 때만 `--allow-destroy`를 붙입니다. `vms.tfvars`가 없어지거나 오타가 나도 기존 VM이 지워지지 않습니다. `down`은 전원 변경 말고 다른 변경이 있으면 거부합니다.
-- **베이스 확인:** `up`/`down` 전에 베이스 이름(`LAB_BASE_NAME`)을 가진 VM이 정확히 하나이고 `base/ubuntu-base.vmx`인지 봅니다. 베이스를 다시 만들면(`setup --recreate`) 다음 `up`이 "베이스가 바뀌었다"며 멈추고, `up --allow-destroy`로 클론을 새 베이스에서 다시 만듭니다(클론 안의 내용은 사라짐).
-- **엉뚱한 VM 막기:** 관리망(VMnet1)의 현재 DHCP 임대만 쓰고, 게스트가 guestinfo로 알려 준 SSH 호스트 키로만 접속합니다. 그 IP에 다른 VM이 있으면 접속하지 않습니다.
-- **정리:** 지울 VM을 `terraform/cleanup-pending.json`에 적어 두고, 정리가 끝난 것만 뺍니다. 중간에 끊기면 다음 `up`·`destroy`·`cleanup`이 이어서 합니다.
-- **vmrest:** 루프백(127.0.0.1)에서만 리슨하고, 인증 없이는 거부해야 `status`가 통과합니다.
+- **Refuses unintended VM deletion:** `./lab up` inspects `terraform plan -json` before applying. If any VM would be deleted or replaced, it prints the VM names and exits unless `--allow-destroy` is passed. A missing or mistyped `vms.tfvars` will not delete existing VMs. `./lab down` targets only VMs already in the state and refuses any plan that does more than change power state.
+- **Base VM verification:** Before `up` or `down`, `lib/check-base.py` confirms that exactly one registered VM in `vmrest` has `displayName` equal to `LAB_BASE_NAME` and points to `base/ubuntu-base.vmx`. It passes both the VM ID and the SHA-256 hash of `base/ubuntu-base.prepared` (`terraform_data.base_identity`) to Terraform. Rebuilding the base (`./lab setup --recreate`) marks clones for replacement, and `./lab up` stops until you confirm with `./lab up --allow-destroy` (replacing clones erases their disks).
+- **Current DHCP lease + pinned `guestinfo` host key:** `lib/guest-inventory.py` matches each VM's management NIC MAC (`ethernet1.generatedAddress`) against only active, non-expired leases on `LAB_MGMT_VNET` in `vmnetdhcp.leases` (using the last entry per IP). It reads the default username and `ssh-ed25519` host key reported by that specific VM via `vmrun.exe readVariable ... guestVar` and writes a per-VM `known_hosts-<id>` enforced with `StrictHostKeyChecking=yes` and `HostKeyAlias`. Ansible will never connect to a different VM that reused an IP.
+- **Replayable cleanup journal:** Before Terraform deletes or replaces VMs, `lib/cleanup-guest.py` records them in `terraform/cleanup-pending.json`. After a VM leaves the state (and its `.vmx` and `.vmdk` are gone), cleanup removes `cloud-init-<id>.iso`, leftover `.vmxf`, `known_hosts-<id>`, `seed-<id>/`, and the empty clone directory. Entries remain in the journal until cleanup succeeds and are retried automatically by the next `up`, `destroy`, or `./lab cleanup`.
+- **`vmrest` on loopback with authentication:** `./lab status` requires `VMWS_ENDPOINT` to target loopback (`127.0.0.1`, `localhost`, or `[::1]`), checks that Windows port `8697` listens on loopback only, verifies that unauthenticated `GET /vms` returns HTTP `401`, and confirms that authenticated `GET /vms` returns HTTP `200`.
 
-## 설정: `lab.env` (선택)
+## Configuration: `lab.env` (Optional)
 
-기본값을 바꿀 때만 `cp lab.env.example lab.env`로 만듭니다(비밀번호는 넣지 않습니다). 주요 항목:
+Copy `lab.env.example` to `lab.env` only when overriding defaults (`cp lab.env.example lab.env`; never store passwords in `lab.env`).
 
-| 항목 | 기본값 | 변수 |
+| Variable | Default | Purpose |
 |---|---|---|
-| VM 목록 | `vms.tfvars`, 없으면 아래 이름으로 1대 | `LAB_VMS_FILE` |
-| 베이스 / 클론 이름 | `ubuntu24-base` / `ubuntu24-demo` | `LAB_BASE_NAME` / `LAB_CLONE_NAME` |
-| 클론 VM 폴더 | Workstation의 기본 VM 위치(기본 `%USERPROFILE%\Documents\Virtual Machines`). vmrest가 이 위치에 클론을 만들므로 같아야 함 | `LAB_VM_ROOT_WIN` |
-| 개인 파일(SSH 키, inventory, known_hosts) | `~/.config/wsl-vmware-lab/` | `LAB_PRIVATE_DIR` |
-| 네트워크 | NAT `VMnet8`, 관리용 host-only `VMnet1` | `LAB_NAT_VNET` / `LAB_MGMT_VNET` |
-| 게스트 준비 대기 | 300초 | `LAB_GUEST_WAIT_SECONDS` |
+| `LAB_ENV_FILE` | `<repo>/lab.env` | Path to the optional settings file (set it in the environment, not inside `lab.env`) |
+| `LAB_SECRETS_FILE` | `%USERPROFILE%\.env` | Secrets file holding `VMWS_USERNAME` (or `VMWS_USER`) and `VMWS_PASSWORD` |
+| `VMWS_ENDPOINT` | `http://127.0.0.1:8697/api` | Loopback `vmrest` API URL |
+| `LAB_PRIVATE_DIR` | `$HOME/.config/wsl-vmware-lab` | WSL directory for SSH keys, `inventory.json`, `known_hosts-<id>`, and `seed-<id>/` |
+| `LAB_SSH_KEY` | `$LAB_PRIVATE_DIR/lab_ed25519` | Ed25519 SSH private key injected into guests |
+| `LAB_INVENTORY` | `$LAB_PRIVATE_DIR/inventory.json` | Generated Ansible inventory file |
+| `VMWARE_DIR` | `/mnt/c/Program Files/VMware/VMware Workstation` | VMware Workstation directory (`vmrun.exe`, `vmrest.exe`) |
+| `LAB_DHCP_LEASES` | `/mnt/c/ProgramData/VMware/vmnetdhcp.leases` | VMware DHCP leases file |
+| `LAB_DHCP_CONF` | `/mnt/c/ProgramData/VMware/vmnetdhcp.conf` | VMware DHCP configuration file |
+| `LAB_NAT_VNET` | `VMnet8` | NAT virtual network (`ethernet0`) |
+| `LAB_MGMT_VNET` | `VMnet1` | Host-only management virtual network (`ethernet1`) |
+| `LAB_BASE_NAME` | `ubuntu24-base` | Display name of the base VM |
+| `LAB_BASE_DIR` | `<repo>/base` | Directory holding `ubuntu-base.vmx`, `ubuntu-base.vmdk`, and `ubuntu-base.prepared` |
+| `LAB_UBUNTU_IMAGE_URL` | `https://cloud-images.ubuntu.com/noble/current` | Download base URL for `noble-server-cloudimg-amd64.ova` and `SHA256SUMS` |
+| `LAB_VM_ROOT_WIN` | `%USERPROFILE%\Documents\Virtual Machines` | Windows directory for clones (`<root>\<name>\<name>.vmx`); must match Workstation's default VM location |
+| `LAB_VMS_FILE` | `<repo>/vms.tfvars` | Multi-VM definition file; if absent (and not set explicitly), falls back to the single demo VM below |
+| `LAB_CLONE_NAME` | `ubuntu24-demo` | Single fallback VM name when `vms.tfvars` is absent |
+| `LAB_CLONE_CPUS` | `2` | vCPUs for the single fallback VM |
+| `LAB_CLONE_MEMORY_MB` | `2048` | Memory (MB) for the single fallback VM |
+| `LAB_PLAYBOOK` | `<repo>/ansible/configure-guest.yml` | Default playbook run by `./lab configure` when none is specified |
+| `LAB_GUEST_WAIT_SECONDS` | `300` | Maximum seconds `./lab configure` waits for all VMs to report IP, user, and host key |
 
-나머지 항목은 `lab.env.example`에 있습니다.
+## Repository Layout
 
-## 폴더
-
-| 경로 | 내용 |
+| Path | Contents |
 |---|---|
-| `lab` | 유일한 진입점 |
-| `lib/` | `lab`이 부르는 내부 스크립트(베이스 준비, 수명주기, 점검, 인벤토리, 정리) |
-| `windows/` | `setup.ps1`(관리자 PowerShell), `tcp-relay.ps1`(게스트 SSH 중계) |
-| `terraform/`, `ansible/` | provider `elsudano/vmworkstation` 2.0.1 고정 / 예제·점검 플레이북 |
-| `.claude/skills/vmware-wsl-lab/` | 에이전트용 스킬(원본). `.agents/`는 `tools/sync-agent-skills.sh`로 복사한 Codex용 사본 |
+| `lab` | Single CLI entry point in WSL |
+| `lib/` | Internal scripts called by `lab` (`config.sh`, `account.sh`, `wsl-tools.sh`, `base.sh`, `cloud-config.sh`, `register-vm.py`, `check-base.py`, `preflight.sh`, `diagnose.sh`, `lifecycle.sh`, `bootstrap-guest.sh`, `cleanup-guest.py`, `configure.sh`, `guest-inventory.py`, `guest-proxy.sh`) |
+| `windows/` | `setup.ps1` (elevated PowerShell setup/status/remove) and `tcp-relay.ps1` (stdio TCP relay used when direct WSL-to-guest SSH needs a Windows hop) |
+| `terraform/` | Terraform configuration pinning `elsudano/vmworkstation` `2.0.1` (`main.tf`, `variables.tf`) |
+| `ansible/` | Default nginx smoke-test playbook (`configure-guest.yml`) and all-VM readiness check (`check-lab.yml`) |
+| `lab.env.example`, `vms.tfvars.example` | Templates for `lab.env` and `vms.tfvars` |
+| `INSTALL.md` | Agent installation instructions for Claude Code and Codex |
+| `.claude/skills/vmware-wsl-lab/` | Canonical `vmware-wsl-lab` agent skill (`SKILL.md`, `reference/`). `.agents/skills/vmware-wsl-lab/` is the Codex copy synced by `tools/sync-agent-skills.sh` |
 
-## 주의
+## Notes
 
-- **검증 범위:** 한 노트북(VMware 기설치, 미러드 네트워크, Windows 방화벽의 Private·Public 프로필 꺼짐)에서 설치부터 베이스, 복제, Ansible 2회(두 번째 `changed=0`), 정리, 재부팅 후 로그온 전 SSH·vmrest까지 확인했습니다(2026-11-09, `setup.ps1` 포함). VMware가 없는 새 PC와 방화벽이 켜진 PC는 아직 확인하지 않았습니다.
-- **올리면 안 되는 파일:** `lab.env`, `.env`, SSH 개인키, `*.tfstate`, `inventory.json`, VM 디스크·ISO는 `.gitignore`에 있습니다.
-- **비공식 provider:** `elsudano/vmworkstation`은 커뮤니티 provider입니다. 이름이 같은 VM이 있으면 첫 번째를 고르고, 베이스가 바뀌어도 스스로 클론을 다시 만들지 않습니다. 이 저장소가 그 둘을 대신 확인합니다. 버전을 올리기 전에 스키마를 확인하세요.
-- **문제가 생기면:** [`pitfalls.md`](.claude/skills/vmware-wsl-lab/reference/pitfalls.md)에서 증상을 찾으세요.
+- **Verified scope:** Verified on one laptop on 2026-11-09 (VMware Workstation Pro already installed, WSL2 mirrored networking, Windows Firewall Private and Public profiles off): `windows\setup.ps1 Install`, `./lab setup` through the base VM, a clone with `./lab up`, `./lab configure` twice (second run `changed=0`), `./lab configure ansible/check-lab.yml`, `./lab destroy` with file cleanup, and a reboot with WSL `sshd` and `vmrest` up before any logon. **Not yet verified:** a fresh PC without VMware Workstation installed, and a PC with Windows Firewall profiles enabled.
+- **Files never to commit:** `lab.env`, `*.env`, `vmrest.env`, `*.tfvars` (`vms.tfvars`), SSH keys (`*_ed25519*`), `inventory.json`, `known_hosts*`, `*.tfstate*`, `cleanup-pending.json`, and VM disks/images/ISOs (`base/`, `cloud-init/`, `*.ova`, `*.vmdk`, `*.vmx`, `*.iso`) are gitignored and must stay out of version control.
+- **Community Terraform provider:** `elsudano/vmworkstation` (`2.0.1`) is an unofficial provider. It looks up the base VM by `displayName` and takes the first match, and it does not replace clones on its own when the base VM is rebuilt; this repository enforces both checks (`lib/check-base.py` and `terraform_data.base_identity`). Review its schema before upgrading the provider version.
+- **Troubleshooting:** See [`.claude/skills/vmware-wsl-lab/reference/pitfalls.md`](.claude/skills/vmware-wsl-lab/reference/pitfalls.md) for known symptoms and fixes.
 
 ## License
 

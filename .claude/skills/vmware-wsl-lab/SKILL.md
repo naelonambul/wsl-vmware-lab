@@ -59,7 +59,7 @@ Do not run Terraform until preflight exits 0.
 **Something failed** (timeout, 404, 409, HTTP 000, host key changed, Ansible become timeout, NIC error)
 → Read [reference/pitfalls.md](reference/pitfalls.md) and match the symptom before retrying.
 
-**Need the background of one layer** → the Korean blog series linked at the top of the repository README (parts 0-3). The repository has changed since; when they differ, the scripts and these references win.
+**Need the background of one layer** → the blog posts linked at the top of the repository README (an English complete guide and the Korean series, parts 0-4). The repository has changed since; when they differ, the scripts and these references win.
 
 ## 2. Architecture (both paths)
 
