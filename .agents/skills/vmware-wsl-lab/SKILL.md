@@ -33,16 +33,16 @@ When preflight fails at vmrest:
 
 | Preflight output | Meaning | Next step |
 |---|---|---|
-| `HTTP 000` and `process=False` | vmrest is not running | Ask the user, then `"$repo/lab" status --start-vmrest` (starts the `VMware vmrest API` startup task; if it is absent the user runs `windows\setup.ps1 Install -AllowedRemoteAddress <LAN>` (elevated PowerShell)) |
+| `HTTP 000` and `process=False` | vmrest is not running | Ask the user, then `"$repo/lab" status --start-vmrest` (starts the `VMware vmrest API` startup task; if it is absent the user runs `windows\setup.cmd Install -AllowedRemoteAddress <LAN>` (elevated PowerShell)) |
 | `HTTP 000` but `process=True listener8697=True` | vmrest runs; WSL cannot reach it | Check `VMWS_ENDPOINT` and mirrored networking. Do not start a second vmrest |
 | `HTTP 404` | endpoint lacks `/api` | Fix `VMWS_ENDPOINT` |
 | `... .env not found` / `lacks VMWS_USERNAME` | no usable secrets file | Look for an existing copy first (another `.env`, an old `vmrest.env`; check variable **names** only). Then ask the user to run `./lab account` in their own terminal (vmrest `-C` + secrets file), or to point `LAB_SECRETS_FILE` at the existing file |
 | `secrets file also grants access to ...` warning | other accounts can read it | With the user's OK run `./lab account --lock` (your user, SYSTEM and Administrators only; also removes explicit entries that `icacls /inheritance:r` leaves) |
 | authenticated `HTTP 401` | secrets file does not match vmrest | The user corrects the file, or runs `./lab account` again (sets both and restarts vmrest). Also check vmrest runs as the same Windows user (another user has another `vmrest.cfg`) |
 | `no vmrest.cfg` warning | API account never set up for this Windows user | The user runs `./lab account` |
-| `task 'VMware vmrest API' absent` or `from an older setup` (Windows section of status) | vmrest or sshd will not come back at boot | Both must start at **boot, without logon**. Offer `windows\setup.ps1 Install -AllowedRemoteAddress <LAN>` (elevated PowerShell): boot trigger, S4U, restart on failure; it also removes older tasks |
+| `task 'VMware vmrest API' absent` or `from an older setup` (Windows section of status) | vmrest or sshd will not come back at boot | Both must start at **boot, without logon**. Offer `windows\setup.cmd Install -AllowedRemoteAddress <LAN>` (elevated PowerShell): boot trigger, S4U, restart on failure; it also removes older tasks |
 | `other enabled task(s) also start vmrest` | two launchers (for example one made by another tool) | Ask the user, then disable the other task (do not delete it) so `VMware vmrest API` is the only launcher |
-| `power on AC still allows: sleep` (or hibernate / lid) | Windows will sleep and drop SSH, vmrest and the VMs | `setup.ps1 Install` sets AC power to never sleep (with the user's OK; `-SkipPower` leaves it). Not a vmrest failure; status still exits 0 |
+| `power on AC still allows: sleep` (or hibernate / lid) | Windows will sleep and drop SSH, vmrest and the VMs | `setup.cmd Install` sets AC power to never sleep (with the user's OK; `-SkipPower` leaves it). Not a vmrest failure; status still exits 0 |
 | `power (on battery): ...` | only matters when unplugged | Tell the user; `-Action Apply -IncludeBattery` if the PC runs on battery |
 | `no interop` | WSL cannot run Windows programs | The user checks vmrest on Windows |
 
@@ -80,7 +80,7 @@ All bash scripts source `lib/config.sh`, which reads optional settings from `lab
 - Guest image: `ubuntu-24.04`, `ubuntu-22.04` or `debian-13` (Debian's checksum list is not signed; say so), per VM with `image` in `vms.tfvars`, default `LAB_IMAGE` in `lab.env`. Guests need cloud-init, an SSH server, sudo and python3, not VMware Tools. Changing a VM's image rebuilds that VM with `./lab up --allow-destroy`: ask first. For an image not in the table, stop and ask the user; do not swap images silently.
 - Guest VM user (inside the VM) is fixed: cloud-init creates `lab` (lab key, passwordless sudo) in every clone, and the clone's SSH host key is generated in WSL and pinned before its first boot (`lib/cloud-config.sh`, `lib/bootstrap-guest.sh`). The base is never booted. The WSL user is separate: the account the user SSHes into this PC as (the `User` of their SSH config entry); scripts run as it and never set it.
 - Private files live in `~/.config/wsl-vmware-lab/` (`LAB_PRIVATE_DIR`).
-- Windows side: one script, `windows/setup.ps1 Install|Status|Remove` (`-AllowedRemoteAddress <LAN>`, `-Distro`, `-VmrestPath`, `-IncludeBattery`, `-SkipPower`). Its two boot tasks run `wsl.exe` and `vmrest.exe` directly, so nothing depends on the checkout path; re-run Install only to change its parameters. Mirrored networking only.
+- Windows side: one script, `windows\setup.cmd Install|Status|Remove`, run as `windows\setup.cmd ...` (bypasses the default execution policy for that run only) (`-AllowedRemoteAddress <LAN>`, `-Distro`, `-VmrestPath`, `-IncludeBattery`, `-SkipPower`). Its two boot tasks run `wsl.exe` and `vmrest.exe` directly, so nothing depends on the checkout path; re-run Install only to change its parameters. Mirrored networking only.
 - vmrest starts at Windows boot before any logon (`VMware vmrest API`: boot trigger, S4U, no time limit, restart 5 x 1 min). A logon-only start is not acceptable.
 
 ## 4. Rules that always apply

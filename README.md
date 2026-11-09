@@ -49,12 +49,11 @@ Background posts (the repository has evolved since publication; where they diffe
 
 3. **Configure Windows boot tasks, firewall, power and the VMware bridge (elevated PowerShell in `windows\`):**
    ```powershell
-   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force   # this window only; Windows blocks scripts by default
-   .\setup.ps1 Install -AllowedRemoteAddress 192.168.1.0/24   # replace with your LAN subnet
-   .\setup.ps1 Status                                          # read-only check (no elevation needed)
-   .\setup.ps1 Remove                                          # removes tasks and firewall rules (keeps power settings)
+   .\setup.cmd Install -AllowedRemoteAddress 192.168.1.0/24   # replace with your LAN subnet
+   .\setup.cmd Status                                          # read-only check (no elevation needed)
+   .\setup.cmd Remove                                          # removes tasks and firewall rules (keeps power settings)
    ```
-   Options for `windows\setup.ps1`:
+   `setup.cmd` runs `setup.ps1` with the same arguments, bypassing PowerShell's execution policy for that run only (Windows blocks `.ps1` scripts by default); the system setting is left alone. Options for `windows\setup.ps1`:
    - `-Action`: `Install`, `Status` (default), or `Remove`
    - `-AllowedRemoteAddress <subnet>`: required for `Install`; source range allowed on TCP 22 (for example `192.168.1.0/24`)
    - `-Distro <name>`: WSL distribution name (default `Ubuntu-24.04`)

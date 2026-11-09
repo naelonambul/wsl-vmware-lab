@@ -49,12 +49,11 @@ WSL Ansible --SSH--> 실습 VM (VMnet1 host-only 관리망; VMnet8 NAT)
 
 3. **Windows 부팅 작업, 방화벽, 전원, VMware 브리지 설정 (관리자 PowerShell, `windows\` 폴더에서):**
    ```powershell
-   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force   # 이 창에서만 허용 (Windows는 기본적으로 스크립트를 막음)
-   .\setup.ps1 Install -AllowedRemoteAddress 192.168.1.0/24   # 자신의 LAN 대역으로 변경
-   .\setup.ps1 Status                                          # 읽기 전용 점검 (관리자 권한 불필요)
-   .\setup.ps1 Remove                                          # 작업과 방화벽 규칙 제거 (전원 설정은 그대로)
+   .\setup.cmd Install -AllowedRemoteAddress 192.168.1.0/24   # 자신의 LAN 대역으로 변경
+   .\setup.cmd Status                                          # 읽기 전용 점검 (관리자 권한 불필요)
+   .\setup.cmd Remove                                          # 작업과 방화벽 규칙 제거 (전원 설정은 그대로)
    ```
-   `windows\setup.ps1` 옵션:
+   `setup.cmd`는 같은 인자로 `setup.ps1`을 실행하면서 그 한 번만 PowerShell 실행 정책을 우회합니다(Windows는 기본적으로 `.ps1` 스크립트를 막음). 시스템 설정은 바꾸지 않습니다. `windows\setup.ps1` 옵션:
    - `-Action`: `Install`, `Status`(기본값), `Remove`
    - `-AllowedRemoteAddress <subnet>`: `Install`에 필수. TCP 22를 허용할 출발지 대역(예: `192.168.1.0/24`)
    - `-Distro <name>`: WSL 배포판 이름(기본값 `Ubuntu-24.04`)

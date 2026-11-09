@@ -1,10 +1,11 @@
 <#
 Windows side of the lab, for WSL mirrored networking. Run from an elevated
-PowerShell in this folder (Status needs no elevation):
+PowerShell in this folder (Status needs no elevation). setup.cmd runs this
+script past the default execution policy (for that run only):
 
-  .\setup.ps1 Install -AllowedRemoteAddress 192.168.1.0/24   # tasks, firewall, power, then checks
-  .\setup.ps1 Status                                          # read only
-  .\setup.ps1 Remove                                          # tasks and firewall rules (power values stay)
+  .\setup.cmd Install -AllowedRemoteAddress 192.168.1.0/24   # tasks, firewall, power, then checks
+  .\setup.cmd Status                                          # read only
+  .\setup.cmd Remove                                          # tasks and firewall rules (power values stay)
 
 Install sets up, idempotently:
 - task "WSL2 SSH Service Start": at boot (S4U, no logon needed) and logon, runs
@@ -181,13 +182,13 @@ function Show-Status {
     if (Test-Mirrored) { Ok 'WSL networkingMode=mirrored' } else { Warn 'WSL is not in mirrored mode (.wslconfig: [wsl2] networkingMode=mirrored)'; $ok = $false }
     foreach ($name in $SshTask, $VmrestTask) {
         $t = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
-        if (-not $t) { Warn "task '$name' absent (run .\setup.ps1 Install, elevated)"; $ok = $false; continue }
+        if (-not $t) { Warn "task '$name' absent (run .\setup.cmd Install, elevated)"; $ok = $false; continue }
         $boot = [bool]($t.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger' })
         $exe = "$($t.Actions[0].Execute) $($t.Actions[0].Arguments)"
         if ($boot -and $t.Principal.LogonType -eq 'S4U' -and $exe -notmatch [regex]::Escape($LegacyDir)) { Ok "task '$name': $($t.State), boot without logon" }
-        else { Warn "task '$name' is from an older setup or does not start at boot; run .\setup.ps1 Install (elevated)"; $ok = $false }
+        else { Warn "task '$name' is from an older setup or does not start at boot; run .\setup.cmd Install (elevated)"; $ok = $false }
     }
-    foreach ($name in $LegacyTasks) { if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) { Warn "old task '$name' present; .\setup.ps1 Install removes it" } }
+    foreach ($name in $LegacyTasks) { if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) { Warn "old task '$name' present; .\setup.cmd Install removes it" } }
     if (Get-NetFirewallRule -DisplayName $FwRule -ErrorAction SilentlyContinue) { Ok "firewall rule '$FwRule' present" } else { Warn "firewall rule '$FwRule' absent"; $ok = $false }
     if (Test-WslSshListening) { Ok 'WSL sshd listens on :22' } else { Warn 'WSL sshd is not listening on :22'; $ok = $false }
     if (Test-VmrestListening) { Ok 'vmrest listens on 127.0.0.1:8697' } else { Warn 'vmrest is not listening on loopback :8697'; $ok = $false }

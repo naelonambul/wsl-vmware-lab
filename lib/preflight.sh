@@ -147,7 +147,7 @@ start_it() {
       >/dev/null 2>&1; then
     ok "started scheduled task 'VMware vmrest API'"
   else
-    fail "startup task 'VMware vmrest API' absent: run windows\\setup.ps1 Install (elevated PowerShell)"; return 1
+    fail "startup task 'VMware vmrest API' absent: run windows\\setup.cmd Install (elevated)"; return 1
   fi
 }
 
