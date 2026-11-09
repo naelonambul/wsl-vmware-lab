@@ -1,5 +1,5 @@
 ---
-- name: Configure software inside the demo VM (Debian/Ubuntu: apt)
+- name: Configure software inside the demo VM (apt, Debian or Ubuntu)
   hosts: demo
   become: true
   gather_facts: false

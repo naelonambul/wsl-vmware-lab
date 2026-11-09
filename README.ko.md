@@ -18,7 +18,15 @@ WSL Ansible --SSH--> 실습 VM (VMnet1 host-only 관리망; VMnet8 NAT)
 
 - **Windows 11**, **WSL2 Ubuntu 24.04**(`Ubuntu-24.04`), **미러드 네트워크**(`%USERPROFILE%\.wslconfig`의 `[wsl2]` 아래 `networkingMode=mirrored`).
 - **VMware Workstation Pro는 사람이 직접 설치합니다.** 공식 설치 파일은 Broadcom 계정이 필요해 자동화하지 않습니다. API 계정(Windows·Ubuntu 로그인과 별개)은 설치 2단계의 `./lab account`로 만듭니다.
-- **게스트 이미지: Ubuntu 24.04 클라우드 이미지**(`noble-server-cloudimg-amd64.ova`). 지금 `./lab setup`이 내려받아 확인하는 이미지는 이것 하나입니다. 게스트에는 cloud-init과 SSH 서버만 있으면 되고 VMware Tools는 필요 없습니다. 게스트 사용자(`lab`)와 클론마다의 SSH 호스트 키를 첫 부팅 전에 WSL에서 cloud-init으로 넣습니다.
+- **게스트 이미지(`LAB_IMAGE`):** `./lab setup`이 내려받아 확인하는 공식 클라우드 이미지입니다. 게스트에는 cloud-init, SSH 서버, sudo, python3만 있으면 되고 VMware Tools는 필요 없습니다. 게스트 사용자(`lab`)와 클론마다의 SSH 호스트 키를 첫 부팅 전에 WSL에서 cloud-init으로 넣습니다.
+
+  | `LAB_IMAGE` | 이미지 | 확인 방법 |
+  |---|---|---|
+  | `ubuntu-24.04`(기본값) | `noble-server-cloudimg-amd64.ova` | Ubuntu가 서명한 `SHA256SUMS`(gpgv) |
+  | `ubuntu-22.04` | `jammy-server-cloudimg-amd64.ova` | 위와 같음 |
+  | `debian-13` | `debian-13-generic-amd64.qcow2` | HTTPS로 받은 `SHA512SUMS`만 확인(Debian은 클라우드 이미지에 서명하지 않음) |
+
+  `LAB_IMAGE`를 바꾸면 `./lab setup --recreate` 후 `./lab up --allow-destroy`가 필요합니다(클론을 다시 만듭니다). 예제 nginx 플레이북은 apt를 씁니다.
 - **저장소는 Windows 드라이브에 둡니다**(예: `C:\wsl-vmware-lab`, WSL에서 `/mnt/c/wsl-vmware-lab`). 베이스 VM 파일(`base/ubuntu-base.vmx`, `base/ubuntu-base.vmdk`)이 저장소 안에 만들어지므로 VMware Workstation이 Windows 경로에서 열 수 있어야 합니다.
 
 ## 설치
@@ -68,7 +76,7 @@ WSL Ansible --SSH--> 실습 VM (VMnet1 host-only 관리망; VMnet8 NAT)
    ./lab setup     # 1회: 부족한 WSL 도구를 sudo로 설치하고, Ubuntu 이미지 서명을 확인해 베이스 VM 준비
    ./lab status    # 환경, vmrest, Windows 작업·전원, VM을 읽기 전용으로 점검
    ```
-   - `terraform`, `ansible-playbook`, `qemu-img`, `cloud-localds`, `gpgv`, `ubuntu-cloudimage-keyring` 가운데 없는 것이 있으면 `./lab setup`이 먼저 `sudo bash lib/wsl-tools.sh`를 실행합니다(WSL 비밀번호를 묻습니다). 이어서 `noble-server-cloudimg-amd64.ova`를 내려받아 GPG 서명된 `SHA256SUMS`를 확인하고, 이미지를 `base/ubuntu-base.vmdk`로 변환하고, `~/.config/wsl-vmware-lab/lab_ed25519`를 만들고, `base/ubuntu-base.vmx`(`ubuntu24-base`)를 작성·등록한 뒤 `base/ubuntu-base.prepared`를 기록합니다. 베이스는 부팅하지 않으므로 클론마다 첫 부팅이 이미지의 첫 부팅입니다.
+   - `terraform`, `ansible-playbook`, `qemu-img`, `cloud-localds`, `gpgv`, `ubuntu-cloudimage-keyring` 가운데 없는 것이 있으면 `./lab setup`이 먼저 `sudo bash lib/wsl-tools.sh`를 실행합니다(WSL 비밀번호를 묻습니다). 이어서 `LAB_IMAGE` 클라우드 이미지를 내려받아 확인하고(위 표 참고), 이미지를 `base/ubuntu-base.vmdk`로 변환하고, `~/.config/wsl-vmware-lab/lab_ed25519`를 만들고, `base/ubuntu-base.vmx`(`ubuntu24-base`)를 작성·등록한 뒤 `base/ubuntu-base.prepared`를 기록합니다. 베이스는 부팅하지 않으므로 클론마다 첫 부팅이 이미지의 첫 부팅입니다.
    - `./lab status`는 아무것도 바꾸지 않고 호스트 설정, `vmrest` 루프백 리스너와 인증 정보, Windows 부팅 작업과 전원 설정, 실습 VM들의 전원 상태를 점검합니다.
 
 ### AI 에이전트로 설치하기
@@ -135,7 +143,8 @@ cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, memory_mb, Ansible 
 | `LAB_MGMT_VNET` | `VMnet1` | Host-only 관리용 가상 네트워크(`ethernet1`) |
 | `LAB_BASE_NAME` | `ubuntu24-base` | 베이스 VM 표시 이름 |
 | `LAB_BASE_DIR` | `<repo>/base` | `ubuntu-base.vmx`, `ubuntu-base.vmdk`, `ubuntu-base.prepared`가 들어 있는 폴더 |
-| `LAB_UBUNTU_IMAGE_URL` | `https://cloud-images.ubuntu.com/noble/current` | `noble-server-cloudimg-amd64.ova`와 `SHA256SUMS` 다운로드 기본 URL |
+| `LAB_IMAGE` | `ubuntu-24.04` | 게스트 클라우드 이미지: `ubuntu-24.04`, `ubuntu-22.04`, `debian-13` |
+| `LAB_UBUNTU_IMAGE_URL` | `https://cloud-images.ubuntu.com/<noble 또는 jammy>/current` | 선택한 Ubuntu 이미지와 `SHA256SUMS`를 받을 폴더(미러) |
 | `LAB_VM_ROOT_WIN` | `%USERPROFILE%\Documents\Virtual Machines` | 클론을 두는 Windows 폴더(`<root>\<name>\<name>.vmx`). Workstation의 기본 VM 위치와 같아야 함 |
 | `LAB_VMS_FILE` | `<repo>/vms.tfvars` | 다중 VM 정의 파일. 없으면(명시적으로 지정하지 않은 경우) 아래 단일 데모 VM으로 대체 |
 | `LAB_CLONE_NAME` | `ubuntu24-demo` | `vms.tfvars`가 없을 때 쓰는 단일 기본 VM 이름 |
