@@ -38,6 +38,9 @@ export LAB_NAT_VNET="${LAB_NAT_VNET:-VMnet8}"
 export LAB_MGMT_VNET="${LAB_MGMT_VNET:-VMnet1}"
 export LAB_BASE_NAME="${LAB_BASE_NAME:-ubuntu24-base}"
 export LAB_BASE_DIR="${LAB_BASE_DIR:-$LAB_PROJECT_DIR/base}"
+# Guest user created in every clone by cloud-init (lib/cloud-config.sh). Fixed,
+# not a setting: inventories of existing VMs depend on it.
+export LAB_GUEST_USER=lab
 # Default VM set when no vms.tfvars exists: one VM with these values.
 export LAB_CLONE_NAME="${LAB_CLONE_NAME:-ubuntu24-demo}"
 export LAB_CLONE_CPUS="${LAB_CLONE_CPUS:-2}"

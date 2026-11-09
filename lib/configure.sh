@@ -21,12 +21,12 @@ while (( SECONDS < deadline )); do
   rc=0; timeout 120 python3 "$here/guest-inventory.py" || rc=$?
   if [[ $rc -eq 0 ]]; then ready=true; break; fi
   [[ $rc -eq 3 ]] && exit 1   # an error a retry cannot fix (message above)
-  [[ $rc -eq 124 ]] && echo '[WARN] inventory attempt timed out after 120 s (vmrun or terraform hung?)' >&2
+  [[ $rc -eq 124 ]] && echo '[WARN] inventory attempt timed out after 120 s (terraform or ssh hung?)' >&2
   sleep 5
 done
 if [[ "$ready" != true ]]; then
-  echo "Guests not ready after ${wait_s} s (LAB_GUEST_WAIT_SECONDS): no current management DHCP lease, or a guest never reported its user or SSH host key through guestinfo." >&2
-  echo 'The guest image must ship open-vm-tools (Ubuntu cloud images do; Debian 12 cloud images do not). Only Ubuntu cloud images are supported.' >&2
+  echo "Guests not ready after ${wait_s} s (LAB_GUEST_WAIT_SECONDS): no current management DHCP lease, or SSH as $LAB_GUEST_USER with the pinned host key never succeeded (last reason above)." >&2
+  echo 'A clone created by an older version of this lab uses another user and host key: ./lab setup --recreate, then ./lab up --allow-destroy' >&2
   exit 1
 fi
 echo "[OK] Playbook: $playbook"

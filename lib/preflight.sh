@@ -84,7 +84,7 @@ else
   warn "vmrest account: not available"
   sed 's/^/       /' <<<"$cred_msg"
 fi
-ok "guest user: image default, reported by the guest via guestinfo  base: $LAB_BASE_NAME"
+ok "guest user: $LAB_GUEST_USER (created by cloud-init, SSH host key pinned before first boot)  base: $LAB_BASE_NAME"
 if [[ -f "$LAB_VMS_FILE" ]]; then
   ok "VM list: $LAB_VMS_FILE"
 elif [[ "$LAB_VMS_FILE_EXPLICIT" == 1 ]]; then
@@ -92,7 +92,6 @@ elif [[ "$LAB_VMS_FILE_EXPLICIT" == 1 ]]; then
 else
   ok "VM list: single VM $LAB_CLONE_NAME (${LAB_CLONE_CPUS} vCPU, ${LAB_CLONE_MEMORY_MB} MB); for several VMs copy vms.tfvars.example to vms.tfvars"
 fi
-[[ -n "${LAB_GUEST_USER:-}" ]] && warn "LAB_GUEST_USER is set but no longer used; the guest uses the image's default user"
 if [[ -n "$LAB_VM_ROOT_WIN" ]]; then ok "VM folder: $LAB_VM_ROOT_WIN (one <name> folder per VM)"; else warn "VM folder unknown (LAB_VM_ROOT_WIN)"; fi
 # vmrest clones into VMware Workstation's default VM folder (Preferences >
 # Workspace), not into the path Terraform asks for; the two must match or the
