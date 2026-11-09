@@ -18,7 +18,15 @@ Background posts (the repository has evolved since publication; where they diffe
 
 - **Windows 11** with **WSL2 Ubuntu 24.04** (`Ubuntu-24.04`) and **mirrored networking** (`networkingMode=mirrored` under `[wsl2]` in `%USERPROFILE%\.wslconfig`).
 - **VMware Workstation Pro installed manually.** The official installer requires a Broadcom account and is not automated. Its API account (separate from Windows and Ubuntu logins) is created in step 2 with `./lab account`.
-- **Guest image: the Ubuntu 24.04 cloud image** (`noble-server-cloudimg-amd64.ova`), the only one `./lab setup` downloads and verifies today. Guests need cloud-init and an SSH server, not VMware Tools: the guest user (`lab`) and each clone's SSH host key are set by cloud-init from WSL before the first boot.
+- **Guest image (`LAB_IMAGE`):** an official cloud image that `./lab setup` downloads and checks. Guests need cloud-init, an SSH server, sudo and python3, not VMware Tools: the guest user (`lab`) and each clone's SSH host key are set by cloud-init from WSL before the first boot.
+
+  | `LAB_IMAGE` | Image | Check |
+  |---|---|---|
+  | `ubuntu-24.04` (default) | `noble-server-cloudimg-amd64.ova` | `SHA256SUMS` signed by Ubuntu (gpgv) |
+  | `ubuntu-22.04` | `jammy-server-cloudimg-amd64.ova` | same |
+  | `debian-13` | `debian-13-generic-amd64.qcow2` | `SHA512SUMS` over HTTPS only (Debian does not sign cloud images) |
+
+  Changing `LAB_IMAGE` needs `./lab setup --recreate`, then `./lab up --allow-destroy` (clones are rebuilt). The example nginx playbook uses apt.
 - **Repository on a Windows drive** (for example `C:\wsl-vmware-lab`, `/mnt/c/wsl-vmware-lab` in WSL). The base VM files (`base/ubuntu-base.vmx` and `base/ubuntu-base.vmdk`) are built inside the repository, so VMware Workstation must be able to open them from a Windows path.
 
 ## Installation
@@ -68,7 +76,7 @@ Background posts (the repository has evolved since publication; where they diffe
    ./lab setup     # once: installs missing WSL tools via sudo, verifies Ubuntu image, builds base VM
    ./lab status    # read-only check of environment, vmrest, Windows tasks/power, and VMs
    ```
-   - If `terraform`, `ansible-playbook`, `qemu-img`, `cloud-localds`, `gpgv` or the `ubuntu-cloudimage-keyring` is missing, `./lab setup` first runs `sudo bash lib/wsl-tools.sh` (asks for your WSL password). It then downloads `noble-server-cloudimg-amd64.ova` and verifies its GPG-signed `SHA256SUMS`, converts the image to `base/ubuntu-base.vmdk`, creates `~/.config/wsl-vmware-lab/lab_ed25519`, writes and registers `base/ubuntu-base.vmx` (`ubuntu24-base`), and writes `base/ubuntu-base.prepared`. The base is never booted, so every clone's first boot is the image's first boot.
+   - If `terraform`, `ansible-playbook`, `qemu-img`, `cloud-localds`, `gpgv` or the `ubuntu-cloudimage-keyring` is missing, `./lab setup` first runs `sudo bash lib/wsl-tools.sh` (asks for your WSL password). It then downloads the `LAB_IMAGE` cloud image and verifies it (see the table above), converts the image to `base/ubuntu-base.vmdk`, creates `~/.config/wsl-vmware-lab/lab_ed25519`, writes and registers `base/ubuntu-base.vmx` (`ubuntu24-base`), and writes `base/ubuntu-base.prepared`. The base is never booted, so every clone's first boot is the image's first boot.
    - `./lab status` checks the host configuration, `vmrest` loopback listener and credentials, Windows scheduled tasks and power settings, and the power state of any lab VMs without modifying anything.
 
 ### Installing with an AI Agent
@@ -135,7 +143,8 @@ Copy `lab.env.example` to `lab.env` only when overriding defaults (`cp lab.env.e
 | `LAB_MGMT_VNET` | `VMnet1` | Host-only management virtual network (`ethernet1`) |
 | `LAB_BASE_NAME` | `ubuntu24-base` | Display name of the base VM |
 | `LAB_BASE_DIR` | `<repo>/base` | Directory holding `ubuntu-base.vmx`, `ubuntu-base.vmdk`, and `ubuntu-base.prepared` |
-| `LAB_UBUNTU_IMAGE_URL` | `https://cloud-images.ubuntu.com/noble/current` | Download base URL for `noble-server-cloudimg-amd64.ova` and `SHA256SUMS` |
+| `LAB_IMAGE` | `ubuntu-24.04` | Guest cloud image: `ubuntu-24.04`, `ubuntu-22.04` or `debian-13` |
+| `LAB_UBUNTU_IMAGE_URL` | `https://cloud-images.ubuntu.com/<noble or jammy>/current` | Download directory (mirror) for the chosen Ubuntu image and its `SHA256SUMS` |
 | `LAB_VM_ROOT_WIN` | `%USERPROFILE%\Documents\Virtual Machines` | Windows directory for clones (`<root>\<name>\<name>.vmx`); must match Workstation's default VM location |
 | `LAB_VMS_FILE` | `<repo>/vms.tfvars` | Multi-VM definition file; if absent (and not set explicitly), falls back to the single demo VM below |
 | `LAB_CLONE_NAME` | `ubuntu24-demo` | Single fallback VM name when `vms.tfvars` is absent |
@@ -159,7 +168,7 @@ Copy `lab.env.example` to `lab.env` only when overriding defaults (`cp lab.env.e
 
 ## Notes
 
-- **Verified scope:** Verified on one laptop on 2026-11-09 (VMware Workstation Pro already installed, WSL2 mirrored networking, Windows Firewall Private and Public profiles off): `windows\setup.ps1 Install`, `./lab setup` through the base VM, a clone with `./lab up`, `./lab configure` twice (second run `changed=0`), `./lab configure ansible/check-lab.yml`, `./lab destroy` with file cleanup, and a reboot with WSL `sshd` and `vmrest` up before any logon. The unbooted base with a pinned host key and the `lab` user was checked the same day with `./lab setup --recreate`, `up`, `configure` twice, `check-lab.yml`, `down`/`up`, and again after disabling `open-vm-tools` and removing `vmware-rpctool` in the guest. **Not yet verified:** a fresh PC without VMware Workstation installed, and a PC with Windows Firewall profiles enabled.
+- **Verified scope:** Verified on one laptop on 2026-11-09 (VMware Workstation Pro already installed, WSL2 mirrored networking, Windows Firewall Private and Public profiles off): `windows\setup.ps1 Install`, `./lab setup` through the base VM, a clone with `./lab up`, `./lab configure` twice (second run `changed=0`), `./lab configure ansible/check-lab.yml`, `./lab destroy` with file cleanup, and a reboot with WSL `sshd` and `vmrest` up before any logon. The unbooted base with a pinned host key and the `lab` user was checked the same day with `./lab setup --recreate`, `up`, `configure` twice, `check-lab.yml`, `down`/`up`, and again after disabling `open-vm-tools` and removing `vmware-rpctool` in the guest. Each `LAB_IMAGE` (`ubuntu-24.04`, `ubuntu-22.04`, `debian-13`) passed `setup --recreate`, `up`, `configure` twice, `check-lab.yml`, `down`/`up` and `destroy` the same day. **Not yet verified:** a fresh PC without VMware Workstation installed, and a PC with Windows Firewall profiles enabled.
 - **Files never to commit:** `lab.env`, `*.env`, `vmrest.env`, `*.tfvars` (`vms.tfvars`), SSH keys (`*_ed25519*`), `inventory.json`, `known_hosts*`, `*.tfstate*`, `cleanup-pending.json`, and VM disks/images/ISOs (`base/`, `cloud-init/`, `*.ova`, `*.vmdk`, `*.vmx`, `*.iso`) are gitignored and must stay out of version control.
 - **Community Terraform provider:** `elsudano/vmworkstation` (`2.0.1`) is an unofficial provider. It looks up the base VM by `displayName` and takes the first match, and it does not replace clones on its own when the base VM is rebuilt; this repository enforces both checks (`lib/check-base.py` and `terraform_data.base_identity`). Review its schema before upgrading the provider version.
 - **Troubleshooting:** See [`.claude/skills/vmware-wsl-lab/reference/pitfalls.md`](.claude/skills/vmware-wsl-lab/reference/pitfalls.md) for known symptoms and fixes.

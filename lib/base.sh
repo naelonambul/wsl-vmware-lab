@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Base VM preparation, run by ./lab setup [--recreate] (WSL).
 #
-# Ubuntu 24.04 cloud image (signed SHA256SUMS) -> monolithic VMDK -> base VMX
+# Cloud image LAB_IMAGE (default ubuntu-24.04; table below) -> checksum (and
+# signature where the distribution publishes one) -> monolithic VMDK -> base VMX
 # -> vmrest registration -> marker base/ubuntu-base.prepared. The base is never
 # booted: every clone gets its own cloud-init seed (bootstrap-guest.sh), so its
 # first boot is the image's first boot (no base host keys, users or cloud-init
@@ -19,8 +20,27 @@ case "${1:-}" in
   *) echo 'Usage: ./lab setup [--recreate]' >&2; exit 2 ;;
 esac
 
-ova_name=noble-server-cloudimg-amd64.ova   # file name published by Ubuntu
-source_disk="$LAB_BASE_DIR/ubuntu-noble-24.04-cloudimg.vmdk"
+# Supported guest images. Guests need cloud-init, an SSH server, sudo and
+# python3 (no VMware Tools). img_disk: the VMDK inside an OVA, empty for qcow2.
+signed=1
+case "$LAB_IMAGE" in
+  ubuntu-24.04)
+    img_url="${LAB_UBUNTU_IMAGE_URL:-https://cloud-images.ubuntu.com/noble/current}"
+    img_file=noble-server-cloudimg-amd64.ova; img_disk=ubuntu-noble-24.04-cloudimg.vmdk
+    sums=SHA256SUMS; guest_os=ubuntu-64 ;;
+  ubuntu-22.04)
+    img_url="${LAB_UBUNTU_IMAGE_URL:-https://cloud-images.ubuntu.com/jammy/current}"
+    img_file=jammy-server-cloudimg-amd64.ova; img_disk=ubuntu-jammy-22.04-cloudimg.vmdk
+    sums=SHA256SUMS; guest_os=ubuntu-64 ;;
+  debian-13)
+    # Debian publishes no signature for cloud images: the checksum list comes
+    # over HTTPS from cloud.debian.org only.
+    img_url=https://cloud.debian.org/images/cloud/trixie/latest
+    img_file=debian-13-generic-amd64.qcow2; img_disk=''
+    sums=SHA512SUMS; guest_os=debian12-64; signed=0 ;;
+  *) echo "[ERROR] Unknown LAB_IMAGE '$LAB_IMAGE' (supported: ubuntu-24.04, ubuntu-22.04, debian-13)" >&2; exit 2 ;;
+esac
+sumcmd=sha256sum; [[ $sums == SHA512SUMS ]] && sumcmd=sha512sum
 vm_disk="$LAB_BASE_DIR/ubuntu-base.vmdk"
 vmx="$LAB_BASE_DIR/ubuntu-base.vmx"
 prepared="$LAB_BASE_DIR/ubuntu-base.prepared"
@@ -32,6 +52,12 @@ register() {
 }
 
 if [[ -f "$prepared" && $recreate -eq 0 ]]; then
+  built=$(sed -n 's/^image=//p' "$prepared"); built=${built:-ubuntu-24.04}   # older markers: 24.04
+  if [[ "$built" != "$LAB_IMAGE" ]]; then
+    echo "[ERROR] The base was built from $built, but LAB_IMAGE is $LAB_IMAGE. Rebuild it: ./lab setup --recreate" >&2
+    echo '        (then ./lab up --allow-destroy replaces the clones; their contents are lost)' >&2
+    exit 1
+  fi
   register
   echo "[OK] Base already prepared ($prepared). To rebuild it: ./lab setup --recreate"
   exit 0
@@ -45,30 +71,38 @@ if [[ -e "$vmx" ]]; then
   [[ $power -eq 1 ]] || { echo '[ERROR] Could not confirm the base VM is off; nothing changed.' >&2; exit 1; }
 fi
 
-# 1. Image: the signature of SHA256SUMS must verify (#22), then the OVA checksum.
+# 1. Image: for Ubuntu the signature of SHA256SUMS must verify (#22); then the
+# image checksum.
 cd "$LAB_PROJECT_DIR"
-url="${LAB_UBUNTU_IMAGE_URL:-https://cloud-images.ubuntu.com/noble/current}"
-keyring=/usr/share/keyrings/ubuntu-cloudimage-keyring.gpg
-[[ -f "$keyring" ]] || { echo "[ERROR] $keyring missing; install ubuntu-cloudimage-keyring (sudo apt-get install ubuntu-cloudimage-keyring)" >&2; exit 1; }
-curl -fsS -o SHA256SUMS "$url/SHA256SUMS"
-curl -fsS -o SHA256SUMS.gpg "$url/SHA256SUMS.gpg"
-gpgv --keyring "$keyring" SHA256SUMS.gpg SHA256SUMS
-grep -q " \*\?${ova_name}\$" SHA256SUMS || { echo "[ERROR] $ova_name not listed in SHA256SUMS" >&2; exit 1; }
-if ! { [[ -f "$ova_name" ]] && sha256sum --ignore-missing -c SHA256SUMS 2>/dev/null | grep -q "^${ova_name}: OK$"; }; then
-  curl -fSL --retry 3 -o "$ova_name.part" "$url/$ova_name"
-  mv -f "$ova_name.part" "$ova_name"
-  sha256sum --ignore-missing -c SHA256SUMS
+curl -fsS -o "$sums" "$img_url/$sums"
+if [[ $signed -eq 1 ]]; then
+  keyring=/usr/share/keyrings/ubuntu-cloudimage-keyring.gpg
+  [[ -f "$keyring" ]] || { echo "[ERROR] $keyring missing; install ubuntu-cloudimage-keyring (sudo apt-get install ubuntu-cloudimage-keyring)" >&2; exit 1; }
+  curl -fsS -o "$sums.gpg" "$img_url/$sums.gpg"
+  gpgv --keyring "$keyring" "$sums.gpg" "$sums"
 fi
-echo "[OK] $ova_name verified (signed SHA256SUMS)"
+grep -q " \*\?${img_file}\$" "$sums" || { echo "[ERROR] $img_file not listed in $sums" >&2; exit 1; }
+if ! { [[ -f "$img_file" ]] && $sumcmd --ignore-missing -c "$sums" 2>/dev/null | grep -q "^${img_file}: OK$"; }; then
+  curl -fSL --retry 3 -o "$img_file.part" "$img_url/$img_file"
+  mv -f "$img_file.part" "$img_file"
+  $sumcmd --ignore-missing -c "$sums"
+fi
+if [[ $signed -eq 1 ]]; then echo "[OK] $img_file verified (signed $sums)"
+else echo "[OK] $img_file verified ($sums from $img_url over HTTPS; not signed)"; fi
 
 # 2. Disk: extract, convert to a temporary file, check, then rename.
 mkdir -p "$LAB_BASE_DIR"
 [[ $recreate -eq 1 ]] && rm -f -- "$vm_disk" "$vm_disk.partial" "$prepared"
 if [[ ! -f "$vm_disk" ]]; then
-  tar -xf "$ova_name" -C "$LAB_BASE_DIR"
+  if [[ -n "$img_disk" ]]; then
+    tar -xf "$img_file" -C "$LAB_BASE_DIR"
+    source_disk="$LAB_BASE_DIR/$img_disk"; source_fmt=vmdk
+  else
+    source_disk="$LAB_PROJECT_DIR/$img_file"; source_fmt=qcow2
+  fi
   rm -f -- "$vm_disk.partial"
-  qemu-img convert -p -f vmdk -O vmdk -o subformat=monolithicSparse "$source_disk" "$vm_disk.partial"
-  want=$(qemu-img info --output=json "$source_disk" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])')
+  qemu-img convert -p -f "$source_fmt" -O vmdk -o subformat=monolithicSparse "$source_disk" "$vm_disk.partial"
+  want=$(qemu-img info --output=json -f "$source_fmt" "$source_disk" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])')
   got=$(qemu-img info --output=json -f vmdk "$vm_disk.partial" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(d["format"], d["virtual-size"])')
   [[ "$got" == "vmdk $want" ]] || { echo "[ERROR] Converted disk does not check out ($got, expected vmdk $want); left at $vm_disk.partial" >&2; exit 1; }
   mv -f -- "$vm_disk.partial" "$vm_disk"
@@ -90,8 +124,8 @@ cat > "$new_vmx" <<VMX
 config.version = "8"
 virtualHW.version = "10"
 displayName = "${LAB_BASE_NAME}"
-annotation = "Ubuntu 24.04 base template for Terraform"
-guestOS = "ubuntu-64"
+annotation = "${LAB_IMAGE} base template for Terraform"
+guestOS = "${guest_os}"
 firmware = "efi"
 memsize = "1024"
 numvcpus = "2"
@@ -126,5 +160,5 @@ fi
 
 # 5. Register with vmrest and mark the base prepared. The base stays off.
 register
-printf 'boot=never\nprepared=%s\n' "$(date -Is)" > "$prepared"
+printf 'image=%s\nboot=never\nprepared=%s\n' "$LAB_IMAGE" "$(date -Is)" > "$prepared"
 echo "[OK] Base prepared (not booted; clones boot the image fresh): $vmx"
