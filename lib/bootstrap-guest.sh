@@ -4,14 +4,6 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 source lib/config.sh
 source lib/cloud-config.sh
-# A clone whose record only had to be restored (lib/lifecycle.sh, after a
-# targeted destroy of another clone) is left exactly as it is.
-for keep in ${LAB_BOOTSTRAP_KEEP:-}; do
-  if [[ "$keep" == "${VM_NAME:-}" ]]; then
-    echo "[OK] $VM_NAME: existing clone left unchanged (bootstrap record restored)"
-    exit 0
-  fi
-done
 # Refuse unless the clone is positively known to be off: a failed or garbled
 # vmrun answer must stop here, before any file is changed.
 power=0; lab_vm_running "$VMX_WIN" || power=$?

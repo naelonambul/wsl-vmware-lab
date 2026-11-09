@@ -135,24 +135,42 @@ guard_vm_destroy() {
     if [[ ${#targets[@]} -gt 0 ]]; then
       # The targeted destroy also drops the bootstrap record of every other
       # clone (Terraform follows the resource-level dependency). Those clones
-      # are untouched: restore only their records, without re-running the
-      # bootstrap (it would pin a new host key the guest does not have) and
-      # without powering them off.
-      local had kept=(); LAB_BOOTSTRAP_KEEP=""
-      had=$(terraform state list 2>/dev/null | sed -n 's/^terraform_data\.guest_bootstrap\["\(.*\)"\]$/\1/p')
+      # are untouched, so put their records back from the state as it was
+      # before: re-running their bootstrap would pin a new host key the guest
+      # does not have, and a targeted apply would pull in the new clones too.
+      local was now restored
+      was=$(mktemp); now=$(mktemp)
+      terraform state pull > "$was"
       terraform apply -destroy -input=false -auto-approve -parallelism=1 "${LAB_TF_VAR_ARGS[@]}" "${targets[@]}" || exit 1
       run_cleanup || exit 1
-      for name in $had; do
-        grep -Fxq "$name" <<<"$doomed" && continue
-        terraform state list 2>/dev/null | grep -Fxq "terraform_data.guest_bootstrap[\"$name\"]" && continue
-        kept+=(-target="terraform_data.guest_bootstrap[\"$name\"]")
-        LAB_BOOTSTRAP_KEEP+=" $name"
-      done
-      if [[ ${#kept[@]} -gt 0 ]]; then
-        echo "[OK] Restoring the bootstrap records of untouched clones:$LAB_BOOTSTRAP_KEEP"
-        LAB_BOOTSTRAP_KEEP="$LAB_BOOTSTRAP_KEEP" terraform apply -input=false -auto-approve -parallelism=1 \
-          "${LAB_TF_VAR_ARGS[@]}" "$@" "${kept[@]}" || exit 1
+      terraform state pull > "$now"
+      # shellcheck disable=SC2086 # names are validated VM keys
+      restored=$(python3 - "$was" "$now" $doomed <<'PY'
+import json, sys
+was, now = (json.load(open(p)) for p in sys.argv[1:3])
+doomed = set(sys.argv[3:])
+def bootstrap(state):
+    return next((r for r in state['resources'] if r['mode'] == 'managed'
+                 and r['type'] == 'terraform_data' and r['name'] == 'guest_bootstrap'), None)
+old, new = bootstrap(was), bootstrap(now)
+have = {i.get('index_key') for i in (new or {}).get('instances', [])}
+add = [i for i in (old or {}).get('instances', [])
+       if i.get('index_key') not in doomed and i.get('index_key') not in have]
+if add:
+    if new is None:
+        new = dict(old, instances=[])
+        now['resources'].append(new)
+    new['instances'] += add
+    now['serial'] += 1
+    json.dump(now, open(sys.argv[2], 'w'))
+print(' '.join(i['index_key'] for i in add))
+PY
+)
+      if [[ -n "$restored" ]]; then
+        terraform state push "$now" || exit 1
+        echo "[OK] Kept the bootstrap records of untouched clones: $restored"
       fi
+      rm -f -- "$was" "$now"
       run_plan "$@"
     fi
     return 0
