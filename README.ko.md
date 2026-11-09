@@ -26,8 +26,8 @@ WSL Ansible --SSH--> 실습 VM (VMnet1 host-only 관리망; VMnet8 NAT)
   | `ubuntu-22.04` | `jammy-server-cloudimg-amd64.ova` | 위와 같음 |
   | `debian-13` | `debian-13-generic-amd64.qcow2` | HTTPS로 받은 `SHA512SUMS`만 확인(Debian은 클라우드 이미지에 서명하지 않음) |
 
-  `LAB_IMAGE`를 바꾸면 `./lab setup --recreate` 후 `./lab up --allow-destroy`가 필요합니다(클론을 다시 만듭니다). 예제 nginx 플레이북은 apt를 씁니다.
-- **저장소는 Windows 드라이브에 둡니다**(예: `C:\wsl-vmware-lab`, WSL에서 `/mnt/c/wsl-vmware-lab`). 베이스 VM 파일(`base/ubuntu-base.vmx`, `base/ubuntu-base.vmdk`)이 저장소 안에 만들어지므로 VMware Workstation이 Windows 경로에서 열 수 있어야 합니다.
+  `LAB_IMAGE`는 기본값이고, `vms.tfvars`에서 VM마다 `image`를 따로 줄 수 있어 한 시스템 안에서 섞어 쓸 수 있습니다(예: web은 Ubuntu, db는 Debian). `./lab setup`은 쓰이는 이미지마다 베이스를 하나씩 준비합니다(`base/<image>/`, VM 이름 `<image>-base`). VM의 이미지를 바꾸면 그 VM만 다시 만듭니다(`./lab up --allow-destroy`). 예제 nginx 플레이북은 apt를 씁니다.
+- **저장소는 Windows 드라이브에 둡니다**(예: `C:\wsl-vmware-lab`, WSL에서 `/mnt/c/wsl-vmware-lab`). 베이스 VM 파일(`base/<image>/base.vmx`, `base.vmdk`)이 저장소 안에 만들어지므로 VMware Workstation이 Windows 경로에서 열 수 있어야 합니다.
 
 ## 설치
 
@@ -111,7 +111,7 @@ cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, memory_mb, Ansible 
 ./lab configure ~/my-system/site.yml       # 내 플레이북 실행 (저장소 밖 다른 폴더에 둬도 됨)
 ```
 
-- `vms.tfvars`의 `vms = { ... }` 안 각 키가 VM 이름입니다(`^[a-z0-9][a-z0-9-]{0,62}$`, 영문 소문자·숫자·`-`만 사용, `LAB_BASE_NAME`과 같을 수 없음). 이 이름이 Windows 폴더 및 VMX 경로(`<LAB_VM_ROOT_WIN>\<name>\<name>.vmx`), 게스트 호스트 이름, Ansible 호스트 이름이 됩니다.
+- `vms.tfvars`의 `vms = { ... }` 안 각 키가 VM 이름입니다(`^[a-z0-9][a-z0-9-]{0,62}$`, 영문 소문자·숫자·`-`만 사용, 베이스 이름 `<image>-base`와 같을 수 없음). 이 이름이 Windows 폴더 및 VMX 경로(`<LAB_VM_ROOT_WIN>\<name>\<name>.vmx`), 게스트 호스트 이름, Ansible 호스트 이름이 됩니다.
 - 생략한 필드는 `processors = 2`, `memory_mb = 2048`, `groups = ["demo"]` 기본값을 씁니다.
 - `groups`의 그룹 이름은 `^[a-z_][a-z0-9_]*$` 형식이어야 합니다. 모든 VM은 지정한 `groups`에 들어가며, 항상 `lab` 그룹에도 추가됩니다(`ansible/check-lab.yml`은 `lab`에서, 기본 `ansible/configure-guest.yml`은 `demo`에서 실행됩니다).
 - `vms.tfvars`에 항목을 더하고 `./lab up`을 실행하면 이미 켜져 있는 VM은 그대로 둔 채 새 VM만 만들고 준비합니다(꺼진 상태로 만든 뒤 부트스트랩하고 전원을 켭니다).
@@ -119,7 +119,7 @@ cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, memory_mb, Ansible 
 ## 지켜 주는 것
 
 - **의도하지 않은 VM 삭제 거부:** `./lab up`은 적용 전에 `terraform plan -json`을 검사합니다. 삭제되거나 교체될 VM이 하나라도 있으면 `--allow-destroy`를 붙이지 않는 한 VM 이름을 보여 주고 멈춥니다. `vms.tfvars`가 없어지거나 오타가 나도 기존 VM은 지워지지 않습니다. `./lab down`은 state에 이미 있는 VM만 대상으로 삼으며, 전원 변경 외의 다른 변경이 있는 플랜은 거부합니다.
-- **베이스 VM 확인:** `up`이나 `down` 전에 `lib/check-base.py`가 `vmrest`에 등록된 VM 중 `displayName`이 `LAB_BASE_NAME`과 같고 `base/ubuntu-base.vmx`를 가리키는 VM이 정확히 하나인지 확인합니다. 그리고 그 VM ID와 `base/ubuntu-base.prepared`의 SHA-256 해시(`terraform_data.base_identity`)를 둘 다 Terraform에 넘깁니다. 베이스를 다시 만들면(`./lab setup --recreate`) 클론이 교체 대상으로 표시되며, `./lab up --allow-destroy`로 확인해 줄 때까지 `./lab up`이 멈춥니다(클론을 교체하면 디스크 내용이 지워집니다).
+- **베이스 VM 확인:** `up`이나 `down` 전에 `lib/check-base.py`가 쓰이는 이미지마다 `vmrest`에 등록된 VM 중 `displayName`이 `<image>-base`이고 `base/<image>/base.vmx`를 가리키는 VM이 정확히 하나인지 확인합니다. 그리고 베이스마다 VM ID와 `base.prepared`의 SHA-256 해시를 Terraform에 넘기고, Terraform은 이를 클론마다 기록합니다(`terraform_data.vm_base`). 베이스를 다시 만들거나(`./lab setup --recreate`) VM의 이미지를 바꾸면 해당 클론이 교체 대상으로 표시되며, `./lab up --allow-destroy`로 확인해 줄 때까지 `./lab up`이 멈춥니다(클론을 교체하면 디스크 내용이 지워집니다).
 - **현재 DHCP 임대 + 부팅 전에 고정한 호스트 키:** 새 클론마다 `lib/bootstrap-guest.sh`가 WSL에서 `ssh-ed25519` 호스트 키를 만들어 클론의 cloud-init 시드(`ssh_keys`, 기존 키는 삭제)에 넣고, 클론이 처음 부팅하기 전에 `known_hosts-<id>`를 씁니다. `lib/guest-inventory.py`는 각 VM의 관리 NIC MAC(`ethernet1.generatedAddress`)을 `vmnetdhcp.leases`에서 `LAB_MGMT_VNET`의 만료되지 않은 활성 임대(IP별 마지막 항목 사용)와만 대조하고, 그 고정 키로 `lab` 사용자 SSH 접속이 성공해야 준비된 것으로 봅니다(`StrictHostKeyChecking=yes`, `HostKeyAlias`). 다른 VM이 IP를 재사용하더라도 Ansible이 엉뚱한 VM에 접속하지 않습니다. 클론 디스크 옆의 시드 ISO에는 부팅 뒤 디스크에 들어가는 것과 같은 개인키가 들어 있습니다.
 - **이어서 실행할 수 있는 정리 기록:** Terraform이 VM을 삭제하거나 교체하기 전에 `lib/cleanup-guest.py`가 대상을 `terraform/cleanup-pending.json`에 적어 둡니다. VM이 state에서 빠지고(`.vmx`와 `.vmdk`도 사라진 뒤) 나면 정리 과정에서 `cloud-init-<id>.iso`, 남은 `.vmxf`, `known_hosts-<id>`, `seed-<id>/`, 빈 클론 폴더를 지웁니다. 항목은 정리가 끝날 때까지 기록에 남아 있으며 다음 `up`, `destroy`, `./lab cleanup`이 자동으로 이어서 시도합니다.
 - **루프백과 인증이 적용된 `vmrest`:** `./lab status`는 `VMWS_ENDPOINT`가 루프백(`127.0.0.1`, `localhost`, `[::1]`)을 가리키는지, Windows `8697` 포트가 루프백에서만 리슨하는지, 인증 없는 `GET /vms`가 HTTP `401`을 반환하는지, 인증된 `GET /vms`가 HTTP `200`을 반환하는지 확인합니다.
@@ -141,9 +141,8 @@ cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, memory_mb, Ansible 
 | `LAB_DHCP_CONF` | `/mnt/c/ProgramData/VMware/vmnetdhcp.conf` | VMware DHCP 설정 파일 |
 | `LAB_NAT_VNET` | `VMnet8` | NAT 가상 네트워크(`ethernet0`) |
 | `LAB_MGMT_VNET` | `VMnet1` | Host-only 관리용 가상 네트워크(`ethernet1`) |
-| `LAB_BASE_NAME` | `ubuntu24-base` | 베이스 VM 표시 이름 |
-| `LAB_BASE_DIR` | `<repo>/base` | `ubuntu-base.vmx`, `ubuntu-base.vmdk`, `ubuntu-base.prepared`가 들어 있는 폴더 |
-| `LAB_IMAGE` | `ubuntu-24.04` | 게스트 클라우드 이미지: `ubuntu-24.04`, `ubuntu-22.04`, `debian-13` |
+| `LAB_BASE_DIR` | `<repo>/base` | 베이스마다 `<image>/` 폴더(`base.vmx`, `base.vmdk`, `base.prepared`)를 두는 폴더 |
+| `LAB_IMAGE` | `ubuntu-24.04` | `vms.tfvars`에 `image`가 없는 VM의 게스트 이미지: `ubuntu-24.04`, `ubuntu-22.04`, `debian-13` |
 | `LAB_UBUNTU_IMAGE_URL` | `https://cloud-images.ubuntu.com/<noble 또는 jammy>/current` | 선택한 Ubuntu 이미지와 `SHA256SUMS`를 받을 폴더(미러) |
 | `LAB_VM_ROOT_WIN` | `%USERPROFILE%\Documents\Virtual Machines` | 클론을 두는 Windows 폴더(`<root>\<name>\<name>.vmx`). Workstation의 기본 VM 위치와 같아야 함 |
 | `LAB_VMS_FILE` | `<repo>/vms.tfvars` | 다중 VM 정의 파일. 없으면(명시적으로 지정하지 않은 경우) 아래 단일 데모 VM으로 대체 |
@@ -170,7 +169,7 @@ cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, memory_mb, Ansible 
 
 - **검증 범위:** 2026-11-09 노트북 1대(VMware Workstation Pro 기설치, WSL2 미러드 네트워크, Windows 방화벽의 Private·Public 프로필 꺼짐)에서 확인했습니다: `windows\setup.ps1 Install`, 베이스 VM까지 만드는 `./lab setup`, `./lab up`으로 클론 생성, `./lab configure` 2회(두 번째 `changed=0`), `./lab configure ansible/check-lab.yml`, 파일 정리까지 포함한 `./lab destroy`, 재부팅 후 로그온 전 WSL `sshd`와 `vmrest` 기동. 부팅하지 않는 베이스와 고정 호스트 키, `lab` 사용자 방식도 같은 날 `./lab setup --recreate`, `up`, `configure` 2회, `check-lab.yml`, `down`/`up`으로 확인했고, 게스트에서 `open-vm-tools`를 끄고 `vmware-rpctool`을 치운 뒤에도 다시 확인했습니다. `LAB_IMAGE`의 세 이미지(`ubuntu-24.04`, `ubuntu-22.04`, `debian-13`)도 같은 날 각각 `setup --recreate`, `up`, `configure` 2회, `check-lab.yml`, `down`/`up`, `destroy`를 통과했습니다. **아직 확인하지 않은 환경:** VMware Workstation이 없는 새 PC와 Windows 방화벽 프로필이 켜진 PC.
 - **올리면 안 되는 파일:** `lab.env`, `*.env`, `vmrest.env`, `*.tfvars`(`vms.tfvars`), SSH 키(`*_ed25519*`), `inventory.json`, `known_hosts*`, `*.tfstate*`, `cleanup-pending.json`, VM 디스크·이미지·ISO(`base/`, `cloud-init/`, `*.ova`, `*.vmdk`, `*.vmx`, `*.iso`)는 `.gitignore`에 들어 있으며 버전 관리에 올라가면 안 됩니다.
-- **비공식 Terraform provider:** `elsudano/vmworkstation`(`2.0.1`)은 커뮤니티 provider입니다. 베이스 VM을 `displayName`으로 찾아 첫 번째 항목을 고르고, 베이스 VM을 다시 만들어도 스스로 클론을 교체하지 않습니다. 이 저장소가 그 둘을 대신 확인합니다(`lib/check-base.py`와 `terraform_data.base_identity`). provider 버전을 올리기 전에 스키마를 확인하세요.
+- **비공식 Terraform provider:** `elsudano/vmworkstation`(`2.0.1`)은 커뮤니티 provider입니다. 베이스 VM을 `displayName`으로 찾아 첫 번째 항목을 고르고, 베이스 VM을 다시 만들어도 스스로 클론을 교체하지 않습니다. 이 저장소가 그 둘을 대신 확인합니다(`lib/check-base.py`와 `terraform_data.vm_base`). provider 버전을 올리기 전에 스키마를 확인하세요.
 - **문제가 생기면:** 알려진 증상과 해결 방법은 [`.claude/skills/vmware-wsl-lab/reference/pitfalls.md`](.claude/skills/vmware-wsl-lab/reference/pitfalls.md)에서 찾으세요.
 
 ## License

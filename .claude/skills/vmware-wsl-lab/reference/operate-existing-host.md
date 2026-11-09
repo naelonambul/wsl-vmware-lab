@@ -31,7 +31,7 @@ The shell is Bash inside WSL2, not PowerShell. Run Windows commands through `/mn
 | Windows user profile | detected through Windows interop | `LAB_VM_ROOT_WIN` |
 | VM list | `vms.tfvars` in the repository if present, else one VM `LAB_CLONE_NAME` | `LAB_VMS_FILE` |
 | Clone VMX (each VM) | `%USERPROFILE%\Documents\Virtual Machines\<name>\<name>.vmx` | `LAB_VM_ROOT_WIN` |
-| Base VMX | `base/ubuntu-base.vmx` in the repository | `LAB_BASE_DIR` |
+| Base VMX | `base/<image>/base.vmx` in the repository, one per image in use (VM `<image>-base`) | `LAB_BASE_DIR` |
 | Workstation tools | `/mnt/c/Program Files/VMware/VMware Workstation/` | `VMWARE_DIR` |
 | Private directory | `~/.config/wsl-vmware-lab/` | `LAB_PRIVATE_DIR` |
 | Guest VM user | `lab`, created by cloud-init in every clone | none (fixed in `lib/config.sh`) |
@@ -87,7 +87,7 @@ Preflight reports whether `.wslconfig` uses mirrored networking. Do not change `
 | `ansible/check-lab.yml` | smoke test for group `lab`: SSH, cloud-init, sudo, OS facts |
 | `./lab status` | read-only: host checks (`lib/preflight.sh`), Windows section (`windows/setup.ps1 Status`), power state of every VM of this checkout; `--plan [on\|off]` runs `lib/diagnose.sh` |
 | `lib/register-vm.py` | idempotent `POST /api/vms/registration` (called by `./lab setup`) |
-| `lib/base.sh` (`./lab setup`) | one-time base preparation (signed image, disk converted to a temp file then renamed, VMX, registration, marker `ubuntu-base.prepared`; the base is never booted); a prepared base only re-registers; `--recreate` (base off, user-approved) rebuilds |
+| `lib/base.sh` (`./lab setup`) | one-time base preparation (signed image, disk converted to a temp file then renamed, VMX, registration, marker `base.prepared`; bases are never booted), one per image in use; a prepared base only re-registers; `--recreate` (bases off, user-approved) rebuilds them |
 | `lib/wsl-tools.sh` (sudo, run by `./lab setup` when a tool is missing) | installs Terraform (HashiCorp apt), Ansible, image tools |
 
 Helper scripts read the Terraform output `vms`, not resource addresses. A state made by the older single-clone version (`vmworkstation_virtual_machine.ubuntu_demo`) is not migrated: destroy it with that version before upgrading, or the new version plans a second clone at the same path.
