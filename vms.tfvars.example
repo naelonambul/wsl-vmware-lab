@@ -5,6 +5,9 @@
 # Key = VM name (lowercase letters, digits, '-'): it becomes the Windows folder
 # <LAB_VM_ROOT_WIN>\<name>\<name>.vmx, the guest hostname and the Ansible host.
 # groups = Ansible groups for your playbooks. Every VM is also in group "lab".
+# image = guest cloud image: ubuntu-24.04, ubuntu-22.04 or debian-13; omitted
+# means LAB_IMAGE (default ubuntu-24.04). ./lab setup prepares one base per
+# image used here. Changing a VM's image rebuilds it (./lab up --allow-destroy).
 # Omitted values default to 2 vCPU, 2048 MB and groups ["demo"].
 #
 # Adding an entry and running `./lab up` creates only the new VM
@@ -21,5 +24,6 @@ vms = {
     processors = 2
     memory_mb  = 2048
     groups     = ["db"]
+    image      = "debian-13"
   }
 }

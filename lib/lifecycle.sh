@@ -133,17 +133,53 @@ guard_vm_destroy() {
       targets+=(-target="vmworkstation_virtual_machine.vm[\"$name\"]")
     done
     if [[ ${#targets[@]} -gt 0 ]]; then
+      # The targeted destroy also drops the bootstrap record of every other
+      # clone (Terraform follows the resource-level dependency). Those clones
+      # are untouched, so put their records back from the state as it was
+      # before: re-running their bootstrap would pin a new host key the guest
+      # does not have, and a targeted apply would pull in the new clones too.
+      local was now restored
+      was=$(mktemp); now=$(mktemp)
+      terraform state pull > "$was"
       terraform apply -destroy -input=false -auto-approve -parallelism=1 "${LAB_TF_VAR_ARGS[@]}" "${targets[@]}" || exit 1
       run_cleanup || exit 1
+      terraform state pull > "$now"
+      # shellcheck disable=SC2086 # names are validated VM keys
+      restored=$(python3 - "$was" "$now" $doomed <<'PY'
+import json, sys
+was, now = (json.load(open(p)) for p in sys.argv[1:3])
+doomed = set(sys.argv[3:])
+def bootstrap(state):
+    return next((r for r in state['resources'] if r['mode'] == 'managed'
+                 and r['type'] == 'terraform_data' and r['name'] == 'guest_bootstrap'), None)
+old, new = bootstrap(was), bootstrap(now)
+have = {i.get('index_key') for i in (new or {}).get('instances', [])}
+add = [i for i in (old or {}).get('instances', [])
+       if i.get('index_key') not in doomed and i.get('index_key') not in have]
+if add:
+    if new is None:
+        new = dict(old, instances=[])
+        now['resources'].append(new)
+    new['instances'] += add
+    now['serial'] += 1
+    json.dump(now, open(sys.argv[2], 'w'))
+print(' '.join(i['index_key'] for i in add))
+PY
+)
+      if [[ -n "$restored" ]]; then
+        terraform state push "$now" || exit 1
+        echo "[OK] Kept the bootstrap records of untouched clones: $restored"
+      fi
+      rm -f -- "$was" "$now"
       run_plan "$@"
     fi
     return 0
   fi
   echo "[ERROR] This would delete or replace VMs: $(tr '\n' ' ' <<<"$doomed")" >&2
   echo "        VM list in use: $vm_list_desc" >&2
-  if plan_changes | awk -F'\t' '$1 == "update" && $3 == "terraform_data" && $4 == "base_identity" { f = 1 } END { exit !f }'; then
-    echo "        The base VM changed (rebuilt, or re-registered at another id or path):" >&2
-    echo "        its clones are rebuilt from it, losing everything inside them." >&2
+  if plan_changes | awk -F'\t' '$1 == "update" && $3 == "terraform_data" && $4 == "vm_base" { f = 1 } END { exit !f }'; then
+    echo "        A VM's image changed, or its base was rebuilt or re-registered at another" >&2
+    echo "        id or path: those clones are rebuilt from it, losing everything inside them." >&2
   fi
   echo "        If vms.tfvars is missing or wrong, fix it. To remove these VMs on purpose:" >&2
   echo "        ./lab up --allow-destroy  (or ./lab destroy for all)" >&2
@@ -199,10 +235,12 @@ case "${1:-status}" in
     mapfile -t targets < <(existing_targets)
     if [[ ${#targets[@]} -eq 0 ]]; then echo '[OK] No VMs in the state'; exit 0; fi
     run_plan -var=power_state=off "${targets[@]}"
-    # Recording the base the first time (base_identity create) is harmless; a
-    # changed base shows up as clone replacements and is refused.
+    # Recording a clone's base the first time (vm_base create) and dropping the
+    # single base_identity of older versions are harmless; a changed base shows
+    # up as clone replacements and is refused.
     other=$(plan_changes | awk -F'\t' '!($1 == "update" && $3 == "vmworkstation_virtual_machine") &&
-      !(($1 == "create" || $1 == "update") && $3 == "terraform_data" && $4 == "base_identity") &&
+      !($1 == "create" && $3 == "terraform_data" && $4 == "vm_base") &&
+      !($1 == "delete" && $3 == "terraform_data" && $4 == "base_identity") &&
       $1 != "no-op" && $1 != "noop" && $1 != "read" { print "  " $1 ": " $2 }')
     if [[ -n "$other" ]]; then
       echo '[ERROR] off would do more than power VMs off; nothing changed:' >&2

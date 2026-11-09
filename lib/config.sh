@@ -36,9 +36,10 @@ export LAB_DHCP_LEASES="${LAB_DHCP_LEASES:-/mnt/c/ProgramData/VMware/vmnetdhcp.l
 export LAB_DHCP_CONF="${LAB_DHCP_CONF:-/mnt/c/ProgramData/VMware/vmnetdhcp.conf}"
 export LAB_NAT_VNET="${LAB_NAT_VNET:-VMnet8}"
 export LAB_MGMT_VNET="${LAB_MGMT_VNET:-VMnet1}"
-export LAB_BASE_NAME="${LAB_BASE_NAME:-ubuntu24-base}"
 export LAB_BASE_DIR="${LAB_BASE_DIR:-$LAB_PROJECT_DIR/base}"
-# Guest cloud image for the base (lib/base.sh lists the supported ones).
+# Guest image of VMs that do not name one in vms.tfvars (lib/base.sh lists the
+# supported images). Each image in use has its own base: VM "<image>-base",
+# files in base/<image>/.
 export LAB_IMAGE="${LAB_IMAGE:-ubuntu-24.04}"
 # Guest user created in every clone by cloud-init (lib/cloud-config.sh). Fixed,
 # not a setting: inventories of existing VMs depend on it.
@@ -168,7 +169,7 @@ lab_terraform_env() {
   export TF_VAR_vmrest_endpoint="$VMWS_ENDPOINT"
   export TF_VAR_vmrest_username="$VMWS_USERNAME"
   export TF_VAR_vmrest_password="$VMWS_PASSWORD"
-  export TF_VAR_base_name="$LAB_BASE_NAME"
+  export TF_VAR_default_image="$LAB_IMAGE"
   export TF_VAR_vm_root_win="$LAB_VM_ROOT_WIN"
   # Default single VM; a vms.tfvars passed with -var-file overrides it.
   TF_VAR_vms=$(printf '{"%s":{"processors":%d,"memory_mb":%d,"groups":["demo"]}}' \
@@ -185,22 +186,34 @@ lab_terraform_env() {
   fi
 }
 
-# Confirm the base VM before Terraform clones it (check-base.py) and pass its
-# identity to Terraform: TF_VAR_base_id makes the plan stop if the provider's
-# name lookup finds another VM, and TF_VAR_base_prepared (a hash of the
-# base's prepared marker, new with every ./lab setup --recreate) makes the
-# plan replace clones of an older base. Run after lab_terraform_env.
+# Images the VM list uses: LAB_IMAGE (VMs without an image) and every
+# image = "..." in vms.tfvars. Terraform validates the names.
+lab_used_images() {
+  {
+    printf '%s\n' "$LAB_IMAGE"
+    [[ -f "$LAB_VMS_FILE" ]] && tr -d '\r' < "$LAB_VMS_FILE" | sed -e 's/#.*//' \
+      | sed -nE 's/.*(^|[^A-Za-z0-9_])image[[:space:]]*=[[:space:]]*"([^"]*)".*/\2/p'
+  } | sort -u
+}
+
+# Confirm every base in use before Terraform clones it (check-base.py) and pass
+# their identities to Terraform as TF_VAR_bases: the id makes the plan stop if
+# the provider's name lookup finds another VM, and the hash of the base's
+# prepared marker (new with every ./lab setup --recreate) makes the plan
+# replace clones of an older base. Run after lab_terraform_env.
 lab_base_identity() {
-  local prepared="$LAB_BASE_DIR/ubuntu-base.prepared" id
-  if [[ ! -f "$prepared" ]]; then
-    echo "[ERROR] The base is not prepared ($prepared is missing). Run: ./lab setup" >&2
-    echo "        (A base prepared by an older version that works: touch \"$prepared\")" >&2
-    return 1
-  fi
-  id=$(python3 "$LAB_PROJECT_DIR/lib/check-base.py" "$LAB_BASE_DIR/ubuntu-base.vmx" "$LAB_BASE_NAME") || return 1
-  export TF_VAR_base_id="$id"
-  TF_VAR_base_prepared=$(sha256sum < "$prepared" | cut -d' ' -f1)
-  export TF_VAR_base_prepared
+  local image prepared id json='' sep=''
+  for image in $(lab_used_images); do
+    prepared="$LAB_BASE_DIR/$image/base.prepared"
+    if [[ ! -f "$prepared" ]]; then
+      echo "[ERROR] No prepared base for image $image ($prepared is missing). Run: ./lab setup" >&2
+      return 1
+    fi
+    id=$(python3 "$LAB_PROJECT_DIR/lib/check-base.py" "$LAB_BASE_DIR/$image/base.vmx" "$image-base") || return 1
+    json+=$(printf '%s"%s":{"id":"%s","prepared":"%s"}' "$sep" "$image" "$id" "$(sha256sum < "$prepared" | cut -d' ' -f1)")
+    sep=,
+  done
+  export TF_VAR_bases="{$json}"
 }
 
 # Windows path compared case-insensitively, with / and \ treated alike.
