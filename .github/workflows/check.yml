@@ -45,7 +45,7 @@ jobs:
           export TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=true
           mkdir -p "$TF_PLUGIN_CACHE_DIR"
           for i in 1 2 3; do
-            terraform init -backend=false -input=false >/dev/null && break
+            terraform init -backend=false -input=false -no-color && break
             [ "$i" -eq 3 ] && exit 1
             echo "terraform init failed (attempt $i); retrying in $((i * 20)) s"
             sleep $((i * 20))
