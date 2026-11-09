@@ -25,8 +25,7 @@ prepare_base() {
   local image=$1
   # Supported guest images. Guests need cloud-init, an SSH server, sudo and
   # python3 (no VMware Tools). img_disk: the VMDK inside an OVA, empty for qcow2.
-  local signed=1 img_url img_file img_disk sums guest_os sumcmd dir name vm_disk vmx prepared vmx_win new_vmx built source_disk source_fmt want got power
-  signed=1
+  local signed=1 img_url img_file img_disk sums guest_os sumcmd dir name vm_disk vmx prepared vmx_win new_vmx source_disk source_fmt want got power
   case "$image" in
     ubuntu-24.04)
       img_url="${LAB_UBUNTU_IMAGE_URL:-https://cloud-images.ubuntu.com/noble/current}"
