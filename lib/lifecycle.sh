@@ -133,8 +133,26 @@ guard_vm_destroy() {
       targets+=(-target="vmworkstation_virtual_machine.vm[\"$name\"]")
     done
     if [[ ${#targets[@]} -gt 0 ]]; then
+      # The targeted destroy also drops the bootstrap record of every other
+      # clone (Terraform follows the resource-level dependency). Those clones
+      # are untouched: restore only their records, without re-running the
+      # bootstrap (it would pin a new host key the guest does not have) and
+      # without powering them off.
+      local had kept=(); LAB_BOOTSTRAP_KEEP=""
+      had=$(terraform state list 2>/dev/null | sed -n 's/^terraform_data\.guest_bootstrap\["\(.*\)"\]$/\1/p')
       terraform apply -destroy -input=false -auto-approve -parallelism=1 "${LAB_TF_VAR_ARGS[@]}" "${targets[@]}" || exit 1
       run_cleanup || exit 1
+      for name in $had; do
+        grep -Fxq "$name" <<<"$doomed" && continue
+        terraform state list 2>/dev/null | grep -Fxq "terraform_data.guest_bootstrap[\"$name\"]" && continue
+        kept+=(-target="terraform_data.guest_bootstrap[\"$name\"]")
+        LAB_BOOTSTRAP_KEEP+=" $name"
+      done
+      if [[ ${#kept[@]} -gt 0 ]]; then
+        echo "[OK] Restoring the bootstrap records of untouched clones:$LAB_BOOTSTRAP_KEEP"
+        LAB_BOOTSTRAP_KEEP="$LAB_BOOTSTRAP_KEEP" terraform apply -input=false -auto-approve -parallelism=1 \
+          "${LAB_TF_VAR_ARGS[@]}" "$@" "${kept[@]}" || exit 1
+      fi
       run_plan "$@"
     fi
     return 0
