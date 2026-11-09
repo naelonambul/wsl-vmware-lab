@@ -62,11 +62,13 @@ for e in errors:
     print("[ERROR] " + e)
 if not changes and not errors:
     print("[OK] no changes")
+def vm_loss(action, addr):
+    return action in ("delete", "replace") and addr.startswith("vmworkstation_virtual_machine.")
 for action, addr in changes:
-    tag = "[WARN]" if action in ("delete", "replace") else "[INFO]"
+    tag = "[WARN]" if vm_loss(action, addr) else "[INFO]"
     print(f"{tag} {action}: {addr}")
-if any(a in ("delete", "replace") for a, _ in changes):
-    print("[WARN] the plan deletes or replaces VMs; check the VM list before any terraform-vm.sh command")
-    print("       (replacements of every clone after ./lab setup --recreate are expected: on --allow-destroy)")
+if any(vm_loss(a, addr) for a, addr in changes):
+    print("[WARN] the plan deletes or replaces VMs; check the VM list before ./lab up --allow-destroy")
+    print("       (after ./lab setup --recreate or an image change, those clones are expected to be replaced)")
 PY
 exit "$rc"
