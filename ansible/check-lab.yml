@@ -17,7 +17,7 @@
 
     - name: Gather OS facts
       ansible.builtin.setup:
-        gather_subset: [min]
+        gather_subset: [min, network]
 
     - name: Check sudo works without a password
       ansible.builtin.command: "true"
@@ -26,4 +26,4 @@
 
     - name: Report host
       ansible.builtin.debug:
-        msg: "{{ inventory_hostname }}: {{ ansible_distribution }} {{ ansible_distribution_version }}, user {{ ansible_user_id }}, groups {{ group_names | join(',') }}"
+        msg: "{{ inventory_hostname }}: {{ ansible_distribution }} {{ ansible_distribution_version }}, user {{ ansible_user_id }}, groups {{ group_names | join(',') }}, lan0 {{ ansible_lan0.ipv4.address | default('none') }}"

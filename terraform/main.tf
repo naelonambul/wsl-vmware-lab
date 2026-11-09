@@ -19,7 +19,11 @@ provider "vmworkstation" {
 
 locals {
   # Every VM with its image resolved; one base per image in use.
-  vms    = { for name, spec in var.vms : name => merge(spec, { image = coalesce(spec.image, var.default_image) }) }
+  # lan: "none", "dhcp" or the static address of the bridged NIC lan0.
+  vms = { for name, spec in var.vms : name => merge(spec, {
+    image = coalesce(spec.image, var.default_image)
+    lan   = spec.lan_ip != null ? spec.lan_ip : (spec.lan ? "dhcp" : "none")
+  }) }
   images = toset([for spec in values(local.vms) : spec.image])
 }
 
@@ -39,18 +43,20 @@ data "vmworkstation_virtual_machine" "base" {
   }
 }
 
-# Per clone: its image and that base's identity. The provider updates sourceid
+# Per clone: its image, its LAN NIC and that base's identity. The provider updates sourceid
 # and path in place, and a base rebuilt at the same path keeps its vmrest id, so
-# this is what replaces a clone when its image changes or its base is rebuilt
+# this is what replaces a clone when its image or LAN setting changes or its
+# base is rebuilt
 # (lib/lifecycle.sh on asks for --allow-destroy).
 resource "terraform_data" "vm_base" {
   for_each = local.vms
-  input = {
+  # lan only when set, so VMs without a LAN NIC keep the record they had.
+  input = merge({
     image    = each.value.image
     id       = data.vmworkstation_virtual_machine.base[each.value.image].id
     path     = data.vmworkstation_virtual_machine.base[each.value.image].path
     prepared = try(var.bases[each.value.image].prepared, "")
-  }
+  }, { for k, v in { lan = each.value.lan } : k => v if v != "none" })
 }
 
 # One clone per entry of var.vms (key = VM name), each in
@@ -95,6 +101,7 @@ resource "terraform_data" "guest_bootstrap" {
       VMX_WIN = vmworkstation_virtual_machine.vm[each.key].path
       VM_ID   = vmworkstation_virtual_machine.vm[each.key].id
       VM_NAME = each.key
+      VM_LAN  = each.value.lan
     }
   }
 }

@@ -42,12 +42,42 @@ ethernets:
     dhcp4: true
     dhcp-identifier: mac
 CFG
+# LAN NIC (vms.tfvars lan / lan_ip): the only vmxnet3 NIC, renamed lan0 so it
+# no longer matches en* above. No default route or DNS from it: internet
+# traffic stays on the NAT NIC.
+lan="${VM_LAN:-none}"
+case "$lan" in
+  none) ;;
+  dhcp)
+    cat >> "$seed_dir/network-config" <<'CFG'
+  lan0:
+    match:
+      driver: vmxnet3
+    set-name: lan0
+    dhcp4: true
+    dhcp-identifier: mac
+    dhcp4-overrides:
+      use-routes: false
+      use-dns: false
+CFG
+    ;;
+  *)
+    [[ "$lan" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]] || { echo "[ERROR] Unexpected lan_ip: $lan" >&2; exit 1; }
+    cat >> "$seed_dir/network-config" <<CFG
+  lan0:
+    match:
+      driver: vmxnet3
+    set-name: lan0
+    addresses: [$lan]
+CFG
+    ;;
+esac
 # The ISO must reside on a Windows drive so Workstation can open it.
 seed_iso="$(dirname "$vmx")/cloud-init-$VM_ID.iso"
 cloud-localds --network-config="$seed_dir/network-config" "$seed_iso" "$seed_dir/user-data" "$seed_dir/meta-data"
 SEED_WIN="$(wslpath -w "$seed_iso")"
 export SEED_WIN
-export VMX_LINUX="$vmx"
+export VMX_LINUX="$vmx" VM_LAN="$lan"
 python3 - <<'PY'
 import os, re
 from pathlib import Path
@@ -65,6 +95,11 @@ settings={
  # base's NAT MAC and receive the same DHCP address).
  'uuid.action':'create',
 }
+if os.environ['VM_LAN'] != 'none':
+    # Bridged to the physical LAN through VMnet0.
+    settings.update({'ethernet2.present':'TRUE', 'ethernet2.startConnected':'TRUE',
+                     'ethernet2.connectionType':'bridged', 'ethernet2.virtualDev':'vmxnet3',
+                     'ethernet2.addressType':'generated'})
 s=re.sub(r'(?mi)^\s*(uuid\.bios|uuid\.location|vc\.uuid|ethernet\d+\.generatedAddress(Offset)?)\s*=.*\n?','',s)
 for key,value in settings.items():
     line=f'{key} = "{value}"'
@@ -76,5 +111,5 @@ for key,value in settings.items():
 tmp=p.with_name(p.name+'.tmp')
 tmp.write_text(s+'\n')
 os.replace(tmp,p)
-print('[OK] Cloud-init seed, management NIC and a fresh UUID/MAC for this clone configured')
+print('[OK] Cloud-init seed, management NIC' + ('' if os.environ['VM_LAN'] == 'none' else ', LAN NIC lan0 (' + os.environ['VM_LAN'] + ')') + ' and a fresh UUID/MAC for this clone configured')
 PY
