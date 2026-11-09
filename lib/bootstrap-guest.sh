@@ -42,17 +42,22 @@ ethernets:
     dhcp4: true
     dhcp-identifier: mac
 CFG
-# LAN NIC (vms.tfvars lan / lan_ip): the only vmxnet3 NIC, renamed lan0 so it
-# no longer matches en* above. No default route or DNS from it: internet
-# traffic stays on the NAT NIC.
+# LAN NIC (vms.tfvars lan / lan_ip). cloud-init renames a NIC on first boot
+# only when it is matched by MAC, so the NIC gets a static MAC from VMware's
+# static range (00:50:56:00-3f:xx:xx), derived from this PC and VM id: unique
+# on a LAN shared by several lab PCs whose clones may have the same id. Renamed
+# lan0, it no longer matches en* above. No default route or DNS from it:
+# internet traffic stays on the NAT NIC.
 lan="${VM_LAN:-none}"
+h=$(printf '%s %s' "$(hostname)" "$VM_ID" | sha256sum | cut -c1-6)
+lan_mac=$(printf '00:50:56:%02x:%s:%s' $((16#${h:0:2} % 64)) "${h:2:2}" "${h:4:2}")
 case "$lan" in
   none) ;;
   dhcp)
-    cat >> "$seed_dir/network-config" <<'CFG'
+    cat >> "$seed_dir/network-config" <<CFG
   lan0:
     match:
-      driver: vmxnet3
+      macaddress: "$lan_mac"
     set-name: lan0
     dhcp4: true
     dhcp-identifier: mac
@@ -66,7 +71,7 @@ CFG
     cat >> "$seed_dir/network-config" <<CFG
   lan0:
     match:
-      driver: vmxnet3
+      macaddress: "$lan_mac"
     set-name: lan0
     addresses: [$lan]
 CFG
@@ -77,7 +82,7 @@ seed_iso="$(dirname "$vmx")/cloud-init-$VM_ID.iso"
 cloud-localds --network-config="$seed_dir/network-config" "$seed_iso" "$seed_dir/user-data" "$seed_dir/meta-data"
 SEED_WIN="$(wslpath -w "$seed_iso")"
 export SEED_WIN
-export VMX_LINUX="$vmx" VM_LAN="$lan"
+export VMX_LINUX="$vmx" VM_LAN="$lan" LAN_MAC="$lan_mac"
 python3 - <<'PY'
 import os, re
 from pathlib import Path
@@ -102,7 +107,7 @@ if os.environ['VM_LAN'] != 'none':
                      'pciBridge4.virtualDev':'pcieRootPort', 'pciBridge4.functions':'8',
                      'ethernet2.present':'TRUE', 'ethernet2.startConnected':'TRUE',
                      'ethernet2.connectionType':'bridged', 'ethernet2.virtualDev':'vmxnet3',
-                     'ethernet2.addressType':'generated'})
+                     'ethernet2.addressType':'static', 'ethernet2.address':os.environ['LAN_MAC']})
 s=re.sub(r'(?mi)^\s*(uuid\.bios|uuid\.location|vc\.uuid|ethernet\d+\.generatedAddress(Offset)?)\s*=.*\n?','',s)
 for key,value in settings.items():
     line=f'{key} = "{value}"'
