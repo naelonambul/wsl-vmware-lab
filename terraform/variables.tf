@@ -59,7 +59,7 @@ variable "vms" {
     processors = optional(number, 2)
     memory_mb  = optional(number, 2048)
     groups     = optional(list(string), ["demo"])
-    image      = optional(string) # default: var.default_image
+    image      = optional(string)      # default: var.default_image
     lan        = optional(bool, false) # bridged NIC lan0 on the physical LAN, DHCP
     lan_ip     = optional(string)      # "192.168.1.201/24": static lan0 (implies lan)
   }))
