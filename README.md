@@ -13,18 +13,25 @@ WSL Ansible --SSH--> 실습 VM
 ## 준비물
 
 - Windows 11, WSL2 Ubuntu 24.04, **미러드 네트워크**(`%USERPROFILE%\.wslconfig`의 `[wsl2]`에 `networkingMode=mirrored`)
-- **VMware Workstation Pro는 사람이 직접 설치합니다.** 공식 설치 파일은 Broadcom 계정으로만 받을 수 있어 자동화하지 않습니다. 설치 뒤 `vmrest.exe -C`로 API 계정을 만듭니다(Windows·Ubuntu 로그인과 별개).
+- **VMware Workstation Pro는 사람이 직접 설치합니다.** 공식 설치 파일은 Broadcom 계정으로만 받을 수 있어 자동화하지 않습니다. API 계정(Windows·Ubuntu 로그인과 별개)은 설치 2단계의 `./lab account`로 만듭니다.
 - 게스트는 **Ubuntu 클라우드 이미지(24.04)만** 지원합니다. 게스트가 VMware guestinfo로 사용자 이름과 SSH 호스트 키를 알려 주는데, 여기에 이미지 안의 `open-vm-tools`가 필요합니다.
 - 저장소는 Windows 드라이브(예: `C:\wsl-vmware-lab`, WSL에서 `/mnt/c/...`)에 둡니다. 베이스 VM 파일이 저장소 안에 만들어집니다.
 
 ## 설치
 
-1. **vmrest 계정:** Windows 사용자 폴더의 `.env`(`C:\Users\<사용자>\.env`)에 적습니다. 다른 계정이 읽지 못하게 두세요(`./lab status`가 확인합니다).
+1. **저장소 받기 (WSL):** Windows 드라이브에 받습니다.
+   ```bash
+   cd /mnt/c && git clone https://github.com/naelonambul/wsl-vmware-lab.git && cd wsl-vmware-lab
    ```
-   VMWS_USERNAME=<vmrest.exe -C 로 만든 계정>
-   VMWS_PASSWORD=<그 비밀번호>
+2. **vmrest 계정 (WSL, 사람이 직접 입력):**
+   ```bash
+   ./lab account          # vmrest.exe -C 실행 → 같은 비밀번호를 한 번 더 받아 %USERPROFILE%\.env 작성·잠금
+   ./lab account --lock   # (.env 권한만 다시 잠그기)
    ```
-2. **Windows 쪽 (관리자 PowerShell, 저장소의 `windows` 폴더에서, 한 번):**
+   - 공식 `vmrest.exe -C` 프롬프트에서 아이디와 비밀번호를 정합니다. 그 비밀번호를 한 번 더 입력하면 Windows 사용자 폴더의 `.env`에 `VMWS_USERNAME`·`VMWS_PASSWORD` 줄을 쓰고(다른 줄은 그대로), 본인·SYSTEM·Administrators만 열 수 있게 잠급니다.
+   - 2단계의 부팅 작업이 있으면 vmrest를 다시 시작해 인증(HTTP 200)까지 확인합니다. 처음 설치라 작업이 아직 없으면 확인은 `./lab status`가 합니다.
+   - 터미널에서만 동작합니다. 에이전트는 비밀번호를 대신 입력하지 않습니다.
+3. **Windows 쪽 (관리자 PowerShell, 저장소의 `windows` 폴더에서, 한 번):**
    ```powershell
    .\setup.ps1 Install -AllowedRemoteAddress 192.168.1.0/24   # 허용 대역은 자신의 LAN으로
    .\setup.ps1 Status                                          # 읽기만 함
@@ -34,9 +41,8 @@ WSL Ansible --SSH--> 실습 VM
    - TCP 22를 `-AllowedRemoteAddress`에서만 허용합니다(Windows 방화벽 + Hyper-V 방화벽).
    - 전원 연결 시 절전·최대 절전을 끄고 덮개를 닫아도 아무것도 하지 않게 합니다(`-IncludeBattery`: 배터리도, `-SkipPower`: 건드리지 않음). 절전하면 SSH·vmrest·VM이 모두 멈춥니다.
    - 22번과 8697번이 실제로 열린 뒤에만 준비 완료를 출력합니다. 예전 버전이 만든 작업과 `%ProgramFiles%\wsl-vmware-lab` 사본은 지웁니다.
-3. **WSL 쪽:**
+4. **WSL 쪽:**
    ```bash
-   git clone https://github.com/naelonambul/wsl-vmware-lab.git && cd wsl-vmware-lab
    ./lab setup     # 1회: 도구(없으면 sudo로 설치), 공식 이미지 받기·서명 확인, 베이스 VM 준비
    ./lab status    # 점검 (아무것도 바꾸지 않음)
    ```
@@ -46,6 +52,7 @@ AI 에이전트(Claude Code, Codex)에게 맡기려면 "https://github.com/naelo
 ## 사용: `./lab`
 
 ```bash
+./lab account [--lock]            # vmrest 계정 + .env (사람이 입력) / 권한만 잠그기
 ./lab status [--start-vmrest]     # 점검: 도구, vmrest(루프백·인증), Windows 작업·전원, VM 전원
 ./lab status --plan [on|off]      # up/down이 바꿀 내용을 미리 보기 (읽기 전용)
 ./lab up [--allow-destroy]        # vms.tfvars의 VM 만들기(새 VM은 꺼서 준비한 뒤 켬) + 모두 켜기

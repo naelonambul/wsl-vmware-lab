@@ -70,30 +70,14 @@ if lab_require_credentials 2>/dev/null; then
   have_creds=true
   ok "vmrest account: from ${VMWS_CREDENTIAL_SOURCE} (values not shown)"
   # The secrets file should grant access only to your user (plus SYSTEM and
-  # Administrators). Compared by SID so localized names do not matter. The
-  # path goes through the environment: powershell.exe -Command does not bind
-  # trailing arguments to param().
+  # Administrators).
   if $interop && [[ "$VMWS_CREDENTIAL_SOURCE" == "secrets file /mnt/"* ]]; then
-    secrets_win="$(wslpath -w "${VMWS_CREDENTIAL_SOURCE#secrets file }")"
-    acl="$(LAB_ACL_FILE="$secrets_win" WSLENV="LAB_ACL_FILE${WSLENV:+:$WSLENV}" \
-      "$PS" -NoProfile -NonInteractive -Command '
-      [Console]::OutputEncoding = [Text.Encoding]::UTF8
-      try {
-        $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-        $allowed = @($me, "S-1-5-18", "S-1-5-32-544")
-        $other = foreach ($a in (Get-Acl -LiteralPath $env:LAB_ACL_FILE -ErrorAction Stop).Access) {
-          if ($a.AccessControlType -ne "Allow") { continue }
-          try { $sid = $a.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { $sid = $null }
-          if (-not $sid -or $allowed -notcontains $sid) { $a.IdentityReference.Value }
-        }
-        if ($other) { "open:" + (($other | Select-Object -Unique) -join ", ") } else { "private" }
-      } catch { "error:" + $_.Exception.GetType().Name }' 2>/dev/null | tr -d '\r')" || acl=""
-    # Printed literally for the user to paste into PowerShell; not expanded here.
-    fix_cmd='icacls "'"$secrets_win"'" /inheritance:r /grant:r "$($env:USERNAME):F"'
+    secrets="${VMWS_CREDENTIAL_SOURCE#secrets file }"
+    acl="$(lab_secrets_acl "$secrets")"
     case "$acl" in
       private) ok "secrets file permissions: only your user, SYSTEM and Administrators are granted access" ;;
-      open:*)  warn "secrets file also grants access to: ${acl#open:}; restrict it to your user (PowerShell: $fix_cmd), then re-run preflight" ;;
-      *)       warn "secrets file permissions: could not be checked (${acl:-no output}); check with: icacls \"$secrets_win\"" ;;
+      open:*)  warn "secrets file also grants access to: ${acl#open:}; restrict it with: ./lab account --lock" ;;
+      *)       warn "secrets file permissions: could not be checked (${acl:-no output}); check with: icacls \"$(wslpath -w "$secrets")\"" ;;
     esac
   fi
 else
@@ -189,7 +173,7 @@ if [[ "$code" == 000 ]]; then
 fi
 case "$code" in
   401) ok "vmrest answers at ${VMWS_ENDPOINT} and refuses requests without credentials (HTTP 401)" ;;
-  200) fail "vmrest answered HTTP 200 without credentials: authentication is off. Configure the account with vmrest.exe -C and restart vmrest"; exit 1 ;;
+  200) fail "vmrest answered HTTP 200 without credentials: authentication is off. Configure the account with ./lab account"; exit 1 ;;
   404) fail "HTTP 404 - VMWS_ENDPOINT must end with /api"; exit 1 ;;
   *)   fail "unexpected HTTP $code from ${VMWS_ENDPOINT}"; exit 1 ;;
 esac
@@ -218,9 +202,8 @@ fi
 
 if ! $have_creds; then
   fail "cannot verify the vmrest account: no secrets file with it"
-  echo "       The user writes the vmrest.exe -C account into ${LAB_SECRETS_FILE:-%USERPROFILE%\\.env}:"
-  echo "         VMWS_USERNAME=<account>"
-  echo "         VMWS_PASSWORD=<password>"
+  echo "       The user runs ./lab account (vmrest.exe -C + secrets file), or writes the existing"
+  echo "       vmrest account into ${LAB_SECRETS_FILE:-%USERPROFILE%\\.env}: VMWS_USERNAME=... and VMWS_PASSWORD=..."
   exit 1
 fi
 auth_code="$(curl --connect-timeout 3 --max-time 8 -s -o /dev/null -w '%{http_code}' -K - "${VMWS_ENDPOINT%/}/vms" \
@@ -230,8 +213,8 @@ if [[ "$auth_code" == 200 ]]; then
 elif [[ "$auth_code" == 401 ]]; then
   fail "authenticated GET /vms: HTTP 401 - stored account (${VMWS_CREDENTIAL_SOURCE}) does not match vmrest"
   echo "       vmrest keeps its own account (vmrest.exe -C, vmrest.cfg); its password is not readable."
-  echo "       The user corrects the secrets file, or re-runs vmrest.exe -C, writes the same values"
-  echo "       there and restarts vmrest. Also check that vmrest runs as the same Windows user."
+  echo "       The user corrects the secrets file, or runs ./lab account to set both again."
+  echo "       Also check that vmrest runs as the same Windows user."
   exit 1
 else
   fail "authenticated GET /vms: HTTP $auth_code"

@@ -128,6 +128,27 @@ lab_require_credentials() {
   export VMWS_USERNAME VMWS_PASSWORD VMWS_CREDENTIAL_SOURCE
 }
 
+# Who may open the secrets file: "private" (only your user, SYSTEM and
+# Administrators; compared by SID so localized names do not matter),
+# "open:<names>" or "error:<reason>". The path goes through the environment:
+# powershell.exe -Command does not bind trailing arguments to param().
+lab_secrets_acl() {
+  local ps=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
+  LAB_ACL_FILE="$(wslpath -w "$1")" WSLENV="LAB_ACL_FILE${WSLENV:+:$WSLENV}" \
+    "$ps" -NoProfile -NonInteractive -Command '
+    [Console]::OutputEncoding = [Text.Encoding]::UTF8
+    try {
+      $me = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+      $allowed = @($me, "S-1-5-18", "S-1-5-32-544")
+      $other = foreach ($a in (Get-Acl -LiteralPath $env:LAB_ACL_FILE -ErrorAction Stop).Access) {
+        if ($a.AccessControlType -ne "Allow") { continue }
+        try { $sid = $a.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value } catch { $sid = $null }
+        if (-not $sid -or $allowed -notcontains $sid) { $a.IdentityReference.Value }
+      }
+      if ($other) { "open:" + (($other | Select-Object -Unique) -join ", ") } else { "private" }
+    } catch { "error:" + $_.Exception.GetType().Name }' </dev/null 2>/dev/null | tr -d '\r' || true
+}
+
 # curl config line for basic auth, read by `curl -K -` from stdin so the
 # password never appears in the process list. Escapes \ and " for curl.
 lab_curl_auth() {
