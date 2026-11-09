@@ -189,7 +189,8 @@ function Get-Lan {
         Where-Object { $_.IPAddress -notlike '169.254.*' } | Select-Object -First 1
     if (-not $ip) { return $null }
     $b = ([Net.IPAddress]$ip.IPAddress).GetAddressBytes(); [Array]::Reverse($b)
-    $mask = ([uint64]0xFFFFFFFF -shl (32 - $ip.PrefixLength)) -band [uint64]0xFFFFFFFF
+    $all = [uint64]4294967295   # 0xFFFFFFFF would be read as the Int32 -1
+    $mask = ($all -shl (32 - $ip.PrefixLength)) -band $all
     $net = [BitConverter]::GetBytes([uint32]([uint64][BitConverter]::ToUInt32($b, 0) -band $mask)); [Array]::Reverse($net)
     [pscustomobject]@{ Cidr = "$(([Net.IPAddress]$net).IPAddressToString)/$($ip.PrefixLength)"; Address = $ip.IPAddress; Adapter = $ip.InterfaceAlias }
 }
