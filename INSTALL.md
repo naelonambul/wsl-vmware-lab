@@ -77,7 +77,7 @@ A replaced skill is kept as `vmware-wsl-lab.bak.<time>`; tell the user, and dele
 ```
 
 - `exit=0`: vmrest answers and the stored account is accepted. The API side is ready; preflight does not test SSH from another PC, the base VM or a clone lifecycle (the skill's verification checklist does).
-- Anything else: read the `[ERROR]`/`[WARN]` lines and use the failure table in the skill's `SKILL.md` section 0. Typical first-time results: the vmrest account file `%USERPROFILE%\.env` does not exist yet (the user runs `./lab account`; README 설치 2단계), vmrest is not running, or tools are missing (new-PC path). Ask before fixing anything.
+- Anything else: read the `[ERROR]`/`[WARN]` lines and use the failure table in the skill's `SKILL.md` section 0. Typical first-time results: the vmrest account file `%USERPROFILE%\.env` does not exist yet (the user runs `./lab account`; README, Installation step 2), vmrest is not running, or tools are missing (new-PC path). Ask before fixing anything.
 
 Installing the skill is done even when preflight fails; report both results separately.
 
