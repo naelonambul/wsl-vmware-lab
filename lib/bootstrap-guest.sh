@@ -68,6 +68,16 @@ CFG
     ;;
   *)
     [[ "$lan" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]] || { echo "[ERROR] Unexpected lan_ip: $lan" >&2; exit 1; }
+    # The address must be on this PC's LAN and free (this clone is new and off,
+    # so anything answering is another device).
+    net=$(lab_lan) || { echo '[ERROR] Could not detect the LAN (no IPv4 default route); cannot check lan_ip' >&2; exit 1; }
+    python3 -c 'import ipaddress, sys
+a = ipaddress.ip_interface(sys.argv[1]); n = ipaddress.ip_network(sys.argv[2])
+sys.exit(0 if a.network == n and a.ip not in (n.network_address, n.broadcast_address) else 1)' "$lan" "${net%% *}" \
+      || { echo "[ERROR] lan_ip $lan is not a host address on this PC's LAN ${net%% *}" >&2; exit 1; }
+    if ping -c 2 -W 1 "${lan%/*}" >/dev/null 2>&1; then
+      echo "[ERROR] lan_ip ${lan%/*} already answers on the LAN; pick a free address outside the router's DHCP range" >&2; exit 1
+    fi
     cat >> "$seed_dir/network-config" <<CFG
   lan0:
     match:

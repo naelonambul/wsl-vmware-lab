@@ -49,13 +49,13 @@ WSL Ansible --SSH--> 실습 VM (VMnet1 host-only 관리망; VMnet8 NAT)
 
 3. **Windows 부팅 작업, 방화벽, 전원, VMware 브리지 설정 (관리자 PowerShell, `windows\` 폴더에서):**
    ```powershell
-   .\setup.cmd Install -AllowedRemoteAddress 192.168.1.0/24   # 자신의 LAN 대역으로 변경
+   .\setup.cmd Install                                         # LAN 대역은 기본 경로에서 자동 감지
    .\setup.cmd Status                                          # 읽기 전용 점검 (관리자 권한 불필요)
    .\setup.cmd Remove                                          # 작업과 방화벽 규칙 제거 (전원 설정은 그대로)
    ```
    `setup.cmd`는 같은 인자로 `setup.ps1`을 실행하면서 그 한 번만 PowerShell 실행 정책을 우회합니다(Windows는 기본적으로 `.ps1` 스크립트를 막음). 시스템 설정은 바꾸지 않습니다. `windows\setup.ps1` 옵션:
    - `-Action`: `Install`, `Status`(기본값), `Remove`
-   - `-AllowedRemoteAddress <subnet>`: `Install`에 필수. TCP 22를 허용할 출발지 대역(예: `192.168.1.0/24`)
+   - `-AllowedRemoteAddress <subnet>`: TCP 22를 허용할 출발지 대역. 기본값은 기본 경로가 나가는 어댑터의 LAN, 즉 다른 PC가 이 PC에 접속하는 네트워크입니다(미러드 모드라 WSL도 같은 네트워크). 예: `192.168.1.0/24`. `Status`가 보여 줍니다
    - `-Distro <name>`: WSL 배포판 이름(기본값 `Ubuntu-24.04`)
    - `-VmrestPath <path>`: `vmrest.exe` 경로(기본값 `$env:ProgramFiles\VMware\VMware Workstation\vmrest.exe`)
    - `-IncludeBattery`: 배터리 전원에서도 절전, 최대 절전, 덮개 닫기 동작을 끔
@@ -115,7 +115,7 @@ cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, memory_mb, Ansible 
 - `vms.tfvars`의 `vms = { ... }` 안 각 키가 VM 이름입니다(`^[a-z0-9][a-z0-9-]{0,62}$`, 영문 소문자·숫자·`-`만 사용, 베이스 이름 `<image>-base`와 같을 수 없음). 이 이름이 Windows 폴더 및 VMX 경로(`<LAB_VM_ROOT_WIN>\<name>\<name>.vmx`), 게스트 호스트 이름, Ansible 호스트 이름이 됩니다.
 - 생략한 필드는 `processors = 2`, `memory_mb = 2048`, `groups = ["demo"]` 기본값을 씁니다.
 - `groups`의 그룹 이름은 `^[a-z_][a-z0-9_]*$` 형식이어야 합니다. 모든 VM은 지정한 `groups`에 들어가며, 항상 `lab` 그룹에도 추가됩니다(`ansible/check-lab.yml`은 `lab`에서, 기본 `ansible/configure-guest.yml`은 `demo`에서 실행됩니다).
-- **LAN NIC(선택):** `lan = true`를 주면 브리지 NIC(VMnet0)가 붙고, 게스트 안에서 `lan0`이라는 이름으로 공유기 DHCP에서 주소를 받습니다(예: 192.168.1.x). `lan_ip = "192.168.1.240/24"`를 주면 그 주소로 고정됩니다(공유기 DHCP 범위 밖의 주소를 쓰세요). `lan0`은 기본 경로와 DNS를 바꾸지 않으므로 인터넷은 계속 NAT로 나갑니다. 플레이북에서는 `ansible_lan0.ipv4.address`로 읽습니다(`check-lab.yml`이 보여 줍니다). 같은 LAN의 여러 PC에 있는 VM들이 이 주소로 서로 통신할 수 있습니다. `lan`/`lan_ip`를 바꾸면 그 VM을 다시 만듭니다(`./lab up --allow-destroy`). Hyper-V 어댑터가 있는 PC에서는 VMware의 VMnet0이 실제 네트워크 어댑터에 브리지되는지 확인하세요(Virtual Network Editor).
+- **LAN NIC(선택):** `lan = true`를 주면 브리지 NIC(VMnet0)가 붙고, 게스트 안에서 `lan0`이라는 이름으로 공유기 DHCP에서 주소를 받습니다(예: 192.168.1.x). `lan_ip = "192.168.1.240/24"`를 주면 그 주소로 고정됩니다(공유기 DHCP 범위 밖의 주소를 쓰세요). 이 PC의 LAN 대역(기본 경로에서 감지, `./lab status`에 표시) 밖의 주소이거나 이미 응답하는 주소면 `./lab up`이 거부합니다. `lan0`은 기본 경로와 DNS를 바꾸지 않으므로 인터넷은 계속 NAT로 나갑니다. 플레이북에서는 `ansible_lan0.ipv4.address`로 읽습니다(`check-lab.yml`이 보여 줍니다). 같은 LAN의 여러 PC에 있는 VM들이 이 주소로 서로 통신할 수 있습니다. `lan`/`lan_ip`를 바꾸면 그 VM을 다시 만듭니다(`./lab up --allow-destroy`). Hyper-V 어댑터가 있는 PC에서는 VMware의 VMnet0이 실제 네트워크 어댑터에 브리지되는지 확인하세요(Virtual Network Editor).
 - `vms.tfvars`에 항목을 더하고 `./lab up`을 실행하면 이미 켜져 있는 VM은 그대로 둔 채 새 VM만 만들고 준비합니다(꺼진 상태로 만든 뒤 부트스트랩하고 전원을 켭니다).
 
 ## 지켜 주는 것

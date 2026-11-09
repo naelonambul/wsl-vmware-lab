@@ -49,13 +49,13 @@ Background posts (the repository has evolved since publication; where they diffe
 
 3. **Configure Windows boot tasks, firewall, power and the VMware bridge (elevated PowerShell in `windows\`):**
    ```powershell
-   .\setup.cmd Install -AllowedRemoteAddress 192.168.1.0/24   # replace with your LAN subnet
+   .\setup.cmd Install                                         # LAN detected from the default route
    .\setup.cmd Status                                          # read-only check (no elevation needed)
    .\setup.cmd Remove                                          # removes tasks and firewall rules (keeps power settings)
    ```
    `setup.cmd` runs `setup.ps1` with the same arguments, bypassing PowerShell's execution policy for that run only (Windows blocks `.ps1` scripts by default); the system setting is left alone. Options for `windows\setup.ps1`:
    - `-Action`: `Install`, `Status` (default), or `Remove`
-   - `-AllowedRemoteAddress <subnet>`: required for `Install`; source range allowed on TCP 22 (for example `192.168.1.0/24`)
+   - `-AllowedRemoteAddress <subnet>`: source range allowed on TCP 22. Default: the LAN of the adapter that carries the default route, i.e. the network other PCs reach this one on (WSL shares it in mirrored mode), for example `192.168.1.0/24`; `Status` shows it
    - `-Distro <name>`: WSL distribution name (default `Ubuntu-24.04`)
    - `-VmrestPath <path>`: path to `vmrest.exe` (default `$env:ProgramFiles\VMware\VMware Workstation\vmrest.exe`)
    - `-IncludeBattery`: also disable sleep, hibernation, and lid-close action on battery power
@@ -115,7 +115,7 @@ cp vms.tfvars.example vms.tfvars           # define VM names, CPUs, memory_mb, a
 - Each key in `vms = { ... }` in `vms.tfvars` is the VM name (`^[a-z0-9][a-z0-9-]{0,62}$`, lowercase letters, digits, and `-`, and not a base name `<image>-base`). It becomes the Windows folder and VMX path (`<LAB_VM_ROOT_WIN>\<name>\<name>.vmx`), the guest hostname, and the Ansible host name.
 - Omitted fields default to `processors = 2`, `memory_mb = 2048`, and `groups = ["demo"]`.
 - Group names in `groups` must match `^[a-z_][a-z0-9_]*$`. Every VM is placed in its listed `groups` and is always added to the `lab` group (`ansible/check-lab.yml` runs on `lab`; the default `ansible/configure-guest.yml` runs on `demo`).
-- **LAN NIC (optional):** `lan = true` adds a bridged NIC (VMnet0), named `lan0` in the guest, that gets an address from your LAN router's DHCP (for example 192.168.1.x). `lan_ip = "192.168.1.240/24"` makes it static instead (pick an address outside the router's DHCP range). `lan0` adds no default route or DNS; internet traffic stays on NAT. Playbooks read it as `ansible_lan0.ipv4.address` (`check-lab.yml` reports it). VMs on several PCs on the same LAN can reach each other this way. Changing `lan`/`lan_ip` rebuilds that VM (`./lab up --allow-destroy`). On a PC with Hyper-V adapters, check that VMware's VMnet0 bridges to the physical adapter (Virtual Network Editor).
+- **LAN NIC (optional):** `lan = true` adds a bridged NIC (VMnet0), named `lan0` in the guest, that gets an address from your LAN router's DHCP (for example 192.168.1.x). `lan_ip = "192.168.1.240/24"` makes it static instead (pick an address outside the router's DHCP range); `./lab up` refuses an address that is not on this PC's LAN (detected from the default route, shown by `./lab status`) or that already answers. `lan0` adds no default route or DNS; internet traffic stays on NAT. Playbooks read it as `ansible_lan0.ipv4.address` (`check-lab.yml` reports it). VMs on several PCs on the same LAN can reach each other this way. Changing `lan`/`lan_ip` rebuilds that VM (`./lab up --allow-destroy`). On a PC with Hyper-V adapters, check that VMware's VMnet0 bridges to the physical adapter (Virtual Network Editor).
 - Adding an entry to `vms.tfvars` and running `./lab up` creates and bootstraps only the new VM (created powered off, bootstrapped, then powered on) while already-running VMs stay on.
 
 ## Safety Guarantees

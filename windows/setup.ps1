@@ -3,7 +3,7 @@ Windows side of the lab, for WSL mirrored networking. Run from an elevated
 PowerShell in this folder (Status needs no elevation). setup.cmd runs this
 script past the default execution policy (for that run only):
 
-  .\setup.cmd Install -AllowedRemoteAddress 192.168.1.0/24   # tasks, firewall, power, then checks
+  .\setup.cmd Install                                         # tasks, firewall, power, then checks
   .\setup.cmd Status                                          # read only
   .\setup.cmd Remove                                          # tasks and firewall rules (power values stay)
 
@@ -11,7 +11,9 @@ Install sets up, idempotently:
 - task "WSL2 SSH Service Start": at boot (S4U, no logon needed) and logon, runs
   sshd in the foreground inside WSL, which also keeps WSL running
 - task "VMware vmrest API": at boot (S4U), runs vmrest.exe (loopback :8697, account from vmrest.exe -C)
-- inbound TCP 22 from -AllowedRemoteAddress: Windows firewall + Hyper-V firewall (WSL)
+- inbound TCP 22 from the LAN: Windows firewall + Hyper-V firewall (WSL). The
+  LAN is detected from the default route (the network other PCs reach this one
+  on, and WSL shares it in mirrored mode); -AllowedRemoteAddress overrides it
 - power on AC (and battery with -IncludeBattery): no sleep, no hibernation,
   closing the lid does nothing (-SkipPower leaves power settings alone)
 - VMware's bridged network (VMnet0, "Automatic", used by VMs with lan = true)
@@ -177,8 +179,25 @@ function Set-Bridge {
     else { Warn 'no physical adapter has the VMware Bridge Protocol; VMs with lan = true cannot reach the LAN' }
 }
 
+# The IPv4 network of the adapter that carries the default route, e.g.
+# 192.168.1.0/24: the LAN other PCs use to reach this one (and WSL, mirrored).
+function Get-Lan {
+    $route = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+        Sort-Object { $_.RouteMetric + $_.InterfaceMetric } | Select-Object -First 1
+    if (-not $route) { return $null }
+    $ip = Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $route.InterfaceIndex -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -notlike '169.254.*' } | Select-Object -First 1
+    if (-not $ip) { return $null }
+    $b = ([Net.IPAddress]$ip.IPAddress).GetAddressBytes(); [Array]::Reverse($b)
+    $mask = ([uint64]0xFFFFFFFF -shl (32 - $ip.PrefixLength)) -band [uint64]0xFFFFFFFF
+    $net = [BitConverter]::GetBytes([uint32]([uint64][BitConverter]::ToUInt32($b, 0) -band $mask)); [Array]::Reverse($net)
+    [pscustomobject]@{ Cidr = "$(([Net.IPAddress]$net).IPAddressToString)/$($ip.PrefixLength)"; Address = $ip.IPAddress; Adapter = $ip.InterfaceAlias }
+}
+
 function Show-Status {
     $ok = $true
+    $lan = Get-Lan
+    if ($lan) { Ok "LAN: $($lan.Cidr) ($($lan.Adapter), this PC $($lan.Address))" } else { Warn 'no IPv4 default route: LAN unknown' }
     if (Test-Mirrored) { Ok 'WSL networkingMode=mirrored' } else { Warn 'WSL is not in mirrored mode (.wslconfig: [wsl2] networkingMode=mirrored)'; $ok = $false }
     foreach ($name in $SshTask, $VmrestTask) {
         $t = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
@@ -215,7 +234,12 @@ switch ($Action) {
     }
     'Install' {
         Assert-Admin
-        if (-not $AllowedRemoteAddress) { throw 'Pass -AllowedRemoteAddress with your LAN range, e.g. 192.168.1.0/24.' }
+        if (-not $AllowedRemoteAddress) {
+            $lan = Get-Lan
+            if (-not $lan) { throw 'Could not detect the LAN (no IPv4 default route); pass -AllowedRemoteAddress, e.g. 192.168.1.0/24.' }
+            $script:AllowedRemoteAddress = $lan.Cidr
+            Ok "LAN detected: $($lan.Cidr) ($($lan.Adapter), this PC $($lan.Address)); SSH allowed from it (-AllowedRemoteAddress to change)"
+        }
         if (-not (Test-Mirrored)) { throw 'WSL must use mirrored networking: add networkingMode=mirrored under [wsl2] in %USERPROFILE%\.wslconfig, then wsl --shutdown.' }
         if (-not (Test-Path -LiteralPath $VmrestPath)) { throw "vmrest not found: $VmrestPath (pass -VmrestPath)" }
         $winSshd = Get-NetTCPConnection -State Listen -LocalPort 22 -ErrorAction SilentlyContinue |
