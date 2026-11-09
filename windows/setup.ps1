@@ -13,6 +13,9 @@ Install sets up, idempotently:
 - inbound TCP 22 from -AllowedRemoteAddress: Windows firewall + Hyper-V firewall (WSL)
 - power on AC (and battery with -IncludeBattery): no sleep, no hibernation,
   closing the lid does nothing (-SkipPower leaves power settings alone)
+- VMware's bridged network (VMnet0, "Automatic", used by VMs with lan = true)
+  only on physical adapters: the VMware Bridge Protocol is unbound from
+  virtual ones such as WSL's Hyper-V vEthernet, which "Automatic" could pick
 Both tasks run system executables (wsl.exe, vmrest.exe), not scripts from
 this folder, so the repository can move. It removes what older versions installed (portproxy-era tasks, copies in
 %ProgramFiles%\wsl-vmware-lab) and reports ready only after WSL listens on
@@ -151,6 +154,28 @@ function Set-Power {
     Ok "power on AC$(if ($IncludeBattery) { ' and battery' }): no sleep, no hibernation, lid does nothing"
 }
 
+# VMnet0 on "Automatic" bridges to the first adapter bound to the VMware Bridge
+# Protocol; WSL mirrored mode adds a Hyper-V vEthernet adapter that can come
+# first, and then bridged VMs never reach the LAN. Keep the bridge only on
+# physical adapters (Ethernet, Wi-Fi), so "Automatic" picks a real one.
+function Get-BridgeAdapters {
+    $physical = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
+        Where-Object { $_.InterfaceDescription -notmatch 'Bluetooth' } | ForEach-Object { $_.Name })
+    foreach ($b in @(Get-NetAdapterBinding -ComponentID vmware_bridge -ErrorAction SilentlyContinue | Where-Object { $_.Enabled })) {
+        [pscustomobject]@{ Name = $b.Name; Physical = ($physical -contains $b.Name) }
+    }
+}
+
+function Set-Bridge {
+    foreach ($a in @(Get-BridgeAdapters | Where-Object { -not $_.Physical })) {
+        Disable-NetAdapterBinding -Name $a.Name -ComponentID vmware_bridge
+        Ok "VMware bridge removed from virtual adapter '$($a.Name)'"
+    }
+    $left = @(Get-BridgeAdapters | ForEach-Object { $_.Name })
+    if ($left) { Ok "VMware bridge (VMnet0 Automatic) on: $($left -join ', ')" }
+    else { Warn 'no physical adapter has the VMware Bridge Protocol; VMs with lan = true cannot reach the LAN' }
+}
+
 function Show-Status {
     $ok = $true
     if (Test-Mirrored) { Ok 'WSL networkingMode=mirrored' } else { Warn 'WSL is not in mirrored mode (.wslconfig: [wsl2] networkingMode=mirrored)'; $ok = $false }
@@ -169,6 +194,10 @@ function Show-Status {
     $risks = @()
     foreach ($e in (Get-PowerValues).GetEnumerator()) { if ($e.Value -and $e.Value.AC -ne 0) { $risks += $e.Key } }
     if ($risks) { Warn "power on AC still allows: $($risks -join ', ') (Install fixes it unless -SkipPower)" } else { Ok 'power on AC: no sleep, no hibernation, lid does nothing' }
+    $bridge = @(Get-BridgeAdapters)
+    $virtual = @($bridge | Where-Object { -not $_.Physical } | ForEach-Object { $_.Name })
+    if ($virtual) { Warn "VMware bridge also on virtual adapters: $($virtual -join ', ') (VMnet0 Automatic may pick one; Install fixes it)" }
+    elseif ($bridge) { Ok "VMware bridge (VMnet0 Automatic) on: $(($bridge | ForEach-Object { $_.Name }) -join ', ')" }
     return $ok
 }
 
@@ -199,6 +228,7 @@ switch ($Action) {
             -Description 'VMware vmrest on 127.0.0.1:8697 (restarted if it exits). wsl-vmware-lab windows\setup.ps1'
         Set-Firewall
         if (-not $SkipPower) { Set-Power }
+        Set-Bridge
         Start-ScheduledTask -TaskName $SshTask
         Start-ScheduledTask -TaskName $VmrestTask
         # Ready means the ports answer, not that a task was started (#18).
