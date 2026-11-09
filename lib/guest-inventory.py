@@ -134,7 +134,7 @@ def main():
             cmd += ['-o', 'ProxyCommand=' + proxy_command]
         try:
             run = subprocess.run(cmd + [guest_user + '@' + str(address), 'true'],
-                                 capture_output=True, text=True, timeout=30)
+                                 capture_output=True, text=True, errors='replace', timeout=30)
         except subprocess.TimeoutExpired:
             return 'SSH timed out'
         if run.returncode == 0:

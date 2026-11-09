@@ -37,9 +37,5 @@ $(sed 's/^/    /' "$hostkey")
 # version of this lab carried one).
 bootcmd:
   - [cloud-init-per, instance, wsl-vmware-lab-machine-id, sh, -c, 'rm -f /etc/machine-id && systemd-machine-id-setup']
-package_update: false
-package_upgrade: false
-runcmd:
-  - [systemctl, enable, --now, ssh]
 CFG
 }
