@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Read-only Terraform diagnosis: shows the VM list in use, the state, the base
 # VM's power state and what a plan would change. It never applies, destroys or
-# powers anything off. Use terraform-vm.sh for changes.
+# powers anything off. Use ./lab up/down/destroy for changes.
 # ./lab status --plan [on|off]   (power_state to plan with; default off)
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
@@ -16,21 +16,16 @@ else
   echo "[WARN] $LAB_VMS_FILE not found; using the single fallback VM $LAB_CLONE_NAME"
 fi
 
-echo '== Base VM power'
-base_vmx=$(wslpath -w "${LAB_BASE_DIR}/ubuntu-base.vmx")
-if running=$(timeout 60 "${VMWARE_DIR}/vmrun.exe" -T ws list 2>&1 | tr -d '\r'); then
-  if grep -Fxiq "$base_vmx" <<<"$running"; then echo "[INFO] base is running: $base_vmx"; else echo "[OK] base is not running"; fi
-else
-  echo "[WARN] could not list running VMs: $running"
-fi
-
-echo '== Base VM identity'
+echo '== Base VMs (one per image in use)'
+running=$(timeout 60 "${VMWARE_DIR}/vmrun.exe" -T ws list 2>&1 | tr -d '\r') || { echo "[WARN] could not list running VMs: $running"; running=''; }
+for image in $(lab_used_images); do
+  base_vmx=$(wslpath -w "$LAB_BASE_DIR/$image/base.vmx")
+  if grep -Fxiq "$base_vmx" <<<"$running"; then echo "[INFO] $image-base is running: $base_vmx"; else echo "[OK] $image-base is not running"; fi
+done
 if lab_base_identity; then
-  echo "[OK] exactly one VM is named $LAB_BASE_NAME: $TF_VAR_base_id"
+  echo "[OK] every base in use is registered exactly once: $TF_VAR_bases"
 else
-  echo "[WARN] ./lab up/off would stop here (see above); planning without the id check"
-  prepared="$LAB_BASE_DIR/ubuntu-base.prepared"
-  [[ -f "$prepared" ]] && TF_VAR_base_prepared=$(sha256sum < "$prepared" | cut -d' ' -f1) && export TF_VAR_base_prepared
+  echo "[WARN] ./lab up/down would stop here (see above); planning without the base checks"
 fi
 
 cd "$LAB_PROJECT_DIR/terraform"

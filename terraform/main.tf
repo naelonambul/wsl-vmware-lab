@@ -17,52 +17,62 @@ provider "vmworkstation" {
   debug    = "NONE"
 }
 
-# The provider looks the base up by display name and takes the first match.
-# lib/lifecycle.sh checks first that exactly one VM has the name and passes its
-# id (lib/config.sh lab_base_identity); stop if the lookup found another VM.
+locals {
+  # Every VM with its image resolved; one base per image in use.
+  vms    = { for name, spec in var.vms : name => merge(spec, { image = coalesce(spec.image, var.default_image) }) }
+  images = toset([for spec in values(local.vms) : spec.image])
+}
+
+# The provider looks a base up by display name ("<image>-base") and takes the
+# first match. lib/lifecycle.sh checks first that exactly one VM has the name
+# and passes its id (lib/config.sh lab_base_identity); stop if the lookup found
+# another VM.
 data "vmworkstation_virtual_machine" "base" {
-  denomination = var.base_name
+  for_each     = local.images
+  denomination = "${each.key}-base"
 
   lifecycle {
     postcondition {
-      condition     = var.base_id == "" || self.id == var.base_id
-      error_message = "The provider found a VM named ${var.base_name} that is not the checked base (${var.base_id}); nothing changed. Check: ./lab status"
+      condition     = !contains(keys(var.bases), each.key) || self.id == try(var.bases[each.key].id, "")
+      error_message = "The provider found a VM named ${each.key}-base that is not the checked base; nothing changed. Check: ./lab status"
     }
   }
 }
 
-# The provider updates sourceid and path in place, and a base rebuilt at the
-# same path keeps its vmrest id. Changing any of these replaces every clone
-# (lib/lifecycle.sh on asks for --allow-destroy). Adding this to an existing
-# state replaces nothing; it records the current base.
-resource "terraform_data" "base_identity" {
+# Per clone: its image and that base's identity. The provider updates sourceid
+# and path in place, and a base rebuilt at the same path keeps its vmrest id, so
+# this is what replaces a clone when its image changes or its base is rebuilt
+# (lib/lifecycle.sh on asks for --allow-destroy).
+resource "terraform_data" "vm_base" {
+  for_each = local.vms
   input = {
-    id       = data.vmworkstation_virtual_machine.base.id
-    path     = data.vmworkstation_virtual_machine.base.path
-    prepared = var.base_prepared
+    image    = each.value.image
+    id       = data.vmworkstation_virtual_machine.base[each.value.image].id
+    path     = data.vmworkstation_virtual_machine.base[each.value.image].path
+    prepared = try(var.bases[each.value.image].prepared, "")
   }
 }
 
 # One clone per entry of var.vms (key = VM name), each in
 # <vm_root_win>\<name>\<name>.vmx. Add, change or remove entries in vms.tfvars.
 resource "vmworkstation_virtual_machine" "vm" {
-  for_each = var.vms
+  for_each = local.vms
 
-  sourceid     = data.vmworkstation_virtual_machine.base.id
+  sourceid     = data.vmworkstation_virtual_machine.base[each.value.image].id
   denomination = each.key
   # The provider does not set a clone's description; it reports the base VM's,
   # so any other value makes Terraform fail with "inconsistent result after apply".
-  description = data.vmworkstation_virtual_machine.base.description
+  description = data.vmworkstation_virtual_machine.base[each.value.image].description
   path        = "${var.vm_root_win}\\${each.key}\\${each.key}.vmx"
   processors  = each.value.processors
   memory      = each.value.memory_mb
   state       = var.power_state
 
   lifecycle {
-    replace_triggered_by = [terraform_data.base_identity]
+    replace_triggered_by = [terraform_data.vm_base[each.key]]
     precondition {
-      condition     = each.key != var.base_name
-      error_message = "VM name ${each.key} is the base VM's display name; choose another name in vms.tfvars."
+      condition     = !contains([for image in local.images : "${image}-base"], each.key)
+      error_message = "VM name ${each.key} is a base VM's display name; choose another name in vms.tfvars."
     }
   }
 }
@@ -73,11 +83,11 @@ resource "vmworkstation_virtual_machine" "vm" {
 # Changes to keys or lib/bootstrap-guest.sh do not re-run it on existing clones:
 # that would need them powered off. Replace a clone to apply them.
 resource "terraform_data" "guest_bootstrap" {
-  for_each = var.vms
+  for_each = local.vms
 
   triggers_replace = [vmworkstation_virtual_machine.vm[each.key].id]
   lifecycle {
-    replace_triggered_by = [terraform_data.base_identity]
+    replace_triggered_by = [terraform_data.vm_base[each.key]]
   }
   provisioner "local-exec" {
     command = "bash ../lib/bootstrap-guest.sh"
@@ -96,7 +106,8 @@ output "vms" {
     for name, vm in vmworkstation_virtual_machine.vm : name => {
       id     = vm.id
       path   = vm.path
-      groups = try(var.vms[name].groups, [])
+      groups = try(local.vms[name].groups, [])
+      image  = try(local.vms[name].image, "")
     }
   }
 }

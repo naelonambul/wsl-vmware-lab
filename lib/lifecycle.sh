@@ -141,9 +141,9 @@ guard_vm_destroy() {
   fi
   echo "[ERROR] This would delete or replace VMs: $(tr '\n' ' ' <<<"$doomed")" >&2
   echo "        VM list in use: $vm_list_desc" >&2
-  if plan_changes | awk -F'\t' '$1 == "update" && $3 == "terraform_data" && $4 == "base_identity" { f = 1 } END { exit !f }'; then
-    echo "        The base VM changed (rebuilt, or re-registered at another id or path):" >&2
-    echo "        its clones are rebuilt from it, losing everything inside them." >&2
+  if plan_changes | awk -F'\t' '$1 == "update" && $3 == "terraform_data" && $4 == "vm_base" { f = 1 } END { exit !f }'; then
+    echo "        A VM's image changed, or its base was rebuilt or re-registered at another" >&2
+    echo "        id or path: those clones are rebuilt from it, losing everything inside them." >&2
   fi
   echo "        If vms.tfvars is missing or wrong, fix it. To remove these VMs on purpose:" >&2
   echo "        ./lab up --allow-destroy  (or ./lab destroy for all)" >&2
@@ -199,10 +199,12 @@ case "${1:-status}" in
     mapfile -t targets < <(existing_targets)
     if [[ ${#targets[@]} -eq 0 ]]; then echo '[OK] No VMs in the state'; exit 0; fi
     run_plan -var=power_state=off "${targets[@]}"
-    # Recording the base the first time (base_identity create) is harmless; a
-    # changed base shows up as clone replacements and is refused.
+    # Recording a clone's base the first time (vm_base create) and dropping the
+    # single base_identity of older versions are harmless; a changed base shows
+    # up as clone replacements and is refused.
     other=$(plan_changes | awk -F'\t' '!($1 == "update" && $3 == "vmworkstation_virtual_machine") &&
-      !(($1 == "create" || $1 == "update") && $3 == "terraform_data" && $4 == "base_identity") &&
+      !($1 == "create" && $3 == "terraform_data" && $4 == "vm_base") &&
+      !($1 == "delete" && $3 == "terraform_data" && $4 == "base_identity") &&
       $1 != "no-op" && $1 != "noop" && $1 != "read" { print "  " $1 ": " $2 }')
     if [[ -n "$other" ]]; then
       echo '[ERROR] off would do more than power VMs off; nothing changed:' >&2

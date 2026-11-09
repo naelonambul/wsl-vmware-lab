@@ -84,7 +84,8 @@ else
   warn "vmrest account: not available"
   sed 's/^/       /' <<<"$cred_msg"
 fi
-ok "guest image: $LAB_IMAGE  user: $LAB_GUEST_USER (created by cloud-init, SSH host key pinned before first boot)  base: $LAB_BASE_NAME"
+ok "guest images in use: $(lab_used_images | tr '\n' ' ')(default $LAB_IMAGE)  user: $LAB_GUEST_USER (created by cloud-init, SSH host key pinned before first boot)"
+[[ -n "${LAB_BASE_NAME:-}" ]] && warn "LAB_BASE_NAME is set but no longer used; each image's base is named <image>-base"
 if [[ -f "$LAB_VMS_FILE" ]]; then
   ok "VM list: $LAB_VMS_FILE"
 elif [[ "$LAB_VMS_FILE_EXPLICIT" == 1 ]]; then
