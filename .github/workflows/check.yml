@@ -27,6 +27,27 @@ jobs:
           terraform_version: 1.17.1
       - name: terraform fmt
         run: terraform fmt -check -recursive terraform
+      # The provider comes from a GitHub release, which sometimes answers 504:
+      # keep it in a cache between runs and retry init when it is not cached.
+      # There is no lock file in the repo, so Terraform would skip the cache
+      # without TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE (CI only; the
+      # cached copy was checked against the registry when it was first downloaded).
+      - name: terraform provider cache
+        uses: actions/cache@v4
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: terraform-providers-${{ hashFiles('terraform/*.tf') }}
+          restore-keys: terraform-providers-
       - name: terraform validate
         working-directory: terraform
-        run: terraform init -backend=false -input=false >/dev/null && terraform validate
+        run: |
+          export TF_PLUGIN_CACHE_DIR="$HOME/.terraform.d/plugin-cache"
+          export TF_PLUGIN_CACHE_MAY_BREAK_DEPENDENCY_LOCK_FILE=true
+          mkdir -p "$TF_PLUGIN_CACHE_DIR"
+          for i in 1 2 3; do
+            terraform init -backend=false -input=false >/dev/null && break
+            [ "$i" -eq 3 ] && exit 1
+            echo "terraform init failed (attempt $i); retrying in $((i * 20)) s"
+            sleep $((i * 20))
+          done
+          terraform validate
