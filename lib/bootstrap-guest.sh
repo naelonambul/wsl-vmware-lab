@@ -17,23 +17,21 @@ fi
 [[ "$VM_ID" =~ ^[A-Za-z0-9_-]+$ ]] || { echo 'Invalid VM id from Terraform' >&2; exit 1; }
 vmx=$(wslpath -u "$VMX_WIN")
 seed_dir="$LAB_PRIVATE_DIR/seed-$VM_ID"
+umask 077
 mkdir -p "$seed_dir"
-# vmrest derives the VM id from the VMX path, so a clone recreated at the same
-# path gets the same id. This bootstrap only runs for a freshly created disk,
-# whose cloud-init generates new SSH host keys: forget the old ones.
+# A fresh SSH host key for this disk, pinned before the guest ever runs. vmrest
+# derives the VM id from the VMX path, so a clone recreated at the same path
+# gets the same id: this bootstrap only runs for a freshly created disk and
+# replaces the pin. The private key stays only in the seed (user-data here and
+# the ISO next to the clone's disk, which holds the same key once booted).
+keydir=$(mktemp -d "$LAB_PRIVATE_DIR/hostkey.XXXXXX")
+trap 'rm -rf -- "$keydir"' EXIT
+ssh-keygen -q -t ed25519 -N '' -C "wsl-vmware-lab-$VM_ID" -f "$keydir/key"
+lab_cloud_config_user_data "$(cat "$LAB_SSH_KEY.pub")" "$keydir/key" > "$seed_dir/user-data"
 known_hosts="$LAB_PRIVATE_DIR/known_hosts-$VM_ID"
-if [[ -e "$known_hosts" ]]; then
-  rm -f -- "$known_hosts"
-  echo '[OK] Reset known_hosts for the recreated clone id'
-fi
-pubkey=$(cat "$LAB_SSH_KEY.pub")
-# Guest user = the image's default user (see lib/cloud-config.sh).
-{
-  echo '#cloud-config'
-  lab_cloud_config_users "$pubkey"
-  echo 'runcmd:'
-  lab_cloud_config_runcmd
-} > "$seed_dir/user-data"
+printf 'wsl-vmware-lab-%s %s\n' "$VM_ID" "$(cut -d' ' -f1,2 "$keydir/key.pub")" > "$known_hosts.tmp"
+mv -f -- "$known_hosts.tmp" "$known_hosts"
+echo "[OK] Pinned a new SSH host key for ${VM_NAME:-$LAB_CLONE_NAME}"
 printf 'instance-id: %s\nlocal-hostname: %s\n' "$VM_ID" "${VM_NAME:-$LAB_CLONE_NAME}" > "$seed_dir/meta-data"
 cat > "$seed_dir/network-config" <<'CFG'
 version: 2

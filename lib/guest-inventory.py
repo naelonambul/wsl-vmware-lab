@@ -1,4 +1,4 @@
-"""Find each lab VM's management IP and user, and write the Ansible inventory.
+"""Find each lab VM's management IP, check SSH, and write the Ansible inventory.
 
 Run via configure-guest.sh, which loads lib/config.sh into the environment.
 Hosts are the VM names from Terraform output `vms`; each VM's `groups` become
@@ -10,15 +10,15 @@ The address comes from VMware's DHCP leases: only a lease that is still
 current (the last entry for its address, active, not expired), on the
 management network (LAB_MGMT_VNET's subnet in vmnetdhcp.conf) and for this
 VM's management NIC MAC. The leases file keeps old and expired entries, so an address
-alone could reach another VM; SSH therefore accepts only the host key the
-guest itself reported through VMware guestinfo (lib/cloud-config.sh).
+alone could reach another VM; SSH therefore accepts only the host key pinned
+for this VM before its first boot (lib/bootstrap-guest.sh). A VM counts as ready
+once SSH as the guest user with the lab key succeeds against that pin.
 """
 from datetime import datetime, timezone
 import ipaddress
 import json
 import os
 import re
-import socket
 import shlex
 from pathlib import Path
 import subprocess
@@ -120,18 +120,29 @@ def main():
     subnet = mgmt_subnet(conf_file.read_text(), vnet)
     if subnet is None:
         fatal('No DHCP subnet for ' + vnet + ' in ' + str(conf_file) + ' (LAB_MGMT_VNET); enable DHCP on it in the Virtual Network Editor')
-    vmrun = str(Path(os.environ.get('VMWARE_DIR', '/mnt/c/Program Files/VMware/VMware Workstation')) / 'vmrun.exe')
+    guest_user = os.environ.get('LAB_GUEST_USER', 'lab')
     proxy_command = 'bash ' + shlex.quote(str(here / 'guest-proxy.sh')) + ' %h %p'
     now = datetime.now(timezone.utc)
 
-    def guest_var(vm, name):
+    def ssh_check(address, alias, known_hosts, proxy):
+        """'' when SSH as the guest user works against the pinned key, else the reason."""
+        cmd = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=5', '-o', 'IdentitiesOnly=yes',
+               '-o', 'StrictHostKeyChecking=yes', '-o', 'HostKeyAlias=' + alias,
+               '-o', 'UserKnownHostsFile=' + str(known_hosts), '-o', 'GlobalKnownHostsFile=/dev/null',
+               '-i', str(key)]
+        if proxy:
+            cmd += ['-o', 'ProxyCommand=' + proxy_command]
         try:
-            return subprocess.run([vmrun, '-T', 'ws', 'readVariable', vm['path'], 'guestVar', name],
-                                  capture_output=True, text=True, timeout=30).stdout.strip()
+            run = subprocess.run(cmd + [guest_user + '@' + str(address), 'true'],
+                                 capture_output=True, text=True, timeout=30)
         except subprocess.TimeoutExpired:
-            return ''  # a hung vmrun counts as not reported yet
+            return 'SSH timed out'
+        if run.returncode == 0:
+            return ''
+        lines = [l for l in run.stderr.strip().splitlines() if l.strip()]
+        return lines[-1] if lines else 'SSH exit ' + str(run.returncode)
 
-    hosts, groups, known, waiting = {}, {}, {}, []
+    hosts, groups, waiting = {}, {}, []
     for name, vm in sorted(vms.items()):
         if not re.fullmatch(r'[A-Za-z0-9_-]+', vm['id']):
             fatal(name + ': unexpected VM id ' + repr(vm['id']))
@@ -147,38 +158,33 @@ def main():
         if address is None:
             waiting.append(name + ': ' + others)
             continue
-        # The guest user is the image's default user; the guest reports it and
-        # its SSH host key through VMware guestinfo on every boot.
-        guest_user = guest_var(vm, 'wsl-vmware-lab.guest_user')
-        if not re.fullmatch(r'[a-z_][a-z0-9_-]{0,31}', guest_user):
-            waiting.append(name + ': guest has not reported its default user through guestinfo yet '
-                           '(needs open-vm-tools in the guest; Ubuntu cloud images ship it)')
-            continue
-        host_key = guest_var(vm, 'wsl-vmware-lab.host_key')
-        if not re.fullmatch(r'ssh-ed25519 [A-Za-z0-9+/]+={0,3}', host_key):
-            waiting.append(name + ': guest has not reported its SSH host key through guestinfo yet '
-                           '(a clone created before host-key reporting never will; recreate it)')
-            continue
         alias = 'wsl-vmware-lab-' + vm['id']
-        known[vm['id']] = alias + ' ' + host_key + '\n'
+        known_hosts = private / ('known_hosts-' + vm['id'])
+        if not known_hosts.is_file() or (alias + ' ') not in known_hosts.read_text():
+            fatal(name + ': no pinned SSH host key (' + str(known_hosts) + '). The clone was created by an '
+                  'older version of this lab; rebuild it: ./lab setup --recreate, then ./lab up --allow-destroy')
+        # Direct first; if WSL cannot reach the management network, through Windows.
+        direct = ssh_check(address, alias, known_hosts, False)
         proxy = ''
-        try:
-            with socket.create_connection((str(address), 22), timeout=3):
-                pass
-        except OSError:
+        if direct:
+            relayed = ssh_check(address, alias, known_hosts, True)
+            if relayed:
+                waiting.append(name + ': SSH ' + guest_user + '@' + str(address) + ' not ready (' + relayed + ')')
+                continue
             proxy = ' -o ' + shlex.quote('ProxyCommand=' + proxy_command)
         hosts[name] = {
             'ansible_host': str(address), 'ansible_user': guest_user,
             'ansible_ssh_private_key_file': str(key),
             'ansible_python_interpreter': '/usr/bin/python3',
-            # Only the key this VM reported is accepted, whatever answers at the address.
+            # Only the key pinned for this VM is accepted, whatever answers at the address.
             'ansible_ssh_common_args': '-o StrictHostKeyChecking=yes -o HostKeyAlias=' + alias +
-                ' -o UserKnownHostsFile=' + str(private / ('known_hosts-' + vm['id'])) + proxy,
+                ' -o UserKnownHostsFile=' + str(known_hosts) + proxy,
         }
         for group in ['lab'] + list(vm.get('groups') or []):
             groups.setdefault(group, {})[name] = {}
         note = ('  (also current: ' + ', '.join(others) + '; using the newest)') if others else ''
-        print('[OK] ' + name + ': ' + str(address) + '  user (image default, from guestinfo): ' + guest_user
+        print('[OK] ' + name + ': ' + str(address) + '  user: ' + guest_user + '  SSH: pinned host key OK'
+              + ('' if not proxy else ' (via Windows relay)')
               + '  groups: ' + ','.join(vm.get('groups') or []) + note)
 
     if waiting:
@@ -193,10 +199,6 @@ def main():
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
 
-    # Written only once every VM checked out, so a failed run leaves the
-    # previous files as they were.
-    for vm_id, line in known.items():
-        write_private(private / ('known_hosts-' + vm_id), line)
     inventory = {'all': {'hosts': hosts,
                          'children': {g: {'hosts': members} for g, members in sorted(groups.items())}}}
     target = Path(os.environ.get('LAB_INVENTORY', str(private / 'inventory.json')))
