@@ -47,8 +47,9 @@ Background posts (the repository has evolved since publication; where they diffe
    - If the `VMware vmrest API` scheduled task already exists, restarts `vmrest` and checks that an authenticated `GET /vms` returns HTTP `200`. On a first install before step 3, `./lab status` performs that check in step 4.
    - Must be run in an interactive terminal by a person. AI agents never ask for, read, or type the password.
 
-3. **Configure Windows boot tasks, firewall, and power (elevated PowerShell in `windows\`):**
+3. **Configure Windows boot tasks, firewall, power and the VMware bridge (elevated PowerShell in `windows\`):**
    ```powershell
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force   # this window only; Windows blocks scripts by default
    .\setup.ps1 Install -AllowedRemoteAddress 192.168.1.0/24   # replace with your LAN subnet
    .\setup.ps1 Status                                          # read-only check (no elevation needed)
    .\setup.ps1 Remove                                          # removes tasks and firewall rules (keeps power settings)
@@ -69,6 +70,7 @@ Background posts (the repository has evolved since publication; where they diffe
      - Both tasks execute system binaries (`wsl.exe` and `vmrest.exe`) directly, so moving the repository does not break them.
    - Allows inbound TCP 22 from `-AllowedRemoteAddress` in Windows Firewall (`WSL2 SSH 22`) and Hyper-V Firewall for WSL (`WSL-SSH-Inbound-TCP22-LAN`).
    - Sets AC power (`-IncludeBattery` for DC as well) to never sleep, never hibernate, and do nothing when closing the lid, unless `-SkipPower` is passed.
+   - Keeps the VMware Bridge Protocol only on physical adapters (Ethernet, Wi-Fi). WSL's mirrored mode adds a Hyper-V `vEthernet` adapter that VMware's VMnet0 "Automatic" bridge could otherwise pick, leaving `lan = true` VMs off the LAN.
    - Removes legacy tasks and old files under `%ProgramFiles%\wsl-vmware-lab`, starts both tasks, and waits until port `22` in WSL and `127.0.0.1:8697` on Windows are actively listening before reporting ready.
 
 4. **Prepare the base VM and check the host (in WSL):**

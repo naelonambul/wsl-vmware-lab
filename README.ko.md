@@ -47,8 +47,9 @@ WSL Ansible --SSH--> 실습 VM (VMnet1 host-only 관리망; VMnet8 NAT)
    - `VMware vmrest API` 부팅 작업이 이미 있으면 `vmrest`를 다시 시작해 인증된 `GET /vms`가 HTTP `200`을 반환하는지 확인합니다. 3단계 전의 첫 설치에서는 4단계의 `./lab status`가 이 확인을 합니다.
    - 사람이 직접 대화형 터미널에서 실행해야 합니다. AI 에이전트는 비밀번호를 묻거나 읽거나 입력하지 않습니다.
 
-3. **Windows 부팅 작업, 방화벽, 전원 설정 (관리자 PowerShell, `windows\` 폴더에서):**
+3. **Windows 부팅 작업, 방화벽, 전원, VMware 브리지 설정 (관리자 PowerShell, `windows\` 폴더에서):**
    ```powershell
+   Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass -Force   # 이 창에서만 허용 (Windows는 기본적으로 스크립트를 막음)
    .\setup.ps1 Install -AllowedRemoteAddress 192.168.1.0/24   # 자신의 LAN 대역으로 변경
    .\setup.ps1 Status                                          # 읽기 전용 점검 (관리자 권한 불필요)
    .\setup.ps1 Remove                                          # 작업과 방화벽 규칙 제거 (전원 설정은 그대로)
@@ -69,6 +70,7 @@ WSL Ansible --SSH--> 실습 VM (VMnet1 host-only 관리망; VMnet8 NAT)
      - 두 작업 모두 시스템 바이너리(`wsl.exe`, `vmrest.exe`)를 직접 실행하므로 저장소를 옮겨도 깨지지 않습니다.
    - Windows 방화벽(`WSL2 SSH 22`)과 WSL용 Hyper-V 방화벽(`WSL-SSH-Inbound-TCP22-LAN`)에서 `-AllowedRemoteAddress`로부터 들어오는 인바운드 TCP 22를 허용합니다.
    - `-SkipPower`를 주지 않으면 AC 전원(`-IncludeBattery`를 주면 배터리 전원도 포함)에서 절전과 최대 절전을 끄고 덮개를 닫아도 아무것도 하지 않게 설정합니다.
+   - VMware 브리지 프로토콜을 실제 물리 어댑터(이더넷, Wi-Fi)에만 남깁니다. WSL 미러드 모드가 만드는 Hyper-V `vEthernet` 어댑터를 VMware VMnet0의 "자동" 브리지가 고르면 `lan = true` VM이 LAN에 닿지 못하기 때문입니다.
    - 예전 작업과 `%ProgramFiles%\wsl-vmware-lab` 아래의 예전 파일을 지우고, 두 작업을 시작한 뒤 WSL의 `22`번 포트와 Windows의 `127.0.0.1:8697`이 실제로 리슨할 때까지 기다렸다가 준비 완료를 출력합니다.
 
 4. **베이스 VM 준비 및 호스트 점검 (WSL):**
