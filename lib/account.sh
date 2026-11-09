@@ -105,7 +105,7 @@ restarted="$("$PS" -NoProfile -NonInteractive -Command '
   Get-Process vmrest -ErrorAction SilentlyContinue | Stop-Process -Force
   Start-ScheduledTask -TaskName "VMware vmrest API"; "restarted"' </dev/null 2>/dev/null | tr -d '\r' || true)"
 if [[ "$restarted" != restarted ]]; then
-  echo '[INFO] Task "VMware vmrest API" is not registered (windows/setup.ps1 Install). Restart vmrest yourself, then: ./lab status'
+  echo '[INFO] Task "VMware vmrest API" is not registered (windows\setup.cmd Install, elevated). Restart vmrest yourself, then: ./lab status'
   exit 0
 fi
 export VMWS_USERNAME="$user" VMWS_PASSWORD="$pass"   # read by lab_curl_auth

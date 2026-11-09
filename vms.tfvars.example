@@ -5,6 +5,9 @@
 # Key = VM name (lowercase letters, digits, '-'): it becomes the Windows folder
 # <LAB_VM_ROOT_WIN>\<name>\<name>.vmx, the guest hostname and the Ansible host.
 # groups = Ansible groups for your playbooks. Every VM is also in group "lab".
+# lan = true adds a bridged NIC "lan0" with an address from your LAN router's
+# DHCP; lan_ip = "192.168.1.240/24" makes it static (outside the router's DHCP
+# range). Internet traffic stays on NAT. Changing either rebuilds the VM.
 # image = guest cloud image: ubuntu-24.04, ubuntu-22.04 or debian-13; omitted
 # means LAB_IMAGE (default ubuntu-24.04). ./lab setup prepares one base per
 # image used here. Changing a VM's image rebuilds it (./lab up --allow-destroy).
@@ -19,6 +22,7 @@ vms = {
     processors = 2
     memory_mb  = 2048
     groups     = ["demo", "web"] # "demo" = the nginx example playbook
+    lan        = true                # reachable from the LAN (DHCP)
   }
   "db1" = {
     processors = 2

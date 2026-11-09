@@ -216,6 +216,19 @@ lab_base_identity() {
   export TF_VAR_bases="{$json}"
 }
 
+# The LAN as "<network>/<prefix> <dev> <address>", e.g. "192.168.1.0/24 eth0
+# 192.168.1.253": the network of the default route. With mirrored networking
+# WSL shares Windows' addresses, so this is the LAN other PCs reach this one on
+# (and windows/setup.ps1 detects the same).
+lab_lan() {
+  local dev cidr
+  dev=$(ip -4 route show default 2>/dev/null | awk '{ for (i = 1; i < NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
+  [[ -n "$dev" ]] || return 1
+  cidr=$(ip -4 -o addr show dev "$dev" 2>/dev/null | awk '{ print $4; exit }')
+  [[ -n "$cidr" ]] || return 1
+  python3 -c 'import ipaddress, sys; i = ipaddress.ip_interface(sys.argv[1]); print(i.network, sys.argv[2], i.ip)' "$cidr" "$dev"
+}
+
 # Windows path compared case-insensitively, with / and \ treated alike.
 lab_norm_win_path() { local p="${1//\//\\}"; printf '%s' "${p,,}"; }
 

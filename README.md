@@ -47,15 +47,15 @@ Background posts (the repository has evolved since publication; where they diffe
    - If the `VMware vmrest API` scheduled task already exists, restarts `vmrest` and checks that an authenticated `GET /vms` returns HTTP `200`. On a first install before step 3, `./lab status` performs that check in step 4.
    - Must be run in an interactive terminal by a person. AI agents never ask for, read, or type the password.
 
-3. **Configure Windows boot tasks, firewall, and power (elevated PowerShell in `windows\`):**
+3. **Configure Windows boot tasks, firewall, power and the VMware bridge (elevated PowerShell in `windows\`):**
    ```powershell
-   .\setup.ps1 Install -AllowedRemoteAddress 192.168.1.0/24   # replace with your LAN subnet
-   .\setup.ps1 Status                                          # read-only check (no elevation needed)
-   .\setup.ps1 Remove                                          # removes tasks and firewall rules (keeps power settings)
+   .\setup.cmd Install                                         # LAN detected from the default route
+   .\setup.cmd Status                                          # read-only check (no elevation needed)
+   .\setup.cmd Remove                                          # removes tasks and firewall rules (keeps power settings)
    ```
-   Options for `windows\setup.ps1`:
+   `setup.cmd` runs `setup.ps1` with the same arguments, bypassing PowerShell's execution policy for that run only (Windows blocks `.ps1` scripts by default); the system setting is left alone. Options for `windows\setup.ps1`:
    - `-Action`: `Install`, `Status` (default), or `Remove`
-   - `-AllowedRemoteAddress <subnet>`: required for `Install`; source range allowed on TCP 22 (for example `192.168.1.0/24`)
+   - `-AllowedRemoteAddress <subnet>`: source range allowed on TCP 22. Default: the LAN of the adapter that carries the default route, i.e. the network other PCs reach this one on (WSL shares it in mirrored mode), for example `192.168.1.0/24`; `Status` shows it
    - `-Distro <name>`: WSL distribution name (default `Ubuntu-24.04`)
    - `-VmrestPath <path>`: path to `vmrest.exe` (default `$env:ProgramFiles\VMware\VMware Workstation\vmrest.exe`)
    - `-IncludeBattery`: also disable sleep, hibernation, and lid-close action on battery power
@@ -69,6 +69,7 @@ Background posts (the repository has evolved since publication; where they diffe
      - Both tasks execute system binaries (`wsl.exe` and `vmrest.exe`) directly, so moving the repository does not break them.
    - Allows inbound TCP 22 from `-AllowedRemoteAddress` in Windows Firewall (`WSL2 SSH 22`) and Hyper-V Firewall for WSL (`WSL-SSH-Inbound-TCP22-LAN`).
    - Sets AC power (`-IncludeBattery` for DC as well) to never sleep, never hibernate, and do nothing when closing the lid, unless `-SkipPower` is passed.
+   - Keeps the VMware Bridge Protocol only on physical adapters (Ethernet, Wi-Fi). WSL's mirrored mode adds a Hyper-V `vEthernet` adapter that VMware's VMnet0 "Automatic" bridge could otherwise pick, leaving `lan = true` VMs off the LAN.
    - Removes legacy tasks and old files under `%ProgramFiles%\wsl-vmware-lab`, starts both tasks, and waits until port `22` in WSL and `127.0.0.1:8697` on Windows are actively listening before reporting ready.
 
 4. **Prepare the base VM and check the host (in WSL):**
@@ -114,6 +115,7 @@ cp vms.tfvars.example vms.tfvars           # define VM names, CPUs, memory_mb, a
 - Each key in `vms = { ... }` in `vms.tfvars` is the VM name (`^[a-z0-9][a-z0-9-]{0,62}$`, lowercase letters, digits, and `-`, and not a base name `<image>-base`). It becomes the Windows folder and VMX path (`<LAB_VM_ROOT_WIN>\<name>\<name>.vmx`), the guest hostname, and the Ansible host name.
 - Omitted fields default to `processors = 2`, `memory_mb = 2048`, and `groups = ["demo"]`.
 - Group names in `groups` must match `^[a-z_][a-z0-9_]*$`. Every VM is placed in its listed `groups` and is always added to the `lab` group (`ansible/check-lab.yml` runs on `lab`; the default `ansible/configure-guest.yml` runs on `demo`).
+- **LAN NIC (optional):** `lan = true` adds a bridged NIC (VMnet0), named `lan0` in the guest, that gets an address from your LAN router's DHCP (for example 192.168.1.x). `lan_ip = "192.168.1.240/24"` makes it static instead (pick an address outside the router's DHCP range); `./lab up` refuses an address that is not on this PC's LAN (detected from the default route, shown by `./lab status`) or that already answers. `lan0` adds no default route or DNS; internet traffic stays on NAT. Playbooks read it as `ansible_lan0.ipv4.address` (`check-lab.yml` reports it). VMs on several PCs on the same LAN can reach each other this way. Changing `lan`/`lan_ip` rebuilds that VM (`./lab up --allow-destroy`). On a PC with Hyper-V adapters, check that VMware's VMnet0 bridges to the physical adapter (Virtual Network Editor).
 - Adding an entry to `vms.tfvars` and running `./lab up` creates and bootstraps only the new VM (created powered off, bootstrapped, then powered on) while already-running VMs stay on.
 
 ## Safety Guarantees
@@ -167,7 +169,7 @@ Copy `lab.env.example` to `lab.env` only when overriding defaults (`cp lab.env.e
 
 ## Notes
 
-- **Verified scope:** Verified on one laptop on 2026-11-09 (VMware Workstation Pro already installed, WSL2 mirrored networking, Windows Firewall Private and Public profiles off): `windows\setup.ps1 Install`, `./lab setup` through the base VM, a clone with `./lab up`, `./lab configure` twice (second run `changed=0`), `./lab configure ansible/check-lab.yml`, `./lab destroy` with file cleanup, and a reboot with WSL `sshd` and `vmrest` up before any logon. The unbooted base with a pinned host key and the `lab` user was checked the same day with `./lab setup --recreate`, `up`, `configure` twice, `check-lab.yml`, `down`/`up`, and again after disabling `open-vm-tools` and removing `vmware-rpctool` in the guest. Each `LAB_IMAGE` (`ubuntu-24.04`, `ubuntu-22.04`, `debian-13`) passed `setup --recreate`, `up`, `configure` twice, `check-lab.yml`, `down`/`up` and `destroy` the same day. A mixed `vms.tfvars` (Ubuntu 24.04 + Debian 13) passed the same steps; changing one VM's image to Ubuntu 22.04 rebuilt only that VM (`up --allow-destroy`) while the other stayed on; and a clone made by the previous version kept running through the upgrade (`configure` `changed=0`). **Not yet verified:** a fresh PC without VMware Workstation installed, and a PC with Windows Firewall profiles enabled.
+- **Verified scope:** Verified on one laptop on 2026-11-09 (VMware Workstation Pro already installed, WSL2 mirrored networking, Windows Firewall Private and Public profiles off): `windows\setup.ps1 Install`, `./lab setup` through the base VM, a clone with `./lab up`, `./lab configure` twice (second run `changed=0`), `./lab configure ansible/check-lab.yml`, `./lab destroy` with file cleanup, and a reboot with WSL `sshd` and `vmrest` up before any logon. The unbooted base with a pinned host key and the `lab` user was checked the same day with `./lab setup --recreate`, `up`, `configure` twice, `check-lab.yml`, `down`/`up`, and again after disabling `open-vm-tools` and removing `vmware-rpctool` in the guest. Each `LAB_IMAGE` (`ubuntu-24.04`, `ubuntu-22.04`, `debian-13`) passed `setup --recreate`, `up`, `configure` twice, `check-lab.yml`, `down`/`up` and `destroy` the same day. A mixed `vms.tfvars` (Ubuntu 24.04 + Debian 13) passed the same steps; changing one VM's image to Ubuntu 22.04 rebuilt only that VM (`up --allow-destroy`) while the other stayed on; and a clone made by the previous version kept running through the upgrade (`configure` `changed=0`). LAN NICs on that wired laptop: `lan = true` (Ubuntu) got a router DHCP address and `lan_ip` (Debian) its static one, both reachable from another machine on the LAN and from each other, internet still through NAT, kept across `down`/`up`; an address already in use was refused. **Not yet verified:** LAN NICs over Wi-Fi bridging, VMs on several PCs together, a fresh PC without VMware Workstation installed, and a PC with Windows Firewall profiles enabled.
 - **Files never to commit:** `lab.env`, `*.env`, `vmrest.env`, `*.tfvars` (`vms.tfvars`), SSH keys (`*_ed25519*`), `inventory.json`, `known_hosts*`, `*.tfstate*`, `cleanup-pending.json`, and VM disks/images/ISOs (`base/`, `cloud-init/`, `*.ova`, `*.vmdk`, `*.vmx`, `*.iso`) are gitignored and must stay out of version control.
 - **Community Terraform provider:** `elsudano/vmworkstation` (`2.0.1`) is an unofficial provider. It looks up the base VM by `displayName` and takes the first match, and it does not replace clones on its own when the base VM is rebuilt; this repository enforces both checks (`lib/check-base.py` and `terraform_data.vm_base`). Review its schema before upgrading the provider version.
 - **Troubleshooting:** See [`.claude/skills/vmware-wsl-lab/reference/pitfalls.md`](.claude/skills/vmware-wsl-lab/reference/pitfalls.md) for known symptoms and fixes.

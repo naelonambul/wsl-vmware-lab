@@ -33,21 +33,70 @@ printf 'wsl-vmware-lab-%s %s\n' "$VM_ID" "$(cut -d' ' -f1,2 "$keydir/key.pub")" 
 mv -f -- "$known_hosts.tmp" "$known_hosts"
 echo "[OK] Pinned a new SSH host key for ${VM_NAME:-$LAB_CLONE_NAME}"
 printf 'instance-id: %s\nlocal-hostname: %s\n' "$VM_ID" "${VM_NAME:-$LAB_CLONE_NAME}" > "$seed_dir/meta-data"
-cat > "$seed_dir/network-config" <<'CFG'
+# LAN NIC (vms.tfvars lan / lan_ip). cloud-init renames a NIC on first boot
+# only when it is matched by MAC, so the NIC gets a static MAC from VMware's
+# static range (00:50:56:00-3f:xx:xx), derived from this PC and VM id: unique
+# on a LAN shared by several lab PCs whose clones may have the same id. Renamed
+# lan0, it no longer matches en* above. No default route or DNS from it:
+# internet traffic stays on the NAT NIC.
+lan="${VM_LAN:-none}"
+h=$(printf '%s %s' "$(hostname)" "$VM_ID" | sha256sum | cut -c1-6)
+lan_mac=$(printf '00:50:56:%02x:%s:%s' $((16#${h:0:2} % 64)) "${h:2:2}" "${h:4:2}")
+# The NAT and management NICs (e1000) get DHCP. With a LAN NIC, match them by
+# driver instead of name: on first boot the vmxnet3 LAN NIC is still en* until
+# it is renamed lan0, and would otherwise take a DHCP lease and default route.
+if [[ "$lan" == none ]]; then nic_match='name: "en*"'; else nic_match='driver: e1000'; fi
+cat > "$seed_dir/network-config" <<CFG
 version: 2
 ethernets:
   demo_interfaces:
     match:
-      name: "en*"
+      $nic_match
     dhcp4: true
     dhcp-identifier: mac
 CFG
+case "$lan" in
+  none) ;;
+  dhcp)
+    cat >> "$seed_dir/network-config" <<CFG
+  lan0:
+    match:
+      macaddress: "$lan_mac"
+    set-name: lan0
+    dhcp4: true
+    dhcp-identifier: mac
+    dhcp4-overrides:
+      use-routes: false
+      use-dns: false
+CFG
+    ;;
+  *)
+    [[ "$lan" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}/[0-9]{1,2}$ ]] || { echo "[ERROR] Unexpected lan_ip: $lan" >&2; exit 1; }
+    # The address must be on this PC's LAN and free (this clone is new and off,
+    # so anything answering is another device).
+    net=$(lab_lan) || { echo '[ERROR] Could not detect the LAN (no IPv4 default route); cannot check lan_ip' >&2; exit 1; }
+    python3 -c 'import ipaddress, sys
+a = ipaddress.ip_interface(sys.argv[1]); n = ipaddress.ip_network(sys.argv[2])
+sys.exit(0 if a.network == n and a.ip not in (n.network_address, n.broadcast_address) else 1)' "$lan" "${net%% *}" \
+      || { echo "[ERROR] lan_ip $lan is not a host address on this PC's LAN ${net%% *}" >&2; exit 1; }
+    if ping -c 2 -W 1 "${lan%/*}" >/dev/null 2>&1; then
+      echo "[ERROR] lan_ip ${lan%/*} already answers on the LAN; pick a free address outside the router's DHCP range" >&2; exit 1
+    fi
+    cat >> "$seed_dir/network-config" <<CFG
+  lan0:
+    match:
+      macaddress: "$lan_mac"
+    set-name: lan0
+    addresses: [$lan]
+CFG
+    ;;
+esac
 # The ISO must reside on a Windows drive so Workstation can open it.
 seed_iso="$(dirname "$vmx")/cloud-init-$VM_ID.iso"
 cloud-localds --network-config="$seed_dir/network-config" "$seed_iso" "$seed_dir/user-data" "$seed_dir/meta-data"
 SEED_WIN="$(wslpath -w "$seed_iso")"
 export SEED_WIN
-export VMX_LINUX="$vmx"
+export VMX_LINUX="$vmx" VM_LAN="$lan" LAN_MAC="$lan_mac"
 python3 - <<'PY'
 import os, re
 from pathlib import Path
@@ -65,6 +114,14 @@ settings={
  # base's NAT MAC and receive the same DHCP address).
  'uuid.action':'create',
 }
+if os.environ['VM_LAN'] != 'none':
+    # Bridged to the physical LAN through VMnet0. vmxnet3 sits on PCIe, so the
+    # VM needs a PCIe root port (the base VMX has none).
+    settings.update({'pciBridge0.present':'TRUE', 'pciBridge4.present':'TRUE',
+                     'pciBridge4.virtualDev':'pcieRootPort', 'pciBridge4.functions':'8',
+                     'ethernet2.present':'TRUE', 'ethernet2.startConnected':'TRUE',
+                     'ethernet2.connectionType':'bridged', 'ethernet2.virtualDev':'vmxnet3',
+                     'ethernet2.addressType':'static', 'ethernet2.address':os.environ['LAN_MAC']})
 s=re.sub(r'(?mi)^\s*(uuid\.bios|uuid\.location|vc\.uuid|ethernet\d+\.generatedAddress(Offset)?)\s*=.*\n?','',s)
 for key,value in settings.items():
     line=f'{key} = "{value}"'
@@ -76,5 +133,5 @@ for key,value in settings.items():
 tmp=p.with_name(p.name+'.tmp')
 tmp.write_text(s+'\n')
 os.replace(tmp,p)
-print('[OK] Cloud-init seed, management NIC and a fresh UUID/MAC for this clone configured')
+print('[OK] Cloud-init seed, management NIC' + ('' if os.environ['VM_LAN'] == 'none' else ', LAN NIC lan0 (' + os.environ['VM_LAN'] + ')') + ' and a fresh UUID/MAC for this clone configured')
 PY

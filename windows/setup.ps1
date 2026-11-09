@@ -1,18 +1,24 @@
 <#
 Windows side of the lab, for WSL mirrored networking. Run from an elevated
-PowerShell in this folder (Status needs no elevation):
+PowerShell in this folder (Status needs no elevation). setup.cmd runs this
+script past the default execution policy (for that run only):
 
-  .\setup.ps1 Install -AllowedRemoteAddress 192.168.1.0/24   # tasks, firewall, power, then checks
-  .\setup.ps1 Status                                          # read only
-  .\setup.ps1 Remove                                          # tasks and firewall rules (power values stay)
+  .\setup.cmd Install                                         # tasks, firewall, power, then checks
+  .\setup.cmd Status                                          # read only
+  .\setup.cmd Remove                                          # tasks and firewall rules (power values stay)
 
 Install sets up, idempotently:
 - task "WSL2 SSH Service Start": at boot (S4U, no logon needed) and logon, runs
   sshd in the foreground inside WSL, which also keeps WSL running
 - task "VMware vmrest API": at boot (S4U), runs vmrest.exe (loopback :8697, account from vmrest.exe -C)
-- inbound TCP 22 from -AllowedRemoteAddress: Windows firewall + Hyper-V firewall (WSL)
+- inbound TCP 22 from the LAN: Windows firewall + Hyper-V firewall (WSL). The
+  LAN is detected from the default route (the network other PCs reach this one
+  on, and WSL shares it in mirrored mode); -AllowedRemoteAddress overrides it
 - power on AC (and battery with -IncludeBattery): no sleep, no hibernation,
   closing the lid does nothing (-SkipPower leaves power settings alone)
+- VMware's bridged network (VMnet0, "Automatic", used by VMs with lan = true)
+  only on physical adapters: the VMware Bridge Protocol is unbound from
+  virtual ones such as WSL's Hyper-V vEthernet, which "Automatic" could pick
 Both tasks run system executables (wsl.exe, vmrest.exe), not scripts from
 this folder, so the repository can move. It removes what older versions installed (portproxy-era tasks, copies in
 %ProgramFiles%\wsl-vmware-lab) and reports ready only after WSL listens on
@@ -151,24 +157,68 @@ function Set-Power {
     Ok "power on AC$(if ($IncludeBattery) { ' and battery' }): no sleep, no hibernation, lid does nothing"
 }
 
+# VMnet0 on "Automatic" bridges to the first adapter bound to the VMware Bridge
+# Protocol; WSL mirrored mode adds a Hyper-V vEthernet adapter that can come
+# first, and then bridged VMs never reach the LAN. Keep the bridge only on
+# physical adapters (Ethernet, Wi-Fi), so "Automatic" picks a real one.
+function Get-BridgeAdapters {
+    $physical = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
+        Where-Object { $_.InterfaceDescription -notmatch 'Bluetooth' } | ForEach-Object { $_.Name })
+    foreach ($b in @(Get-NetAdapterBinding -ComponentID vmware_bridge -ErrorAction SilentlyContinue | Where-Object { $_.Enabled })) {
+        [pscustomobject]@{ Name = $b.Name; Physical = ($physical -contains $b.Name) }
+    }
+}
+
+function Set-Bridge {
+    foreach ($a in @(Get-BridgeAdapters | Where-Object { -not $_.Physical })) {
+        Disable-NetAdapterBinding -Name $a.Name -ComponentID vmware_bridge
+        Ok "VMware bridge removed from virtual adapter '$($a.Name)'"
+    }
+    $left = @(Get-BridgeAdapters | ForEach-Object { $_.Name })
+    if ($left) { Ok "VMware bridge (VMnet0 Automatic) on: $($left -join ', ')" }
+    else { Warn 'no physical adapter has the VMware Bridge Protocol; VMs with lan = true cannot reach the LAN' }
+}
+
+# The IPv4 network of the adapter that carries the default route, e.g.
+# 192.168.1.0/24: the LAN other PCs use to reach this one (and WSL, mirrored).
+function Get-Lan {
+    $route = Get-NetRoute -AddressFamily IPv4 -DestinationPrefix '0.0.0.0/0' -ErrorAction SilentlyContinue |
+        Sort-Object { $_.RouteMetric + $_.InterfaceMetric } | Select-Object -First 1
+    if (-not $route) { return $null }
+    $ip = Get-NetIPAddress -AddressFamily IPv4 -InterfaceIndex $route.InterfaceIndex -ErrorAction SilentlyContinue |
+        Where-Object { $_.IPAddress -notlike '169.254.*' } | Select-Object -First 1
+    if (-not $ip) { return $null }
+    $b = ([Net.IPAddress]$ip.IPAddress).GetAddressBytes(); [Array]::Reverse($b)
+    $all = [uint64]4294967295   # 0xFFFFFFFF would be read as the Int32 -1
+    $mask = ($all -shl (32 - $ip.PrefixLength)) -band $all
+    $net = [BitConverter]::GetBytes([uint32]([uint64][BitConverter]::ToUInt32($b, 0) -band $mask)); [Array]::Reverse($net)
+    [pscustomobject]@{ Cidr = "$(([Net.IPAddress]$net).IPAddressToString)/$($ip.PrefixLength)"; Address = $ip.IPAddress; Adapter = $ip.InterfaceAlias }
+}
+
 function Show-Status {
     $ok = $true
+    $lan = Get-Lan
+    if ($lan) { Ok "LAN: $($lan.Cidr) ($($lan.Adapter), this PC $($lan.Address))" } else { Warn 'no IPv4 default route: LAN unknown' }
     if (Test-Mirrored) { Ok 'WSL networkingMode=mirrored' } else { Warn 'WSL is not in mirrored mode (.wslconfig: [wsl2] networkingMode=mirrored)'; $ok = $false }
     foreach ($name in $SshTask, $VmrestTask) {
         $t = Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue
-        if (-not $t) { Warn "task '$name' absent (run .\setup.ps1 Install, elevated)"; $ok = $false; continue }
+        if (-not $t) { Warn "task '$name' absent (run .\setup.cmd Install, elevated)"; $ok = $false; continue }
         $boot = [bool]($t.Triggers | Where-Object { $_.CimClass.CimClassName -eq 'MSFT_TaskBootTrigger' })
         $exe = "$($t.Actions[0].Execute) $($t.Actions[0].Arguments)"
         if ($boot -and $t.Principal.LogonType -eq 'S4U' -and $exe -notmatch [regex]::Escape($LegacyDir)) { Ok "task '$name': $($t.State), boot without logon" }
-        else { Warn "task '$name' is from an older setup or does not start at boot; run .\setup.ps1 Install (elevated)"; $ok = $false }
+        else { Warn "task '$name' is from an older setup or does not start at boot; run .\setup.cmd Install (elevated)"; $ok = $false }
     }
-    foreach ($name in $LegacyTasks) { if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) { Warn "old task '$name' present; .\setup.ps1 Install removes it" } }
+    foreach ($name in $LegacyTasks) { if (Get-ScheduledTask -TaskName $name -ErrorAction SilentlyContinue) { Warn "old task '$name' present; .\setup.cmd Install removes it" } }
     if (Get-NetFirewallRule -DisplayName $FwRule -ErrorAction SilentlyContinue) { Ok "firewall rule '$FwRule' present" } else { Warn "firewall rule '$FwRule' absent"; $ok = $false }
     if (Test-WslSshListening) { Ok 'WSL sshd listens on :22' } else { Warn 'WSL sshd is not listening on :22'; $ok = $false }
     if (Test-VmrestListening) { Ok 'vmrest listens on 127.0.0.1:8697' } else { Warn 'vmrest is not listening on loopback :8697'; $ok = $false }
     $risks = @()
     foreach ($e in (Get-PowerValues).GetEnumerator()) { if ($e.Value -and $e.Value.AC -ne 0) { $risks += $e.Key } }
     if ($risks) { Warn "power on AC still allows: $($risks -join ', ') (Install fixes it unless -SkipPower)" } else { Ok 'power on AC: no sleep, no hibernation, lid does nothing' }
+    $bridge = @(Get-BridgeAdapters)
+    $virtual = @($bridge | Where-Object { -not $_.Physical } | ForEach-Object { $_.Name })
+    if ($virtual) { Warn "VMware bridge also on virtual adapters: $($virtual -join ', ') (VMnet0 Automatic may pick one; Install fixes it)" }
+    elseif ($bridge) { Ok "VMware bridge (VMnet0 Automatic) on: $(($bridge | ForEach-Object { $_.Name }) -join ', ')" }
     return $ok
 }
 
@@ -185,7 +235,12 @@ switch ($Action) {
     }
     'Install' {
         Assert-Admin
-        if (-not $AllowedRemoteAddress) { throw 'Pass -AllowedRemoteAddress with your LAN range, e.g. 192.168.1.0/24.' }
+        if (-not $AllowedRemoteAddress) {
+            $lan = Get-Lan
+            if (-not $lan) { throw 'Could not detect the LAN (no IPv4 default route); pass -AllowedRemoteAddress, e.g. 192.168.1.0/24.' }
+            $script:AllowedRemoteAddress = $lan.Cidr
+            Ok "LAN detected: $($lan.Cidr) ($($lan.Adapter), this PC $($lan.Address)); SSH allowed from it (-AllowedRemoteAddress to change)"
+        }
         if (-not (Test-Mirrored)) { throw 'WSL must use mirrored networking: add networkingMode=mirrored under [wsl2] in %USERPROFILE%\.wslconfig, then wsl --shutdown.' }
         if (-not (Test-Path -LiteralPath $VmrestPath)) { throw "vmrest not found: $VmrestPath (pass -VmrestPath)" }
         $winSshd = Get-NetTCPConnection -State Listen -LocalPort 22 -ErrorAction SilentlyContinue |
@@ -199,6 +254,7 @@ switch ($Action) {
             -Description 'VMware vmrest on 127.0.0.1:8697 (restarted if it exits). wsl-vmware-lab windows\setup.ps1'
         Set-Firewall
         if (-not $SkipPower) { Set-Power }
+        Set-Bridge
         Start-ScheduledTask -TaskName $SshTask
         Start-ScheduledTask -TaskName $VmrestTask
         # Ready means the ports answer, not that a task was started (#18).

@@ -54,12 +54,14 @@ variable "vm_root_win" {
 # For a system of several VMs, write vms.tfvars in the repository root
 # (template: vms.tfvars.example); lib/lifecycle.sh passes it with -var-file.
 variable "vms" {
-  description = "Lab VMs to create: name => { processors, memory_mb, groups (Ansible groups), image }"
+  description = "Lab VMs to create: name => { processors, memory_mb, groups (Ansible groups), image, lan, lan_ip }"
   type = map(object({
     processors = optional(number, 2)
     memory_mb  = optional(number, 2048)
     groups     = optional(list(string), ["demo"])
-    image      = optional(string) # default: var.default_image
+    image      = optional(string)      # default: var.default_image
+    lan        = optional(bool, false) # bridged NIC lan0 on the physical LAN, DHCP
+    lan_ip     = optional(string)      # "192.168.1.201/24": static lan0 (implies lan)
   }))
 
   validation {
@@ -77,5 +79,10 @@ variable "vms" {
   validation {
     condition     = alltrue([for spec in values(var.vms) : spec.image == null || contains(["ubuntu-24.04", "ubuntu-22.04", "debian-13"], coalesce(spec.image, "-"))])
     error_message = "image must be ubuntu-24.04, ubuntu-22.04 or debian-13 (lib/base.sh)."
+  }
+
+  validation {
+    condition     = alltrue([for spec in values(var.vms) : spec.lan_ip == null || can(cidrhost(coalesce(spec.lan_ip, "-"), 0)) && can(regex("^[0-9.]+/[0-9]+$", coalesce(spec.lan_ip, "-")))])
+    error_message = "lan_ip must be an IPv4 address with prefix, e.g. \"192.168.1.201/24\"."
   }
 }

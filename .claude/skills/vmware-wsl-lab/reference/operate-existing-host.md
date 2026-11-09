@@ -122,8 +122,8 @@ Lessons from running such a deployment:
 - Host keys are not learned on first contact: `lib/bootstrap-guest.sh` generates each clone's SSH host key, injects it with cloud-init `ssh_keys` and writes `known_hosts-<id>` under the alias `wsl-vmware-lab-<id>` before the first boot; SSH runs with `StrictHostKeyChecking=yes`. A different key at the address (another VM got it) fails the connection instead of configuring the wrong VM.
 - Default Ansible privilege-escalation wait (12 s) intermittently timed out; `ANSIBLE_TIMEOUT=60` fixed it. Root cause of the latency was not confirmed.
 - After a reboot vmrest may be absent (HTTP 000). Start the `VMware vmrest API` task before retrying Terraform; `0 destroyed` with vmrest down is not success.
-- Both boot tasks (`WSL2 SSH Service Start`, `VMware vmrest API`) come from `windows\setup.ps1 Install`; `./lab status` warns about tasks from an older setup. Do not restart WSL or re-register the SSH task during an active remote session without console access (re-registering does not stop the running sshd; a restart does).
-- A host that sleeps or hibernates drops every remote session; from outside it looks like an SSH timeout. `./lab status` shows the power values; `setup.ps1 Install` sets them (the user's call).
+- Both boot tasks (`WSL2 SSH Service Start`, `VMware vmrest API`) come from `windows\setup.cmd Install`; `./lab status` warns about tasks from an older setup. Do not restart WSL or re-register the SSH task during an active remote session without console access (re-registering does not stop the running sshd; a restart does).
+- A host that sleeps or hibernates drops every remote session; from outside it looks like an SSH timeout. `./lab status` shows the power values; `setup.cmd Install` sets them (the user's call).
 
 ## Evidence rules
 

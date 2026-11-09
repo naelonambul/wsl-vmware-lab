@@ -47,15 +47,15 @@ WSL Ansible --SSH--> 실습 VM (VMnet1 host-only 관리망; VMnet8 NAT)
    - `VMware vmrest API` 부팅 작업이 이미 있으면 `vmrest`를 다시 시작해 인증된 `GET /vms`가 HTTP `200`을 반환하는지 확인합니다. 3단계 전의 첫 설치에서는 4단계의 `./lab status`가 이 확인을 합니다.
    - 사람이 직접 대화형 터미널에서 실행해야 합니다. AI 에이전트는 비밀번호를 묻거나 읽거나 입력하지 않습니다.
 
-3. **Windows 부팅 작업, 방화벽, 전원 설정 (관리자 PowerShell, `windows\` 폴더에서):**
+3. **Windows 부팅 작업, 방화벽, 전원, VMware 브리지 설정 (관리자 PowerShell, `windows\` 폴더에서):**
    ```powershell
-   .\setup.ps1 Install -AllowedRemoteAddress 192.168.1.0/24   # 자신의 LAN 대역으로 변경
-   .\setup.ps1 Status                                          # 읽기 전용 점검 (관리자 권한 불필요)
-   .\setup.ps1 Remove                                          # 작업과 방화벽 규칙 제거 (전원 설정은 그대로)
+   .\setup.cmd Install                                         # LAN 대역은 기본 경로에서 자동 감지
+   .\setup.cmd Status                                          # 읽기 전용 점검 (관리자 권한 불필요)
+   .\setup.cmd Remove                                          # 작업과 방화벽 규칙 제거 (전원 설정은 그대로)
    ```
-   `windows\setup.ps1` 옵션:
+   `setup.cmd`는 같은 인자로 `setup.ps1`을 실행하면서 그 한 번만 PowerShell 실행 정책을 우회합니다(Windows는 기본적으로 `.ps1` 스크립트를 막음). 시스템 설정은 바꾸지 않습니다. `windows\setup.ps1` 옵션:
    - `-Action`: `Install`, `Status`(기본값), `Remove`
-   - `-AllowedRemoteAddress <subnet>`: `Install`에 필수. TCP 22를 허용할 출발지 대역(예: `192.168.1.0/24`)
+   - `-AllowedRemoteAddress <subnet>`: TCP 22를 허용할 출발지 대역. 기본값은 기본 경로가 나가는 어댑터의 LAN, 즉 다른 PC가 이 PC에 접속하는 네트워크입니다(미러드 모드라 WSL도 같은 네트워크). 예: `192.168.1.0/24`. `Status`가 보여 줍니다
    - `-Distro <name>`: WSL 배포판 이름(기본값 `Ubuntu-24.04`)
    - `-VmrestPath <path>`: `vmrest.exe` 경로(기본값 `$env:ProgramFiles\VMware\VMware Workstation\vmrest.exe`)
    - `-IncludeBattery`: 배터리 전원에서도 절전, 최대 절전, 덮개 닫기 동작을 끔
@@ -69,6 +69,7 @@ WSL Ansible --SSH--> 실습 VM (VMnet1 host-only 관리망; VMnet8 NAT)
      - 두 작업 모두 시스템 바이너리(`wsl.exe`, `vmrest.exe`)를 직접 실행하므로 저장소를 옮겨도 깨지지 않습니다.
    - Windows 방화벽(`WSL2 SSH 22`)과 WSL용 Hyper-V 방화벽(`WSL-SSH-Inbound-TCP22-LAN`)에서 `-AllowedRemoteAddress`로부터 들어오는 인바운드 TCP 22를 허용합니다.
    - `-SkipPower`를 주지 않으면 AC 전원(`-IncludeBattery`를 주면 배터리 전원도 포함)에서 절전과 최대 절전을 끄고 덮개를 닫아도 아무것도 하지 않게 설정합니다.
+   - VMware 브리지 프로토콜을 실제 물리 어댑터(이더넷, Wi-Fi)에만 남깁니다. WSL 미러드 모드가 만드는 Hyper-V `vEthernet` 어댑터를 VMware VMnet0의 "자동" 브리지가 고르면 `lan = true` VM이 LAN에 닿지 못하기 때문입니다.
    - 예전 작업과 `%ProgramFiles%\wsl-vmware-lab` 아래의 예전 파일을 지우고, 두 작업을 시작한 뒤 WSL의 `22`번 포트와 Windows의 `127.0.0.1:8697`이 실제로 리슨할 때까지 기다렸다가 준비 완료를 출력합니다.
 
 4. **베이스 VM 준비 및 호스트 점검 (WSL):**
@@ -114,6 +115,7 @@ cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, memory_mb, Ansible 
 - `vms.tfvars`의 `vms = { ... }` 안 각 키가 VM 이름입니다(`^[a-z0-9][a-z0-9-]{0,62}$`, 영문 소문자·숫자·`-`만 사용, 베이스 이름 `<image>-base`와 같을 수 없음). 이 이름이 Windows 폴더 및 VMX 경로(`<LAB_VM_ROOT_WIN>\<name>\<name>.vmx`), 게스트 호스트 이름, Ansible 호스트 이름이 됩니다.
 - 생략한 필드는 `processors = 2`, `memory_mb = 2048`, `groups = ["demo"]` 기본값을 씁니다.
 - `groups`의 그룹 이름은 `^[a-z_][a-z0-9_]*$` 형식이어야 합니다. 모든 VM은 지정한 `groups`에 들어가며, 항상 `lab` 그룹에도 추가됩니다(`ansible/check-lab.yml`은 `lab`에서, 기본 `ansible/configure-guest.yml`은 `demo`에서 실행됩니다).
+- **LAN NIC(선택):** `lan = true`를 주면 브리지 NIC(VMnet0)가 붙고, 게스트 안에서 `lan0`이라는 이름으로 공유기 DHCP에서 주소를 받습니다(예: 192.168.1.x). `lan_ip = "192.168.1.240/24"`를 주면 그 주소로 고정됩니다(공유기 DHCP 범위 밖의 주소를 쓰세요). 이 PC의 LAN 대역(기본 경로에서 감지, `./lab status`에 표시) 밖의 주소이거나 이미 응답하는 주소면 `./lab up`이 거부합니다. `lan0`은 기본 경로와 DNS를 바꾸지 않으므로 인터넷은 계속 NAT로 나갑니다. 플레이북에서는 `ansible_lan0.ipv4.address`로 읽습니다(`check-lab.yml`이 보여 줍니다). 같은 LAN의 여러 PC에 있는 VM들이 이 주소로 서로 통신할 수 있습니다. `lan`/`lan_ip`를 바꾸면 그 VM을 다시 만듭니다(`./lab up --allow-destroy`). Hyper-V 어댑터가 있는 PC에서는 VMware의 VMnet0이 실제 네트워크 어댑터에 브리지되는지 확인하세요(Virtual Network Editor).
 - `vms.tfvars`에 항목을 더하고 `./lab up`을 실행하면 이미 켜져 있는 VM은 그대로 둔 채 새 VM만 만들고 준비합니다(꺼진 상태로 만든 뒤 부트스트랩하고 전원을 켭니다).
 
 ## 지켜 주는 것
@@ -167,7 +169,7 @@ cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, memory_mb, Ansible 
 
 ## 주의
 
-- **검증 범위:** 2026-11-09 노트북 1대(VMware Workstation Pro 기설치, WSL2 미러드 네트워크, Windows 방화벽의 Private·Public 프로필 꺼짐)에서 확인했습니다: `windows\setup.ps1 Install`, 베이스 VM까지 만드는 `./lab setup`, `./lab up`으로 클론 생성, `./lab configure` 2회(두 번째 `changed=0`), `./lab configure ansible/check-lab.yml`, 파일 정리까지 포함한 `./lab destroy`, 재부팅 후 로그온 전 WSL `sshd`와 `vmrest` 기동. 부팅하지 않는 베이스와 고정 호스트 키, `lab` 사용자 방식도 같은 날 `./lab setup --recreate`, `up`, `configure` 2회, `check-lab.yml`, `down`/`up`으로 확인했고, 게스트에서 `open-vm-tools`를 끄고 `vmware-rpctool`을 치운 뒤에도 다시 확인했습니다. `LAB_IMAGE`의 세 이미지(`ubuntu-24.04`, `ubuntu-22.04`, `debian-13`)도 같은 날 각각 `setup --recreate`, `up`, `configure` 2회, `check-lab.yml`, `down`/`up`, `destroy`를 통과했습니다. Ubuntu 24.04와 Debian 13을 섞은 `vms.tfvars`도 같은 단계를 통과했고, VM 하나의 이미지를 Ubuntu 22.04로 바꾸자 그 VM만 다시 만들어졌으며(`up --allow-destroy`) 다른 VM은 켜진 채 그대로였습니다. 이전 버전으로 만든 클론도 업그레이드 뒤 그대로 동작했습니다(`configure` `changed=0`). **아직 확인하지 않은 환경:** VMware Workstation이 없는 새 PC와 Windows 방화벽 프로필이 켜진 PC.
+- **검증 범위:** 2026-11-09 노트북 1대(VMware Workstation Pro 기설치, WSL2 미러드 네트워크, Windows 방화벽의 Private·Public 프로필 꺼짐)에서 확인했습니다: `windows\setup.ps1 Install`, 베이스 VM까지 만드는 `./lab setup`, `./lab up`으로 클론 생성, `./lab configure` 2회(두 번째 `changed=0`), `./lab configure ansible/check-lab.yml`, 파일 정리까지 포함한 `./lab destroy`, 재부팅 후 로그온 전 WSL `sshd`와 `vmrest` 기동. 부팅하지 않는 베이스와 고정 호스트 키, `lab` 사용자 방식도 같은 날 `./lab setup --recreate`, `up`, `configure` 2회, `check-lab.yml`, `down`/`up`으로 확인했고, 게스트에서 `open-vm-tools`를 끄고 `vmware-rpctool`을 치운 뒤에도 다시 확인했습니다. `LAB_IMAGE`의 세 이미지(`ubuntu-24.04`, `ubuntu-22.04`, `debian-13`)도 같은 날 각각 `setup --recreate`, `up`, `configure` 2회, `check-lab.yml`, `down`/`up`, `destroy`를 통과했습니다. Ubuntu 24.04와 Debian 13을 섞은 `vms.tfvars`도 같은 단계를 통과했고, VM 하나의 이미지를 Ubuntu 22.04로 바꾸자 그 VM만 다시 만들어졌으며(`up --allow-destroy`) 다른 VM은 켜진 채 그대로였습니다. 이전 버전으로 만든 클론도 업그레이드 뒤 그대로 동작했습니다(`configure` `changed=0`). 같은 유선 노트북에서 LAN NIC도 확인했습니다: `lan = true`(Ubuntu)는 공유기 DHCP 주소를, `lan_ip`(Debian)는 지정한 고정 주소를 받았고, LAN의 다른 기기와 서로 간에 접속됐으며, 인터넷은 계속 NAT로 나갔고, `down`/`up` 뒤에도 유지됐습니다. 이미 쓰이는 주소는 거부됐습니다. **아직 확인하지 않은 환경:** Wi-Fi 브리지에서의 LAN NIC, 여러 PC의 VM을 함께 쓰는 구성, VMware Workstation이 없는 새 PC와 Windows 방화벽 프로필이 켜진 PC.
 - **올리면 안 되는 파일:** `lab.env`, `*.env`, `vmrest.env`, `*.tfvars`(`vms.tfvars`), SSH 키(`*_ed25519*`), `inventory.json`, `known_hosts*`, `*.tfstate*`, `cleanup-pending.json`, VM 디스크·이미지·ISO(`base/`, `cloud-init/`, `*.ova`, `*.vmdk`, `*.vmx`, `*.iso`)는 `.gitignore`에 들어 있으며 버전 관리에 올라가면 안 됩니다.
 - **비공식 Terraform provider:** `elsudano/vmworkstation`(`2.0.1`)은 커뮤니티 provider입니다. 베이스 VM을 `displayName`으로 찾아 첫 번째 항목을 고르고, 베이스 VM을 다시 만들어도 스스로 클론을 교체하지 않습니다. 이 저장소가 그 둘을 대신 확인합니다(`lib/check-base.py`와 `terraform_data.vm_base`). provider 버전을 올리기 전에 스키마를 확인하세요.
 - **문제가 생기면:** 알려진 증상과 해결 방법은 [`.claude/skills/vmware-wsl-lab/reference/pitfalls.md`](.claude/skills/vmware-wsl-lab/reference/pitfalls.md)에서 찾으세요.
