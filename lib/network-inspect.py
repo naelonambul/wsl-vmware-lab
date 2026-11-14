@@ -31,12 +31,12 @@ def read_vmx(path):
             path = subprocess.check_output(['wslpath', '-u', str(path)],
                                            text=True, stdin=subprocess.DEVNULL).strip()
         settings = {}
-        for line in Path(path).read_text(encoding='utf-8-sig').splitlines():
+        for n, line in enumerate(Path(path).read_text(encoding='utf-8-sig').splitlines(), start=1):
             if re.fullmatch(r'\s*(?:#.*)?', line):
                 continue
             match = re.fullmatch(r'\s*([^#\s=]+)\s*=\s*"([^"]*)"\s*(?:#.*)?', line)
             if match is None:
-                raise ValueError('malformed VMX line: ' + line)
+                raise ValueError(f'malformed VMX line {n}')
             key, value = match.groups()
             key = key.lower()
             if key in settings:

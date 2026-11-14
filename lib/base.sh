@@ -144,7 +144,7 @@ VMX
       actual_value=$(value "$vmx" "$key") || lab_fail config_error "Cannot read $key from $vmx"
       expected_value=$(value "$new_vmx" "$key") || lab_fail config_error "Cannot read $key from $new_vmx"
       [[ -n "$actual_value" && "$actual_value" == "$expected_value" ]] || {
-        echo "[ERROR] $vmx has ${key//\\/} = \"$(value "$vmx" "$key")\", expected \"$(value "$new_vmx" "$key")\"; left unchanged." >&2
+        echo "[ERROR] $vmx: ${key//\\/} differs from the expected base settings; left unchanged." >&2
         echo '        Rebuild the base: ./lab setup --recreate' >&2
         exit 1; }
     done
