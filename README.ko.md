@@ -213,7 +213,7 @@ Configure의 인벤토리와 그룹에는 켜진 VM만 들어갑니다. 최초�
 
 오프라인 테스트는 **Linux 전용**입니다(WSL Ubuntu 또는 CI `ubuntu-latest`). Windows Git Bash/MSYS에서는 절대 실행하지 마세요. 시간·프로세스 제한, fixture 격리, fork 반복 방지 방법과 명령은 [tests/README.md](tests/README.md)를 보세요.
 
-현재 CLI의 실제 호스트 검증은 수동으로 진행합니다. Virtual Network Editor(조회만)와 네트워크 정보를 비교하고, 혼합 전원 상태, 생성 전용 up, 선택 시작과 교체, 정상 종료, JSON 결과, 중단 복구, 교체 없는 업그레이드를 확인하세요. 여러 PC에서는 호스트별로 state·비공개 폴더·VM 이름을 격리하고 버전별 서비스 순서를 문서화하며 전체 종료·재시작 뒤 멤버십과 새 쓰기/읽기를 확인하세요. 재부팅은 승인받은 경우에만 검증합니다. 호스트별 증거는 비공개로 보관하고 실제 실행한 검사만 보고하세요.
+현재 CLI의 실제 호스트 검증은 수동으로 진행합니다. Virtual Network Editor(조회만)와 네트워크 정보를 비교하고, 혼합 전원 상태, 생성 전용 up, 선택 시작과 교체, 정상 종료, JSON 결과, 중단 복구, 교체 없는 업그레이드를 확인하세요. 여러 PC에서는 호스트별로 state·비공개 폴더·VM 이름을 격리하고 버전별 서비스 순서를 문서화하며 전체 종료·재시작 뒤 멤버십과 새 쓰기/읽기를 확인하세요. 재부팅은 승인받은 경우에만 검증합니다. 호스트별 증거는 비공개로 보관하고 실제 실행한 검사만 보고하세요. 마지막 실제 호스트 실행(2026-11-14, 같은 LAN의 Windows PC 3대)에서는 "주의"의 "검증 범위"에 나열된 항목을 다루었으며, 중단 복구와 VM 교체는 오프라인 테스트로만 확인했습니다.
 
 ## 폴더 구조
 
@@ -230,7 +230,7 @@ Configure의 인벤토리와 그룹에는 켜진 VM만 들어갑니다. 최초�
 
 ## 주의
 
-- **검증 범위:** 이전 단일 호스트 검증은 현재 CLI 도입 전 기록입니다. 새 네트워크·전원·JSON·업그레이드 동작은 개발자 절의 실제 호스트 검증이 필요합니다. 여러 PC의 시스템, Wi-Fi 브리지, VMware 신규 설치, Windows 방화벽 프로필이 켜진 환경도 이 문서에서 검증하지 않았습니다.
+- **검증 범위:** 현재 CLI는 2026-11-14 같은 LAN의 Windows PC 3대(유선 2대·Wi-Fi 브리지 1대, 1대는 `LAB_LAN_VNET=VMnet2`로 `VMnet0`이 아닌 물리 브리지 사용)에서 검증했습니다: PC 3대 모두에서의 읽기 전용 `./lab network` 실행과 `VMnet0`이 아닌 PC에서 `LAB_LAN_VNET=VMnet2`로 LAN 게이트를 통과한 `up`(불일치 거부는 오프라인 테스트로만 검증), 생성 전용 `up`, 각 `--dry-run`과 일치하는 VM별 `up`, 그리고 dry-run 후 순서대로 실행한 VM별 `down`, PC 3대에 걸친 3노드 MariaDB Galera 클러스터(순차 종료 및 전체 재시작 포함), 호스트 재부팅(`vmrest` 자동 시작, VM은 수동 시작 전까지 꺼진 상태 유지), `destroy --confirm` 거부·미리 보기·실행, 이전 릴리스(`b97feef`)에서의 혼합 전원 상태 유지 업그레이드. VMware Workstation이 설치되지 않은 신규 PC, Windows 방화벽 프로필이 켜진 환경, 다른 공유기·어댑터 환경 일반에서의 Wi-Fi 브리지는 검증하지 않았습니다.
 - **올리면 안 되는 파일:** `lab.env`, `*.env`, `vmrest.env`, `*.tfvars`(`vms.tfvars`), SSH 키(`*_ed25519*`), `inventory.json`, `known_hosts*`, `*.tfstate*`, `cleanup-pending.json`, VM 디스크·이미지·ISO(`base/`, `cloud-init/`, `*.ova`, `*.vmdk`, `*.vmx`, `*.iso`)는 `.gitignore`에 들어 있으며 버전 관리에 올라가면 안 됩니다.
 - **비공식 Terraform provider:** `elsudano/vmworkstation`(`2.0.1`)은 커뮤니티 provider입니다. 베이스 VM을 `displayName`으로 찾아 첫 번째 항목을 고르고, 베이스 VM을 다시 만들어도 스스로 클론을 교체하지 않습니다. 이 저장소가 그 둘을 대신 확인합니다(`lib/check-base.py`와 `terraform_data.vm_base`). provider 버전을 올리기 전에 스키마를 확인하세요.
 - **문제가 생기면:** 알려진 증상과 해결 방법은 [`.claude/skills/vmware-wsl-lab/reference/pitfalls.md`](.claude/skills/vmware-wsl-lab/reference/pitfalls.md)에서 찾으세요.
