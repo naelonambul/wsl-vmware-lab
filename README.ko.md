@@ -82,7 +82,7 @@ WSL Ansible --SSH--> 실습 VM (VMnet1 host-only 관리망; VMnet8 NAT)
    - `terraform`, `ansible-playbook`, `qemu-img`, `cloud-localds`, `gpgv`, `ubuntu-cloudimage-keyring` 가운데 없는 것이 있으면 `./lab setup`이 먼저 `sudo bash lib/wsl-tools.sh`를 실행합니다(WSL 비밀번호를 묻습니다). 이어서 `LAB_IMAGE` 클라우드 이미지를 내려받아 확인하고(위 표 참고), 이미지를 `base/<image>/base.vmdk`로 변환하고, `~/.config/wsl-vmware-lab/lab_ed25519`를 만들고, `base/<image>/base.vmx`(`<image>-base`)를 작성·등록한 뒤 `base/<image>/base.prepared`를 기록합니다. 베이스는 부팅하지 않으므로 클론마다 첫 부팅이 이미지의 첫 부팅입니다.
    - 공개 `./lab` 명령에는 호스트 전용 하위 명령이 없습니다. 최초 setup 전에는 WSL에서 `bash lib/preflight.sh`를 실행하고 종료값 0을 확인하세요. Terraform을 실행하지 않고 호스트·vmrest 조건을 점검하며 부족한 도구는 경고합니다. JSON 대신 텍스트를 출력합니다. 이어서 위 순서대로 setup과 전체 status를 실행하세요.
    - Status는 진단 명령입니다. 종료값 0 / `ok: true`만으로 모든 VM이 정상임을 판단하지 마세요. `data.vms`의 전원·LAN 정보와 `warnings`를 읽으세요. `vm_power_unknown`, `lan_vnet_mismatch` 경고는 해당 VM을 표시합니다.
-   - `./lab status`는 아무것도 바꾸지 않고 호스트 설정, `vmrest` 루프백 리스너와 인증 정보, Windows 부팅 작업과 전원 설정, 실습 VM들의 전원 상태를 점검합니다.
+   - `./lab status`는 호스트 설정, `vmrest` 루프백 리스너와 인증 정보, Windows 부팅 작업과 전원 설정, 실습 VM들의 전원 상태를 점검합니다. Terraform/provider를 자동 초기화하며 이 초기화는 `changed`를 설정하지 않습니다.
 
 ### AI 에이전트로 설치하기
 
@@ -115,7 +115,7 @@ Claude Code나 OpenAI Codex에게 저장소 설치나 점검을 맡기려면 에
 
 위는 응답 구조 예시이며 `data`는 명령마다 다릅니다. `error`가 null일 때만 `ok`가 true입니다. 오류에는 `code`, `message`, `hint`, `details`가, 경고에는 `code`, `message`, `vm`이 들어 있습니다. `changed`는 변경을 시도했다는 뜻이며 부분 변경이나 실패도 가능하므로 성공 증거가 아닙니다. stderr는 진단용으로 보관하되 시크릿이 모두 가려진 기록으로 취급하지 마세요.
 
-`./lab up --dry-run`, `./lab down --all --dry-run`, `./lab destroy --dry-run`은 apply, 게스트 SSH, 정리, 저널 쓰기, state 복원 없이 계획과 안전 검사를 미리 봅니다. 비공개 임시 파일을 사용하며 초기화된 Terraform/provider, 인증 정보, 연결 가능한 vmrest가 필요합니다. up/down에는 준비된 베이스도 필요합니다. 대기 중인 정리·복원은 보고만 합니다. destroy 미리 보기에는 확인 인자가 필요 없지만 주면 일치해야 합니다. 실제 destroy는 state의 전체 VM 이름을 중복 없이 쉼표로 구분해 확인해야 합니다(순서 무관). 대화형 확인이나 Terraform 인자 전달은 없습니다. 빈 state에서는 확인 인자 없이 성공하며 아무것도 삭제하지 않습니다.
+`./lab up --dry-run`, `./lab down --all --dry-run`, `./lab destroy --dry-run`은 apply, 게스트 SSH, 정리, 저널 쓰기, state 복원 없이 계획과 안전 검사를 미리 봅니다. Terraform/provider를 자동 초기화하고 비공개 임시 파일을 사용하며, 이 작업은 `changed`를 설정하지 않습니다. 인증 정보와 연결 가능한 vmrest가 필요합니다. up/down에는 준비된 베이스도 필요합니다. 대기 중인 정리·복원은 보고만 합니다. destroy 미리 보기에는 확인 인자가 필요 없지만 주면 일치해야 합니다. 실제 destroy는 state의 전체 VM 이름을 중복 없이 쉼표로 구분해 확인해야 합니다(순서 무관). 대화형 확인이나 Terraform 인자 전달은 없습니다. 빈 state에서는 확인 인자 없이 성공하며 아무것도 삭제하지 않습니다.
 
 | 오류 코드 | 종료값 | 다음 조치 |
 |---|---|---|

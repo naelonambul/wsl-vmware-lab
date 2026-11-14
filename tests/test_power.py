@@ -53,6 +53,17 @@ if args[0] == 'apply' and '-destroy' not in args:
     seeds = saved['seeds']
 with (root/'calls').open('a') as out:
     out.write(json.dumps(dict(args=args, seeds=seeds))+'\n')
+if os.environ.get('REQUIRE_TF_INIT'):
+    initialized = root/'terraform/.terraform/providers-initialized'
+    if args[0] == 'init':
+        initialized.parent.mkdir(parents=True, exist_ok=True)
+        initialized.touch()
+    elif args[0] in ('plan', 'show') and not initialized.exists():
+        print('Inconsistent dependency lock file: provider '
+              'registry.terraform.io/elsudano/vmworkstation: required by this '
+              'configuration but no version is selected; run: terraform init', file=sys.stderr)
+        sys.exit(1)
+
 def shown():
     return {'values': {'root_module': {'resources': [dict(mode='managed', type='vmworkstation_virtual_machine',
         index=n, values=dict(id=n, path=str(root/(n+'.vmx')))) for n in state['live']]}},

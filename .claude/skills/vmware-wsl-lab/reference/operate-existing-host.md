@@ -47,14 +47,14 @@ runs `./lab account` in their terminal; agents never type the password.
 
 `./lab describe --json` returns the authoritative command/error reference in
 `data`. Every command emits one JSON envelope on stdout; diagnostics go to stderr.
-Status is diagnostic: exit 0 / `ok: true` can coexist with unknown power or LAN mismatches. Read `data.vms` and `warnings` (`vm_power_unknown`, `lan_vnet_mismatch`) to assess each VM.
+Status initializes Terraform/providers automatically without marking `changed`. Status is diagnostic: exit 0 / `ok: true` can coexist with unknown power or LAN mismatches. Read `data.vms` and `warnings` (`vm_power_unknown`, `lan_vnet_mismatch`) to assess each VM.
 Read `ok` and `error`; `changed` means an attempted mutation, possibly partial.
 
 ```bash
 ./lab network
 ./lab status
 ./lab status --start-vmrest      # only when authorized to start the existing task
-./lab up --dry-run              # preview; needs initialized Terraform/providers
+./lab up --dry-run              # preview; initializes Terraform/providers without marking changed
 ./lab up                        # create/bootstrap new or replacement VMs off
 ./lab up --all                  # start all; no ordering guarantee
 ./lab up <vm>                   # one ordered step; preserve other live power

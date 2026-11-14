@@ -174,7 +174,44 @@ rm() {
         self.assertEqual(len(value['data']['vms']), 2)
         self.assertEqual(run.stderr.count('[VM] a:'), 1)
         self.assertFalse((self.root/'private').exists())
-        self.assertFalse(any(c[0]=='init' for c in self.calls()))
+        self.assertIn(['init', '-input=false'], self.calls())
+        self.assertFalse(value['changed'])
+
+    def test_fresh_checkout_initializes_dry_runs_and_status_without_change(self):
+        self.env['REQUIRE_TF_INIT']='1'
+        commands=[('up','--dry-run'), ('down','--all','--dry-run'),
+                  ('destroy','--dry-run'), ('status',)]
+        for args, existing_state in [(args, present) for args in commands for present in (False, True)]:
+            with self.subTest(args=args, existing_state=existing_state):
+                self.reset(live=('a','b') if existing_state else (), desired=('a','b','new'))
+                terraform_dir=self.root/'terraform'
+                shutil.rmtree(terraform_dir/'.terraform', ignore_errors=True)
+                self.assertFalse((terraform_dir/'.terraform').exists())
+                state=terraform_dir/'terraform.tfstate'
+                if existing_state:
+                    state.write_text('{"fixture":"existing-state"}\n')
+                else:
+                    state.unlink(missing_ok=True)
+                original_state=state.read_bytes() if existing_state else None
+                original=(self.root/'fake.json').read_bytes()
+                run,value=self.run_lab(*args)
+                self.assertEqual(run.returncode,0,run.stderr)
+                self.assertFalse(value['changed'])
+                self.assertEqual(value['dry_run'], '--dry-run' in args)
+                calls=self.calls()
+                self.assertEqual(calls[0], ['init','-input=false'])
+                self.assertTrue(any(c[0]=='show' for c in calls))
+                if args[0]=='up' or (existing_state and args[0]!='status'):
+                    self.assertTrue(any(c[0]=='plan' for c in calls))
+                self.assertFalse(any(c[0] in ('apply','destroy','state') for c in calls))
+                self.assertEqual((self.root/'fake.json').read_bytes(),original)
+                if existing_state:
+                    self.assertEqual(state.read_bytes(),original_state)
+                else:
+                    self.assertFalse(state.exists())
+                for name in ('cleanup-pending.json','bootstrap-records.backup.json'):
+                    self.assertFalse((terraform_dir/name).exists())
+                self.assertFalse((self.root/'events').exists())
 
     def test_production_credentials_probe_and_multi_section_error(self):
         del self.env['VMWS_USERNAME']
@@ -244,7 +281,7 @@ if args[0] == 'plan':
                     self.assertFalse(os.path.exists(path),path)
                 self.assertEqual((self.root/'private').stat().st_mode & 0o777,0o700)
                 self.assertFalse(list((self.root/'private').glob('plan.*')))
-                self.assertFalse(any(c[0] in ('init','apply','destroy') for c in self.calls()))
+                self.assertFalse(any(c[0] in ('apply','destroy') for c in self.calls()))
                 self.assert_confidential(run)
 
     def test_start_vmrest_attempt_marks_change(self):
@@ -442,15 +479,20 @@ class RecorderTests(envelope_tests.EnvelopeFixture, unittest.TestCase):
             run=subprocess.run(['bash','-c','bash "$FIXTURE_NATIVE/lab" destroy "--confirm=$CONFIRM_TOKEN"'],env=self.env,capture_output=True,text=True,encoding='utf-8',timeout=30)
             value=self.check_envelope(run)
             self.assertEqual(run.returncode,5,run.stderr)
+            self.assertEqual(value['error']['hint'],'Use --confirm=a,b')
             self.assertFalse(any(c[0]=='destroy' for c in self.calls()))
         self.reset(live=(),desired=())
         run,value=self.run_lab('destroy')
         self.assertEqual(run.returncode,0,run.stderr)
         self.assertFalse(value['changed'])
         self.assertFalse(any(c[0]=='destroy' for c in self.calls()))
-        run,value=self.run_lab('destroy','--confirm=a')
-        self.assertEqual(run.returncode,5,run.stderr)
-        self.assertFalse(any(c[0]=='destroy' for c in self.calls()))
+        for token in ('a','','A'):
+            with self.subTest(empty_state_token=token):
+                run,value=self.run_lab('destroy',f'--confirm={token}')
+                self.assertEqual(run.returncode,5,run.stderr)
+                self.assertEqual(value['error']['hint'],'./lab status')
+                self.assertFalse(value['changed'])
+                self.assertFalse(any(c[0]=='destroy' for c in self.calls()))
 
     def test_refused_real_run_remains_planned(self):
         self.reset(desired=('a',))

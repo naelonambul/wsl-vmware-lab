@@ -137,7 +137,7 @@ class EnvelopeTests(EnvelopeFixture, unittest.TestCase):
                 self.assertEqual(run.returncode,0,run.stderr)
                 self.assertFalse(value['changed']); self.assertTrue(value['dry_run'])
                 self.assertEqual(value['data']['pending'],['cleanup','bootstrap_record_restoration'])
-                self.assertTrue(all(c[0] not in ('apply','destroy','init') and c[:2]!=['state','push'] for c in self.calls()))
+                self.assertTrue(all(c[0] not in ('apply','destroy') and c[:2]!=['state','push'] for c in self.calls()))
                 self.assertFalse((self.root/'events').exists())
                 self.assertEqual(journal.read_text(),'pending canary journal')
                 self.assertEqual(backup.read_text(),'pending canary backup')

@@ -261,8 +261,9 @@ terraform() {
   case "$1 $2" in
     'show -json') printf '{}';;
     'state list') echo 'vmworkstation_virtual_machine.vm["fixture"]';;
+    'init -input=false') return 0;;
     # Stop at an external boundary after the base check; never cut source.
-    'init -input=false') exit 0;;
+    'plan -input=false') exit 0;;
   esac
 }
 python3() {
@@ -272,7 +273,9 @@ python3() {
       echo gate >> "$LAB_PROJECT_DIR/calls"
       return 5;;
     */envelope.py) :;;
-    ../lib/power-map.py) cat >/dev/null;;
+    ../lib/power-map.py)
+      cat >/dev/null
+      if [[ "$2" == names ]]; then echo fixture; fi;;
     ../lib/cleanup-guest.py)
       echo cleanup >> "$LAB_PROJECT_DIR/calls";;
     -c) :;;
@@ -303,12 +306,14 @@ python3() {
                 if action.startswith('up'):
                     self.assertEqual(result.returncode, 5, result.stderr)
                     self.assertIn('lan_vnet_mismatch', result.stderr)
-                    self.assertEqual(reached[:2], ['terraform show -json', 'gate'])
+                    self.assertEqual(reached, ['terraform init -input=false',
+                                               'terraform show -json', 'gate'])
                     self.assertFalse(any('apply' in call for call in reached))
                 else:
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertNotIn('gate', reached)
                     self.assertIn('base', reached)
+                    self.assertTrue(any(call.startswith('terraform plan ') for call in reached))
 
 
 if __name__ == '__main__':

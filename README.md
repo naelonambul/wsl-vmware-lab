@@ -82,7 +82,7 @@ Background posts (the repository has evolved since publication; where they diffe
    - If `terraform`, `ansible-playbook`, `qemu-img`, `cloud-localds`, `gpgv` or the `ubuntu-cloudimage-keyring` is missing, `./lab setup` first runs `sudo bash lib/wsl-tools.sh` (asks for your WSL password). It then downloads the `LAB_IMAGE` cloud image and verifies it (see the table above), converts the image to `base/<image>/base.vmdk`, creates `~/.config/wsl-vmware-lab/lab_ed25519`, writes and registers `base/<image>/base.vmx` (`<image>-base`), and writes `base/<image>/base.prepared`. The base is never booted, so every clone's first boot is the image's first boot.
    - No public `./lab` host-only subcommand exists. Before initial setup, require `bash lib/preflight.sh` exit 0 in WSL: it warns about missing tools without invoking Terraform and checks host/vmrest prerequisites. It prints text, not JSON. Then run setup and full status as above.
    - Status is diagnostic: exit 0 / `ok: true` does not establish every VM’s health. Read `data.vms` (power and LAN evidence) and `warnings`; `vm_power_unknown` and `lan_vnet_mismatch` identify affected VMs.
-   - `./lab status` checks the host configuration, `vmrest` loopback listener and credentials, Windows scheduled tasks and power settings, and the power state of any lab VMs without modifying anything.
+   - `./lab status` checks the host configuration, `vmrest` loopback listener and credentials, Windows scheduled tasks and power settings, and the power state of any lab VMs. It initializes Terraform/providers automatically without marking `changed`.
 
 ### Installing with an AI Agent
 
@@ -115,7 +115,7 @@ Every command writes one JSON envelope to **stdout**; human logs and Terraform/A
 
 This illustrates the envelope shape; `data` varies by command. `ok` is true exactly when `error` is null. Errors contain `code`, `message`, `hint` and `details`; warnings contain `code`, `message` and `vm`. `changed` means a mutation was attempted, possibly partly completed; it does not prove success. Keep stderr for diagnosis; it is not a secret-redacted archive.
 
-`./lab up --dry-run`, `./lab down --all --dry-run` and `./lab destroy --dry-run` preview plans and guards without apply, guest SSH, cleanup, journal writes or state restoration. They use private scratch files and require initialized Terraform/providers, credentials and reachable vmrest; up/down also require prepared bases. Pending cleanup/restoration is reported. Dry-run destroy needs no confirmation; if supplied it must match. Actual destroy requires the exact, distinct comma-separated names in state (any order), with no interactive prompt or Terraform argument passthrough. An empty state without confirmation succeeds as a no-op.
+`./lab up --dry-run`, `./lab down --all --dry-run` and `./lab destroy --dry-run` preview plans and guards without apply, guest SSH, cleanup, journal writes or state restoration. They initialize Terraform/providers and use private scratch files without marking `changed`; credentials and reachable vmrest are required; up/down also require prepared bases. Pending cleanup/restoration is reported. Dry-run destroy needs no confirmation; if supplied it must match. Actual destroy requires the exact, distinct comma-separated names in state (any order), with no interactive prompt or Terraform argument passthrough. An empty state without confirmation succeeds as a no-op.
 
 | Error code | Exit | Next action |
 |---|---|---|

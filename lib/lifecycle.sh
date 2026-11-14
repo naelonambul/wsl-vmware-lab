@@ -68,7 +68,10 @@ trap 'exit 143' TERM
 lab_terraform_env
 cd "$LAB_PROJECT_DIR/terraform"
 state_json() { terraform show -json; }
-# Gate every up entry before init, cleanup replay or planning. Read instances
+# Provider/module installation is needed before any plan or show, including
+# the LAN gate on a moved checkout. It does not mark changed.
+terraform init -input=false >/dev/null
+# Gate every up entry before cleanup replay or planning. Read instances
 # from state JSON, including clones absent from stale Terraform outputs.
 if [[ "${1:-status}" == on && -f terraform.tfstate ]]; then
   lan_rc=0
@@ -96,7 +99,6 @@ report_ready=1
 case "${1:-status}" in
   on|off) lab_base_identity || exit 1 ;;
 esac
-[[ "$dry_run" == 1 || "$operation" == status ]] || terraform init -input=false >/dev/null
 if [[ ${#LAB_TF_VAR_ARGS[@]} -gt 0 ]]; then vm_list_desc="$LAB_VMS_FILE"
 else vm_list_desc="single VM $LAB_CLONE_NAME (no $LAB_VMS_FILE)"; fi
 echo "[OK] VM list: $vm_list_desc"
@@ -449,16 +451,16 @@ print(json.dumps(p))' $new_vms)
   destroy)
     state_json > "$before"
     expected=$(python3 ../lib/power-map.py names < "$before" | sort -u | paste -sd, -)
-    if [[ "$confirm_provided" == 1 ]]; then
-      python3 -c 'import re,sys
-parts=sys.argv[1].split(",")
-sys.exit(not (len(parts)==len(set(parts)) and all(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", p) for p in parts)))' "$confirm" || lab_fail plan_destroy_refused 'Invalid confirmation: use distinct comma-separated VM names.'
-    fi
     if [[ -z "$expected" ]]; then
       [[ "$confirm_provided" == 0 ]] || lab_fail plan_destroy_refused 'The state has no VMs to confirm.' './lab status'
       lab_result '{"actions":[],"vms":[]}'
       echo '[OK] No VMs in the state; nothing to destroy.'
       exit 0
+    fi
+    if [[ "$confirm_provided" == 1 ]]; then
+      python3 -c 'import re,sys
+parts=sys.argv[1].split(",")
+sys.exit(not (len(parts)==len(set(parts)) and all(re.fullmatch(r"[a-z0-9][a-z0-9-]{0,62}", p) for p in parts)))' "$confirm" || lab_fail plan_destroy_refused 'Invalid confirmation: use distinct comma-separated VM names.' "Use --confirm=$expected"
     fi
     actual=$(printf '%s' "$confirm" | tr ',' '\n' | sort -u | paste -sd, -)
     if [[ ( "$dry_run" == 0 || "$confirm_provided" == 1 ) && ( "$confirm_provided" == 0 || "$actual" != "$expected" ) ]]; then
