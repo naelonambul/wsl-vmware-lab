@@ -1,5 +1,4 @@
 """PR 1 offline checks. Never invokes lab, Terraform or live infrastructure."""
-import ast
 from contextlib import redirect_stderr, redirect_stdout
 import importlib.util
 import io
@@ -7,9 +6,19 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
+
+import test_power as fixtures
+
+
+os.environ.setdefault('PYTHONDONTWRITEBYTECODE', '1')
+
+def setUpModule():
+    if sys.platform != 'linux':
+        raise unittest.SkipTest('requires Linux (WSL Ubuntu or ubuntu-latest); never run with Git Bash')
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -115,8 +124,8 @@ class NetworkTests(unittest.TestCase):
         self.assertFalse(report['mismatch'])
 
     def test_preflight_vm_folder_only_compares_explicit_preference(self):
-        source=(ROOT/'lib/preflight.sh').read_text()
-        block=source[source.index('if $interop && [[ -n "$LAB_VM_ROOT_WIN" ]]'):source.index('[[ -n "${LAB_CLONE_VMX_WIN:-}"')]
+        fixtures.copy_fixture_tree(self.folder)
+        block='source "$FIXTURE_APPDATA/lib/preflight-functions.sh"\nlab_check_vm_folder\n'
         (self.folder/'VMware').mkdir()
         prefs=self.folder/'VMware/preferences.ini'
         prefix='''
@@ -175,51 +184,67 @@ ok() { printf '[OK] %s\\n' "$*"; }
                 self.assertFalse(json.loads(lan)['mismatch'])
 
     def test_validation_before_any_host_discovery(self):
-        # Only execute the config prefix ending before profile discovery.
-        prefix = (ROOT / 'lib/config.sh').read_text().split('# Windows user profile')[0]
-        # BASH_SOURCE is unset with bash -c, so replace only project detection.
-        prefix = prefix.replace('LAB_PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"',
-                                'LAB_PROJECT_DIR="$PWD"')
+        fixture=fixtures.LifecycleTests('runTest')
+        self.addCleanup(fixture.doCleanups)
+        fixture.setUp()
+        fixture.prepare_bootstrap()
+        discovery=fixture.root/'discovery'
+        ps=fixture.root/'fake-powershell'
+        ps.write_text('#!/bin/bash\nprintf discovered > "$FIXTURE_NATIVE/discovery"\nprintf "C:/fixture"\n',newline='\n')
+        ps.chmod(0o700)
+        definitions=fixture.root/'lib/config-functions.sh'
+        definitions.write_text(definitions.read_text().replace(
+            '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',ps.as_posix()),newline='\n')
+        env=dict(fixture.env)
+        env.pop('LAB_WINDOWS_PROFILE',None)
+        def load_config(**settings):
+            discovery.unlink(missing_ok=True)
+            return subprocess.run(['bash','-c','source "$1"','fixture',
+                                   (fixture.root/'lib/config.sh').as_posix()],
+                                  env=dict(env,**settings),capture_output=True,text=True,timeout=5)
         for lan in ['', 'VMnet0', 'VMnet2', 'VMnet9', 'VMnet10', 'VMnet19',
                     'VMnet20', 'VMnet01', 'vmnet2', 'VMnet-1', 'VMnet2x', 'VMnet1', 'VMnet8']:
-            env = dict(os.environ, LAB_LAN_VNET=lan, LAB_ENV_FILE='nonexistent-fixture.env')
-            result = subprocess.run(['bash', '-c', prefix], cwd=ROOT, env=env, capture_output=True, text=True)
-            expected = 0 if lan in ['', 'VMnet0', 'VMnet2', 'VMnet9', 'VMnet10', 'VMnet19'] else 2
-            self.assertEqual(result.returncode, expected, (lan, result.stderr))
-            if expected:
-                self.assertIn('config_error', result.stderr)
-        for role in ['LAB_NAT_VNET', 'LAB_MGMT_VNET']:
-            env = dict(os.environ, LAB_LAN_VNET='', LAB_ENV_FILE='nonexistent-fixture.env')
-            env[role] = 'VMnet0'
-            self.assertEqual(subprocess.run(['bash', '-c', prefix], cwd=ROOT, env=env,
-                capture_output=True).returncode, 2)
+            result=load_config(LAB_LAN_VNET=lan)
+            expected=0 if lan in ['', 'VMnet0', 'VMnet2', 'VMnet9', 'VMnet10', 'VMnet19'] else 2
+            self.assertEqual(result.returncode,expected,(lan,result.stderr))
+            self.assertEqual(discovery.exists(),expected==0)
+            if expected: self.assertIn('config_error',result.stderr)
+        for role in ['LAB_NAT_VNET','LAB_MGMT_VNET']:
+            result=load_config(LAB_LAN_VNET='',**{role:'VMnet0'})
+            self.assertEqual(result.returncode,2,result.stderr)
+            self.assertFalse(discovery.exists())
 
-    def test_bootstrap_python_bridged_custom_preserves_mac(self):
-        source = (ROOT / 'lib/bootstrap-guest.sh').read_text().split("python3 - <<'PY'\n")[1].split('\nPY')[0]
-        tree = ast.parse(source)
-        # Execute the production VMX transformation only; stop before writes.
-        tree.body = tree.body[:next(i for i, node in enumerate(tree.body)
-            if isinstance(node, ast.Assign) and any(isinstance(t, ast.Name) and t.id == 'tmp' for t in node.targets))]
+    def test_bootstrap_bridged_custom_preserves_mac(self):
+        fixture=fixtures.LifecycleTests('runTest')
+        self.addCleanup(fixture.doCleanups)
+        fixture.setUp()
+        vmx=fixture.prepare_bootstrap()
         for lan in ['', 'VMnet0', 'VMnet2', 'VMnet19']:
-            vm = self.vm('ethernet2.vnet = "VMnet7"\n')
-            env = dict(VMX_LINUX=vm['path'], VM_LAN='dhcp', LAN_MAC='00:50:56:00:00:01', SEED_WIN='fixture.iso', LAB_LAN_VNET=lan)
-            with patch.dict(os.environ, env):
-                scope = {}
-                exec(compile(tree, '<bootstrap VMX transformation>', 'exec'), scope)
-            self.assertIn('ethernet2.address = "00:50:56:00:00:01"', scope['s'])
-            if lan in ['', 'VMnet0']:
-                self.assertIn('ethernet2.connectionType = "bridged"', scope['s'])
-                self.assertNotIn('ethernet2.vnet', scope['s'])
-            else:
-                self.assertIn('ethernet2.connectionType = "custom"', scope['s'])
-                self.assertIn(f'ethernet2.vnet = "{lan}"', scope['s'])
+            with self.subTest(lan=lan):
+                vmx.write_text('ethernet2.vnet = "VMnet7"\n')
+                fixture.env.update(VM_LAN='dhcp',LAB_LAN_VNET=lan)
+                run=fixture.run_bootstrap()
+                self.assertEqual(run.returncode,0,run.stderr)
+                actual=vmx.read_text()
+                self.assertIn('ethernet2.addressType = "static"',actual)
+                # The generated LAN MAC must also be used by cloud-init.
+                address=next(line.split('"')[1] for line in actual.splitlines()
+                             if line.startswith('ethernet2.address ='))
+                self.assertTrue(address.startswith('00:50:56:'),address)
+                self.assertIn('macaddress: "'+address+'"',
+                              (fixture.root/'private/seed-fixture/network-config').read_text())
+                if lan in ['', 'VMnet0']:
+                    self.assertIn('ethernet2.connectionType = "bridged"',actual)
+                    self.assertNotIn('ethernet2.vnet',actual)
+                else:
+                    self.assertIn('ethernet2.connectionType = "custom"',actual)
+                    self.assertIn(f'ethernet2.vnet = "{lan}"',actual)
+                self.assertFalse(vmx.with_name(vmx.name+'.tmp').exists())
 
     def test_mismatch_blocks_up_variants_but_allows_down(self):
-        # Execute lifecycle control flow only, substituting its config boundary.
+        # Execute the copied lifecycle, overriding its config boundaries.
         # All infrastructure commands are shell functions; none can reach a host.
-        source = (ROOT / 'lib/lifecycle.sh').read_text()
-        config = (ROOT / 'lib/config.sh').read_text()
-        fail_function = config[config.index('lab_fail() {'):config.index('\nLAB_ENV_FILE=')]
+        fixtures.copy_fixture_tree(self.folder)
         mocks = r'''
 cd "$FIXTURE_DIR"
 LAB_PROJECT_DIR="$PWD"
@@ -236,6 +261,8 @@ terraform() {
   case "$1 $2" in
     'show -json') printf '{}';;
     'state list') echo 'vmworkstation_virtual_machine.vm["fixture"]';;
+    # Stop at an external boundary after the base check; never cut source.
+    'init -input=false') exit 0;;
   esac
 }
 python3() {
@@ -244,6 +271,8 @@ python3() {
       cat >/dev/null
       echo gate >> "$LAB_PROJECT_DIR/calls"
       return 5;;
+    */envelope.py) :;;
+    ../lib/power-map.py) cat >/dev/null;;
     ../lib/cleanup-guest.py)
       echo cleanup >> "$LAB_PROJECT_DIR/calls";;
     -c) :;;
@@ -251,8 +280,8 @@ python3() {
   esac
 }
 '''
-        source = source.replace('source "$(dirname "${BASH_SOURCE[0]}")/config.sh"',
-                                fail_function + mocks, 1)
+        with (self.folder/'lib/config.sh').open('a', encoding='utf-8', newline='\n') as stream:
+            stream.write('\n'+mocks)
         terraform_dir = self.folder / 'terraform'
         terraform_dir.mkdir()
         # Fake files only, to make both the LAN gate and cleanup replay eligible.
@@ -263,15 +292,19 @@ python3() {
                              ('down', ['off', '--all'])]:
             with self.subTest(action=action):
                 calls.write_text('')
-                entry = source if action.startswith('up') else source.split('terraform init -input=false')[0] + '\nexit 0\n'
-                result = subprocess.run(['bash', '-s', '--', *args], input=entry,
-                                        cwd=ROOT, env=dict(os.environ, FIXTURE_DIR=self.folder.as_posix()),
+                result = subprocess.run(['bash', (self.folder/'lib/lifecycle.sh').as_posix(), *args],
+                                        cwd=self.folder, env=dict(os.environ, FIXTURE_DIR=self.folder.as_posix(),
+                                            LAB_ENV_FILE=(self.folder/'absent.env').as_posix(),
+                                            LAB_WINDOWS_PROFILE='C:\\fixture',
+                                            LAB_SECRETS_FILE=(self.folder/'absent-secret').as_posix(),
+                                            LAB_PRIVATE_DIR=(self.folder/'private').as_posix()),
                                         capture_output=True, text=True)
                 reached = calls.read_text().splitlines()
                 if action.startswith('up'):
                     self.assertEqual(result.returncode, 5, result.stderr)
                     self.assertIn('lan_vnet_mismatch', result.stderr)
-                    self.assertEqual(reached, ['terraform show -json', 'gate'])
+                    self.assertEqual(reached[:2], ['terraform show -json', 'gate'])
+                    self.assertFalse(any('apply' in call for call in reached))
                 else:
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertNotIn('gate', reached)

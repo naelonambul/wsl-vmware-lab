@@ -98,7 +98,10 @@ def main():
     elif mode == 'report':
         # The Windows collector is one JSON document, including null reasons.
         report['windows'] = json.loads(Path(sys.argv[2]).read_text(encoding='utf-8-sig'))
-        print(json.dumps(report, indent=2))
+        import envelope
+        envelope.record('data', report)
+        if not os.environ.get('LAB_RESULT_FILE'):
+            print(json.dumps(report, indent=2))
     else:
         raise ValueError('unknown mode: ' + mode)
     return 0

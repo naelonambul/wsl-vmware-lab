@@ -15,6 +15,7 @@ for this VM before its first boot (lib/bootstrap-guest.sh). A VM counts as ready
 once SSH as the guest user with the lab key succeeds against that pin.
 """
 from datetime import datetime, timezone
+import envelope
 import importlib
 import ipaddress
 import json
@@ -132,18 +133,27 @@ def main():
             if best_effort:
                 power_waiting.append(name + ': power unknown; omitted')
                 continue
-            fatal(name + ': vm_power_unknown')
+            envelope.failure('vm_power_unknown', 'Cannot establish guest power.', './lab status', dict(vm=name))
+            print('[ERROR] ' + name + ': vm_power_unknown', file=sys.stderr)
+            sys.exit(5)
         if value == 'on':
             powered[name] = vm
         elif frozen is not None:
             power_waiting.append(name + ': powered off after selection')
         else:
-            print('[WARN] ' + name + ': powered off, omitted', file=sys.stderr)
+            pass  # Omission warnings are recorded after freezing the selection.
     # The parent passes this first-attempt set to every retry, including when
     # readiness fails. It is private metadata, removed by configure's trap.
     selection_file = os.environ.get('LAB_INVENTORY_SELECTION_FILE')
     if frozen is None and selection_file:
         Path(selection_file).write_text(json.dumps(sorted(powered)))
+    if frozen is None:
+        for name in sorted(set(vms) - set(powered)):
+            print('[WARN] ' + name + ': powered off, omitted', file=sys.stderr)
+            envelope.record('warnings', [dict(code='powered_off', message='Powered off; omitted.', vm=name)])
+    if not best_effort:
+        envelope.record('data', dict(selected=sorted(powered if frozen is None else frozen),
+                                     omitted=sorted(set(vms) - (set(powered) if frozen is None else frozen))))
     vms = powered
     if not vms and not power_waiting and not best_effort:
         fatal('no VM is powered on; ./lab up <vm> or ./lab up --all')

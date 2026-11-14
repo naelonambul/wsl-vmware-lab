@@ -13,9 +13,12 @@
 # key with <file>.pub next to it; both end up in the guest's /etc/ssh.
 lab_cloud_config_user_data() {
   local pubkey=$1 hostkey=$2
-  local keybody
-  keybody=$(printf '%s\n' "$pubkey" | awk '{print $2}')
+  local keybody host_private host_public
+  keybody=$(printf '%s\n' "$pubkey" | awk '{print $2}') || return 1
   [[ "$keybody" =~ ^[A-Za-z0-9+/=]+$ ]] || { echo 'Unexpected SSH public key format' >&2; return 1; }
+  host_private=$(sed 's/^/    /' "$hostkey") || return 1
+  host_public=$(cut -d' ' -f1,2 "$hostkey.pub") || return 1
+  [[ -n "$host_private" && -n "$host_public" ]] || return 1
   cat <<CFG
 #cloud-config
 users:
@@ -31,8 +34,8 @@ disable_root: true
 ssh_deletekeys: true
 ssh_keys:
   ed25519_private: |
-$(sed 's/^/    /' "$hostkey")
-  ed25519_public: $(cut -d' ' -f1,2 "$hostkey.pub")
+$host_private
+  ed25519_public: $host_public
 # Give every new instance its own machine-id (a base booted by an older
 # version of this lab carried one).
 bootcmd:

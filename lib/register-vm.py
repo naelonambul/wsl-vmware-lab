@@ -1,5 +1,6 @@
 """Register an existing VMX through vmrest; never starts or clones the VM."""
 import base64
+import envelope
 import json
 import ntpath
 import os
@@ -66,6 +67,7 @@ def main():
         print("[OK] Already registered: " + existing["id"])
         return
     try:
+        envelope.record("changed", True)
         request("/vms/registration", {"name": name, "path": windows_path})
     except urllib.error.HTTPError as error:
         # vmrest has answered 500 while still registering the VM; trust the list.

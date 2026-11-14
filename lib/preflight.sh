@@ -9,6 +9,7 @@
 set -uo pipefail
 
 start_vmrest=false
+startup_attempted=false
 case "${1:-}" in
   "") ;;
   --start-vmrest) start_vmrest=true ;;
@@ -65,8 +66,8 @@ else
   ok "settings file: none (defaults; optional lab.env from lab.env.example)"
 fi
 have_creds=false
-cred_msg="$(lab_require_credentials 2>&1 >/dev/null)"
-if lab_require_credentials 2>/dev/null; then
+if cred_msg="$(LAB_RESULT_FILE='' lab_require_credentials 2>&1 >/dev/null)"; then
+  lab_require_credentials 2>/dev/null
   have_creds=true
   ok "vmrest account: from ${VMWS_CREDENTIAL_SOURCE} (values not shown)"
   # The secrets file should grant access only to your user (plus SYSTEM and
@@ -99,24 +100,9 @@ if [[ -n "$LAB_VM_ROOT_WIN" ]]; then ok "VM folder: $LAB_VM_ROOT_WIN (one <name>
 # Workspace), not into the path Terraform asks for; the two must match or the
 # provider 2.0.1 fails with "inconsistent result after apply: .path".
 # Only compare an explicit preference; do not guess when the key is absent.
-if $interop && [[ -n "$LAB_VM_ROOT_WIN" ]]; then
-  appdata=$("$PS" -NoProfile -NonInteractive -Command '$env:APPDATA' </dev/null 2>/dev/null | tr -d '\r')
-  prefs=''
-  [[ -z "$appdata" ]] || prefs="$(wslpath -u "$appdata")/VMware/preferences.ini"
-  ws_default=''
-  if [[ -f "$prefs" ]]; then
-    v="$(tr -d '\r' < "$prefs" | sed -nE 's/^[[:space:]]*prefvmx\.defaultVMPath[[:space:]]*=[[:space:]]*"(.*)"[[:space:]]*$/\1/p' | tail -n 1)"
-    [[ -n "$v" ]] && ws_default="$v"
-  fi
-  norm() { local x="${1//\//\\}"; x="${x%\\}"; echo "${x,,}"; }
-  if [[ -z "$ws_default" ]]; then
-    : # No preference key: no inferred default and no warning.
-  elif [[ "$(norm "$ws_default")" == "$(norm "$LAB_VM_ROOT_WIN")" ]]; then
-    ok "VM folder matches VMware Workstation's default VM location"
-  else
-    warn "VM folder $LAB_VM_ROOT_WIN differs from Workstation's default VM location $ws_default; provider 2.0.1 clones there, so Terraform will fail. Set LAB_VM_ROOT_WIN to Workstation's default VM folder."
-  fi
-fi
+# shellcheck source=lib/preflight-functions.sh
+source "$LAB_PROJECT_DIR/lib/preflight-functions.sh"
+lab_check_vm_folder
 [[ -n "${LAB_CLONE_VMX_WIN:-}" ]] && warn "LAB_CLONE_VMX_WIN is deprecated; set LAB_VM_ROOT_WIN instead (derived from it for now)"
 ok "private dir: $LAB_PRIVATE_DIR$([[ -d "$LAB_PRIVATE_DIR" ]] || echo ' (not created yet)')"
 
@@ -148,6 +134,8 @@ windows_vmrest_state() {
 }
 start_it() {
   $interop || { fail "cannot start vmrest without Windows interop"; return 1; }
+  startup_attempted=true
+  python3 "$LAB_PROJECT_DIR/lib/envelope.py" changed
   if "$PS" -NoProfile -NonInteractive -Command \
       'if (Get-ScheduledTask -TaskName "VMware vmrest API" -ErrorAction SilentlyContinue) { Start-ScheduledTask -TaskName "VMware vmrest API"; exit 0 } else { exit 3 }' \
       >/dev/null 2>&1; then
@@ -157,24 +145,25 @@ start_it() {
   fi
 }
 
-code="$(probe)"
+code="$(probe)" || code=000
 if [[ "$code" == 000 ]]; then
   fail "no answer from ${VMWS_ENDPOINT} (HTTP 000) - vmrest is not reachable"
   state="$(windows_vmrest_state)"
   echo "       Windows side: $state"
   if [[ "$state" == *"process=True listener8697=True"* ]]; then
     echo "       vmrest is running on Windows: check VMWS_ENDPOINT and mirrored networking before starting anything"
-    exit 1
+    lab_fail vmrest_unreachable "vmrest precheck is unreachable." "Check endpoint and mirrored networking."
   fi
   if $start_vmrest; then
-    start_it || exit 1
+    start_it || lab_fail needs_user "vmrest startup task is unavailable." "Run windows\setup.cmd Install in elevated PowerShell."
     for ((i = 0; i < START_WAIT_SECONDS; i++)); do
-      code="$(probe)"; [[ "$code" != 000 ]] && break; sleep 1
+      code="$(probe)" || code=000
+      [[ "$code" != 000 ]] && break; sleep 1
     done
     [[ "$code" == 000 ]] && { fail "vmrest still unreachable after ${START_WAIT_SECONDS}s"; echo "       Windows side: $(windows_vmrest_state)"; exit 1; }
   else
     echo "       Start it: bash $0 --start-vmrest  (ask the user first)"
-    exit 1
+    lab_fail vmrest_unreachable "vmrest precheck is unreachable." "Ask the user to start vmrest."
   fi
 fi
 case "$code" in
@@ -185,8 +174,11 @@ case "$code" in
 esac
 if $interop; then
   listen=$(timeout 30 "$PS" -NoProfile -NonInteractive -Command \
-    '(Get-NetTCPConnection -State Listen -LocalPort 8697 -ErrorAction SilentlyContinue).LocalAddress | Sort-Object -Unique' 2>/dev/null | tr -d '\r' | tr '\n' ' ')
-  nonloop=$(tr ' ' '\n' <<<"$listen" | grep -v -E '^(127\.0\.0\.1|::1|)$' || true)
+    '(Get-NetTCPConnection -State Listen -LocalPort 8697 -ErrorAction SilentlyContinue).LocalAddress | Sort-Object -Unique' 2>/dev/null | tr -d '\r' | tr '\n' ' ') || listen=''
+  nonloop=''
+  for address in $listen; do
+    case "$address" in 127.0.0.1|::1) ;; *) nonloop+="$address " ;; esac
+  done
   if [[ -z "${listen// /}" ]]; then
     warn "could not read the Windows listener for port 8697; loopback-only not confirmed"
   elif [[ -n "$nonloop" ]]; then
@@ -210,10 +202,13 @@ if ! $have_creds; then
   fail "cannot verify the vmrest account: no secrets file with it"
   echo "       The user runs ./lab account (vmrest.exe -C + secrets file), or writes the existing"
   echo "       vmrest account into ${LAB_SECRETS_FILE:-%USERPROFILE%\\.env}: VMWS_USERNAME=... and VMWS_PASSWORD=..."
-  exit 1
+  lab_fail secrets_missing "Cannot verify vmrest without stored credentials." "The user runs ./lab account."
 fi
 auth_code="$(curl --connect-timeout 3 --max-time 8 -s -o /dev/null -w '%{http_code}' -K - "${VMWS_ENDPOINT%/}/vms" \
-  < <(lab_curl_auth))"
+  < <(lab_curl_auth))" || {
+  $startup_attempted && lab_fail runtime_error 'Authenticated vmrest request failed after startup was attempted.'
+  lab_fail vmrest_unreachable 'Authenticated vmrest request failed.'
+}
 if [[ "$auth_code" == 200 ]]; then
   ok "authenticated GET /vms: HTTP 200 (stored account matches vmrest)"
 elif [[ "$auth_code" == 401 ]]; then
@@ -221,7 +216,7 @@ elif [[ "$auth_code" == 401 ]]; then
   echo "       vmrest keeps its own account (vmrest.exe -C, vmrest.cfg); its password is not readable."
   echo "       The user corrects the secrets file, or runs ./lab account to set both again."
   echo "       Also check that vmrest runs as the same Windows user."
-  exit 1
+  lab_fail vmrest_auth "Stored vmrest account was rejected." "The user corrects credentials or runs ./lab account."
 else
   fail "authenticated GET /vms: HTTP $auth_code"
   exit 1

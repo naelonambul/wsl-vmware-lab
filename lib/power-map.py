@@ -4,6 +4,7 @@ GET /vms/<id>/power and power_state are from lifecycle.sh at PR 1 (94cfd9a).
 The on/off provider inputs are from terraform/variables.tf at that revision.
 No provider state attribute is used as evidence of live power.
 """
+import envelope
 import importlib
 import json
 import os
@@ -88,14 +89,22 @@ def main():
             raise ValueError('incomplete power map')
     elif mode == 'seed':
         print(json.dumps(seed(vms)))
-    elif mode == 'report':
+    elif mode in ('report', 'status'):
+        rows = []
         for vm in vms:
             try:
                 value = power(vm)
             except (ValueError, KeyError, OSError):
                 value = 'unknown'
+            row = dict(name=vm['name'], power=value)
+            if mode == 'status':
+                lan = importlib.import_module('network-inspect').lan_evidence(vm)
+                row['lan'] = {k: lan[k] for k in ('desired', 'actual', 'mismatch')}
+                row['lan']['error'] = 'VMX unavailable or invalid' if lan['error'] else None
+            rows.append(row)
             print('[VM] {}: {}{}'.format(vm['name'], value,
                   ' (start: ./lab up ' + vm['name'] + ' or ./lab up --all)' if value == 'off' else ''))
+        envelope.record('data', dict(vms=rows))
     elif mode == 'wait':
         # Approved shutdown budget: 90 s for service stops plus 30 s margin;
         # configurable because guest stop policies may require longer.

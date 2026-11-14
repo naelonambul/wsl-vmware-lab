@@ -25,7 +25,7 @@ prepare_base() {
   local image=$1
   # Supported guest images. Guests need cloud-init, an SSH server, sudo and
   # python3 (no VMware Tools). img_disk: the VMDK inside an OVA, empty for qcow2.
-  local signed=1 img_url img_file img_disk sums guest_os sumcmd dir name vm_disk vmx prepared vmx_win new_vmx source_disk source_fmt want got power
+  local signed=1 img_url img_file img_disk sums guest_os sumcmd dir name vm_disk vmx prepared vmx_win new_vmx source_disk source_fmt want got power actual_value expected_value
   case "$image" in
     ubuntu-24.04)
       img_url="${LAB_UBUNTU_IMAGE_URL:-https://cloud-images.ubuntu.com/noble/current}"
@@ -41,7 +41,7 @@ prepare_base() {
       img_url=https://cloud.debian.org/images/cloud/trixie/latest
       img_file=debian-13-generic-amd64.qcow2; img_disk=''
       sums=SHA512SUMS; guest_os=debian12-64; signed=0 ;;
-    *) echo "[ERROR] Unknown image '$image' (supported: ubuntu-24.04, ubuntu-22.04, debian-13)" >&2; exit 2 ;;
+    *) lab_fail config_error "Unknown image: $image (supported: ubuntu-24.04, ubuntu-22.04, debian-13)" ;;
   esac
   sumcmd=sha256sum; [[ $sums == SHA512SUMS ]] && sumcmd=sha512sum
   dir="$LAB_BASE_DIR/$image"
@@ -72,7 +72,9 @@ prepare_base() {
 
   # 1. Image: for Ubuntu the signature of SHA256SUMS must verify (#22); then the
   # image checksum.
+  lab_require_credentials
   cd "$LAB_PROJECT_DIR"
+  python3 "$LAB_PROJECT_DIR/lib/envelope.py" changed
   curl -fsS -o "$sums" "$img_url/$sums"
   if [[ $signed -eq 1 ]]; then
     keyring=/usr/share/keyrings/ubuntu-cloudimage-keyring.gpg
@@ -139,7 +141,9 @@ VMX
   if [[ -f "$vmx" && $recreate -eq 0 ]]; then
     value() { tr -d '\r' < "$1" | sed -nE "s/^[[:space:]]*$2[[:space:]]*=[[:space:]]*\"(.*)\"[[:space:]]*$/\1/p" | tail -n 1; }
     for key in displayName 'scsi0:0\.fileName'; do
-      [[ "$(value "$vmx" "$key")" == "$(value "$new_vmx" "$key")" ]] || {
+      actual_value=$(value "$vmx" "$key") || lab_fail config_error "Cannot read $key from $vmx"
+      expected_value=$(value "$new_vmx" "$key") || lab_fail config_error "Cannot read $key from $new_vmx"
+      [[ -n "$actual_value" && "$actual_value" == "$expected_value" ]] || {
         echo "[ERROR] $vmx has ${key//\\/} = \"$(value "$vmx" "$key")\", expected \"$(value "$new_vmx" "$key")\"; left unchanged." >&2
         echo '        Rebuild the base: ./lab setup --recreate' >&2
         exit 1; }
@@ -158,12 +162,34 @@ VMX
 }
 
 # The lab SSH key that clones authorize for the guest user.
-mkdir -p "$LAB_PRIVATE_DIR"
-chmod 700 "$LAB_PRIVATE_DIR"
-[[ -f "$LAB_SSH_KEY" ]] || ssh-keygen -q -t ed25519 -N '' -C wsl-vmware-lab -f "$LAB_SSH_KEY"
-chmod 600 "$LAB_SSH_KEY"
+# Resolve and validate the entire image set before creating keys or files.
+images=$(lab_used_images) || lab_fail config_error 'Cannot read the configured image set.'
+[[ -n "$images" ]] || lab_fail config_error 'The configured image set is empty.'
+for image in $images; do
+  case "$image" in
+    ubuntu-24.04|ubuntu-22.04|debian-13) ;;
+    *) lab_fail config_error "Unknown image: $image (supported: ubuntu-24.04, ubuntu-22.04, debian-13)" ;;
+  esac
+done
+lab_require_credentials
+if [[ ! -d "$LAB_PRIVATE_DIR" ]]; then
+  python3 "$LAB_PROJECT_DIR/lib/envelope.py" changed
+  mkdir -p "$LAB_PRIVATE_DIR"
+fi
+if [[ "$(stat -c %a "$LAB_PRIVATE_DIR")" != 700 ]]; then
+  python3 "$LAB_PROJECT_DIR/lib/envelope.py" changed
+  chmod 700 "$LAB_PRIVATE_DIR"
+fi
+if [[ ! -f "$LAB_SSH_KEY" ]]; then
+  python3 "$LAB_PROJECT_DIR/lib/envelope.py" changed
+  ssh-keygen -q -t ed25519 -N '' -C wsl-vmware-lab -f "$LAB_SSH_KEY"
+fi
+if [[ "$(stat -c %a "$LAB_SSH_KEY")" != 600 ]]; then
+  python3 "$LAB_PROJECT_DIR/lib/envelope.py" changed
+  chmod 600 "$LAB_SSH_KEY"
+fi
 
-for image in $(lab_used_images); do
+for image in $images; do
   echo "== Base for $image"
   prepare_base "$image"
 done

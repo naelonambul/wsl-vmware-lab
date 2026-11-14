@@ -13,7 +13,20 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
+def setUpModule():
+    if sys.platform != 'linux':
+        raise unittest.SkipTest('requires Linux (WSL Ubuntu or ubuntu-latest); never run with Git Bash')
+
+
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def copy_fixture_tree(root):
+    """Keep relative imports/sources intact; scenarios override boundaries later."""
+    shutil.copytree(ROOT/'lib', root/'lib', ignore=shutil.ignore_patterns('__pycache__'))
+    shutil.copyfile(ROOT/'lab', root/'lab')
+
+
 sys.path.insert(0, str(ROOT / 'lib'))
 power = importlib.import_module('power-map')
 inspect = importlib.import_module('plan-inspect')
@@ -26,6 +39,7 @@ import json, os, sys
 from pathlib import Path
 root = Path(os.environ['FIXTURE_NATIVE'])
 args = sys.argv[1:]
+assert os.environ.get('VMWS_PASSWORD', 'unused-secret') not in ' '.join(args)
 state = json.loads((root/'fake.json').read_text())
 seeds = json.loads(os.environ.get('TF_VAR_power_states', '{}'))
 # Model precedence, including an explicit conflicting variable-file value.
@@ -47,23 +61,28 @@ def plan():
     targets=[a for a in args if a.startswith('-target=')]
     bootstrap=any('guest_bootstrap' in a for a in targets)
     changes=[]
-    for n in sorted(set(state['desired']) | set(state['live'])):
+    desired=[] if '-destroy' in args else state['desired']
+    for n in sorted(set(desired) | set(state['live'])):
         if targets and not bootstrap and not any('["'+n+'"]' in a for a in targets): continue
         before=dict(processors=state.get('cpus',{}).get(n,2), memory=2048,
                     description=state.get('descriptions',{}).get(n,''),
                     state=state.get('powers',{}).get(n,'off' if n in json.loads(os.environ.get('POWER_OFF','[]')) else 'on'))
         after=dict(processors=4 if state.get('resize') else 2,memory=2048,
                    description='edited' if os.environ.get('METADATA') else '',state=seeds.get(n,'off'))
-        action=('delete' if n not in state['desired'] else 'replace' if n in state.get('replace',[]) else
+        action=('delete' if n not in desired else 'replace' if n in state.get('replace',[]) else
                 'create' if n not in state['live'] else 'update' if before != after else 'no-op')
         if bootstrap and n == 'b' and os.environ.get('UNEXPECTED_ACTION'): action=os.environ['UNEXPECTED_ACTION']
         changes.append(dict(type='vmworkstation_virtual_machine', name='vm', index=n,
             change=dict(actions=['delete','create'] if action=='replace' else [action],
                 before=before if n in state['live'] else None,after=after if action!='delete' else None)))
-    return dict(resource_changes=changes,seeds=seeds)
+    return dict(resource_changes=changes,seeds=seeds,
+                variables=dict(vmrest_password=dict(value=os.environ.get('TF_VAR_vmrest_password',os.environ.get('VMWS_PASSWORD')))))
 if args[0]=='show':
     print(json.dumps(json.loads(Path(args[-1]).read_text()) if len(args)>2 else shown()))
 elif args[0]=='plan':
+    if os.environ.get('PLAN_FAIL'):
+        print(json.dumps({'@level':'error','diagnostic':{'summary':'Invalid fake configuration','detail':'Plan fixture diagnostic'}}))
+        sys.exit(1)
     saved=plan()
     for arg in args:
         if arg.startswith('-out='): Path(arg[5:]).write_text(json.dumps(saved))
@@ -73,6 +92,10 @@ elif args[0]=='plan':
             addr='vmworkstation_virtual_machine.vm["'+r['index']+'"]', resource_type=r['type'],
             resource_name='vm', resource_key=r['index'])))))
 elif args[0]=='apply':
+    print('Terraform apply: saved plan '+args[-1], file=sys.stderr)
+    if os.environ.get('APPLY_FAIL'):
+        print('Apply fixture diagnostic', file=sys.stderr)
+        sys.exit(9)
     if '-destroy' in args:
         doomed=[n for n in state['live'] if any('["'+n+'"]' in a for a in args if a.startswith('-target='))]
         state['live']=[n for n in state['live'] if n not in doomed]
@@ -89,9 +112,8 @@ elif args[0]=='apply':
                     state.setdefault(key,{})[n]=c['after'][attr]
     (root/'fake.json').write_text(json.dumps(state))
 elif args[0]=='destroy':
-    assert '-auto-approve' not in args, args
-    answer = input('Destroy confirmation: ')
-    (root/'confirmation').write_text(answer)
+    print('Terraform destroy fixture diagnostic', file=sys.stderr)
+    assert '-auto-approve' in args and '-input=false' in args, args
     sys.exit(int(os.environ.get('DESTROY_RC', '1')))
 """
 
@@ -161,16 +183,36 @@ class PowerTests(unittest.TestCase):
             self.assertEqual(power.wait_off(vms[:1],1), ['a'])
 
     def test_rebootstrap_refused_before_writes(self):
-        source=(ROOT/'lib/bootstrap-guest.sh').read_text(encoding='utf-8')
-        start=source.index("if grep -Eqi")
-        guard=source[start:source.index('\nseed_dir=',start)]
-        with tempfile.TemporaryDirectory() as folder:
-            path=Path(folder)/'fixture.vmx'
-            path.write_text('ide1:0.fileName = "fixture.iso"\n')
-            run=subprocess.run(['bash','-c','vmx="$1"\n'+guard,'fixture',str(path)],capture_output=True,text=True)
-            self.assertEqual(run.returncode,1,run.stderr)
-            self.assertIn('already bootstrapped',run.stderr)
-            self.assertEqual(path.read_text(),'ide1:0.fileName = "fixture.iso"\n')
+        fixture=LifecycleTests('runTest')
+        self.addCleanup(fixture.doCleanups)
+        fixture.setUp()
+        vmx=fixture.prepare_bootstrap()
+        vmx.write_text('ide1:0.fileName = "fixture.iso"\n')
+        # Existing artifacts must survive byte-for-byte, including timestamps.
+        seed=fixture.root/'private/seed-fixture'
+        seed.mkdir()
+        (seed/'user-data').write_text('existing seed')
+        (fixture.root/'private/known_hosts-fixture').write_text('existing pin')
+        (fixture.root/'cloud-init-fixture.iso').write_text('existing ISO')
+        def snapshot():
+            return {p.relative_to(fixture.root).as_posix():
+                    (p.read_bytes() if p.is_file() else None, p.stat().st_mtime_ns)
+                    for p in fixture.root.rglob('*')}
+        # Record the first attempted mutating command, even if it would fail.
+        # Redirections in the real script are also covered by the snapshot.
+        audit=fixture.root/'write-attempts'
+        for tool in ('mkdir','mktemp','ssh-keygen','mv','cloud-localds','python3'):
+            fake=fixture.bin/tool
+            fake.unlink()
+            fake.write_text('#!/bin/bash\nprintf "%s\\n" "$0" >> "$FIXTURE_NATIVE/write-attempts"\nexit 99\n', newline='\n')
+            fake.chmod(0o700)
+        before=snapshot()
+        run=fixture.run_bootstrap()
+        self.assertEqual(run.returncode,1,run.stderr)
+        self.assertIn('already bootstrapped',run.stderr)
+        self.assertNotIn('Unexpected fixture tool execution:',run.stderr)
+        self.assertFalse(audit.exists())
+        self.assertEqual(snapshot(),before)
 
     def test_backup_survives_failed_push_then_restores(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -197,17 +239,15 @@ class PowerTests(unittest.TestCase):
                 records.main()
             self.assertFalse(backup.exists())
 
-    @unittest.skipUnless(shutil.which('flock') and shutil.which('setsid'), 'requires Linux flock and setsid')
     def test_surviving_child_retains_lock(self):
         # Run only the production shell functions, with a disposable fake child.
-        source=(ROOT/'lab').read_text(encoding='utf-8')
-        functions=source[source.index('lock() {'):source.index('\ncase "$cmd" in')]
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)
+            copy_fixture_tree(path)
             script=path/'child.sh'
             script.write_text('sleep 30 >/dev/null 2>&1 &\nprintf "%s" "$!" > "$here/child.pid"\n')
             # 30 s is a test-only failsafe; the child is terminated in finally.
-            run=subprocess.run(['bash','-c','set -euo pipefail\nhere="$1"; export here\n'+functions+
+            run=subprocess.run(['bash','-c','set -euo pipefail\nhere="$1"; export here\nsource "$here/lib/runner-functions.sh"\n'+
                 '\nrun_locked "$here/child.sh"','fixture',str(path)],capture_output=True,text=True,timeout=5)
             self.assertEqual(run.returncode,0,run.stderr)
             pid=int((path/'child.pid').read_text())
@@ -218,25 +258,20 @@ class PowerTests(unittest.TestCase):
                 os.kill(pid,15)
 
     def test_detached_runner_preserves_stdin(self):
-        source=(ROOT/'lab').read_text(encoding='utf-8')
-        functions=source[source.index('lock() {'):source.index('\ncase "$cmd" in')]
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)
+            copy_fixture_tree(path)
             (path/'child.sh').write_text('read -r confirmation\nprintf "%s" "$confirmation"\n')
-            # Isolate the stdin boundary on Git Bash too; process groups and
-            # real lock inheritance are checked separately under Linux.
-            script=functions+'\nlock() { :; }\nenv() { shift 3; "$@"; }\nrun_locked "$1/child.sh"'
+            script='here="$1"\nsource "$here/lib/runner-functions.sh"\nrun_locked "$1/child.sh"'
             run=subprocess.run(['bash','-c',script,'fixture',str(path)],input='confirm\n',capture_output=True,text=True,timeout=5)
             self.assertEqual(run.returncode,0,run.stderr)
             self.assertEqual(run.stdout.rstrip('\r\n'),'confirm')
 
-    @unittest.skipUnless(os.name == 'posix' and shutil.which('setsid') and shutil.which('flock'), 'requires Linux process groups')
     def test_stdin_and_signals_with_lock(self):
-        source=(ROOT/'lab').read_text(encoding='utf-8')
-        functions=source[source.index('lock() {'):source.index('\ncase "$cmd" in')]
         for sig in [signal.SIGINT, signal.SIGTERM]:
             with self.subTest(signal=sig), tempfile.TemporaryDirectory() as folder:
                 path=Path(folder)
+                copy_fixture_tree(path)
                 # Child acknowledges the forwarded signal but deliberately waits
                 # for release, proving the lock remains held during shutdown.
                 (path/'child.py').write_text("import os,signal,time\nfrom pathlib import Path\np=Path(os.environ['here'])\n"
@@ -245,7 +280,7 @@ class PowerTests(unittest.TestCase):
                     "(p/'input').write_text(input())\n(p/'ready').touch()\n"
                     "while not (p/'release').exists(): time.sleep(.02)\n")
                 (path/'child.sh').write_text('exec python3 "$here/child.py"\n')
-                proc=subprocess.Popen(['bash','-c','set -euo pipefail\nhere="$1"; export here\n'+functions+
+                proc=subprocess.Popen(['bash','-c','set -euo pipefail\nhere="$1"; export here\nsource "$here/lib/runner-functions.sh"\n'+
                     '\nrun_locked "$here/child.sh"','fixture',str(path)],stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=subprocess.PIPE,text=True)
                 def wait_file(name):
                     deadline=time.monotonic()+5
@@ -271,22 +306,21 @@ class PowerTests(unittest.TestCase):
                     proc.communicate(timeout=5)
 
     def test_forwarded_signal_overrides_successful_child(self):
-        source=(ROOT/'lab').read_text()
-        functions=source[source.index('lock() {'):source.index('\ncase "$cmd" in')]
         with tempfile.TemporaryDirectory() as folder:
             path=Path(folder)
+            copy_fixture_tree(path)
             (path/'child.sh').write_text('builtin kill -s "$FIXTURE_SIGNAL" "$runner_pid"\nsleep .1\nexit 0\n',newline='\n')
-            # Only the process-group boundary is faked on Git Bash. Deliver a
-            # real signal to the runner and let its child finish successfully.
+            # Isolate the signal-status rule: deliver a real signal to the
+            # runner while allowing its child to finish successfully.
             shim='''
-lock() { :; }
-env() { shift 3; "$@"; }
+here="$1"
+source "$here/lib/runner-functions.sh"
 kill() { if [[ "$1" == -0 ]]; then builtin kill "$@"; else :; fi; }
 export runner_pid=$$
 run_locked "$1/child.sh"
 '''
             for sig,code in [('INT',130),('TERM',143)]:
-                run=subprocess.run(['bash','-c','set -euo pipefail\n'+functions+shim,'fixture',path.as_posix()],
+                run=subprocess.run(['bash','-c','set -euo pipefail\n'+shim,'fixture',path.as_posix()],
                     env=dict(os.environ,FIXTURE_SIGNAL=sig),capture_output=True,text=True,timeout=5)
                 self.assertEqual(run.returncode,code,run.stderr)
                 self.assertEqual(run.stderr.count('Run interrupted; check ./lab status'),1)
@@ -294,25 +328,22 @@ run_locked "$1/child.sh"
 
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
+        if sys.platform != 'linux':
+            self.skipTest('requires Linux (WSL Ubuntu or ubuntu-latest); never run with Git Bash')
         self.temp=tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)
         (self.root/'terraform').mkdir()
         (self.root/'private').mkdir()
-        (self.root/'lib').mkdir()
-        for name in ['network-inspect.py','power-map.py','plan-inspect.py']:
-            shutil.copyfile(ROOT/'lib'/name,self.root/'lib'/name)
+        copy_fixture_tree(self.root)
         # Fake cleanup and backup boundaries record ordering only; restoration
         # semantics are exercised independently above, including failed pushes.
         for name in ['cleanup-guest.py','bootstrap-records.py']:
             (self.root/'lib'/name).write_text("import os,sys\nfrom pathlib import Path\np=Path(os.environ['FIXTURE_NATIVE'])/'events'\nwith p.open('a') as f: f.write(' '.join(sys.argv[1:2])+ '\\n')\n")
         (self.root/'fake-tf.py').write_text(FAKE_TF)
         (self.root/'lib'/'guest-inventory.py').write_text("import os,json\nfrom pathlib import Path\nPath(os.environ['LAB_INVENTORY']).write_text(json.dumps(dict(all=dict(hosts={} if os.environ.get('EMPTY_INVENTORY') else dict(a={})))))\n")
-        self.source=(ROOT/'lib/lifecycle.sh').read_text(encoding='utf-8')
-        config=(ROOT/'lib/config.sh').read_text(encoding='utf-8')
-        fail=config[config.index('lab_fail() {'):config.index('\nLAB_ENV_FILE=')]
         mocks=r'''
-python3() { "$FIXTURE_PYTHON" "$@" | tr -d '\r'; }
+python3() { "$FIXTURE_PYTHON" "$@"; }
 cd "$FIXTURE_NATIVE"
 export LAB_PROJECT_DIR="$PWD"
 export LAB_PRIVATE_DIR="$PWD/private"
@@ -334,25 +365,91 @@ ansible() {
   return 42
 }
 '''
-        self.config_mocks=fail+mocks
-        self.source=self.source.replace('source "$(dirname "${BASH_SOURCE[0]}")/config.sh"',fail+mocks,1)
-        # Override the API boundary in this disposable copy. This is portable
-        # across Windows/Git Bash and Linux, with no chance of finding curl.exe.
+        # Keep the real loader, including its project-root initialization and
+        # entry-only return. Override only the scenario's external boundaries.
+        with (self.root/'lib/config.sh').open('a', encoding='utf-8', newline='\n') as stream:
+            stream.write('\n'+mocks)
+        # Override the API boundary in this disposable copy so it cannot
+        # reach the host's curl or any live infrastructure.
         helper=self.root/'lib'/'power-map.py'
         code=helper.read_text()
         code=code.replace("if __name__ == '__main__':", "def power(vm, max_time=10):\n    return 'off' if vm['name'] in json.loads(os.environ.get('POWER_OFF', '[]')) else 'on'\n\nif __name__ == '__main__':")
         helper.write_text(code,newline='\n')
         code=helper.read_text().replace("if __name__ == '__main__':", "def wait_off(vms, seconds):\n    return [vm['name'] for vm in vms] if os.environ.get('WAIT_FAIL') else []\n\nif __name__ == '__main__':")
         helper.write_text(code,newline='\n')
-        self.env=dict(os.environ,FIXTURE_NATIVE=self.root.as_posix(), FIXTURE_PYTHON=sys.executable,
+        self.env=dict(HOME=str(self.root), LANG='C.UTF-8', PYTHONDONTWRITEBYTECODE='1',
+                      FIXTURE_NATIVE=self.root.as_posix(), FIXTURE_PYTHON=str(Path(sys.executable).resolve()),
+                      VMWARE_DIR=(self.root/'vmware').as_posix(),
+                      LAB_ENV_FILE=(self.root/'absent.env').as_posix(),
+                      LAB_WINDOWS_PROFILE='C:\\fixture',
+                      LAB_SECRETS_FILE=(self.root/'absent-secret').as_posix(),
                       VMWS_ENDPOINT='offline',VMWS_USERNAME='fake',VMWS_PASSWORD='fake')
+        # Resolve only required Linux utilities from system directories, never
+        # from the runner's PATH. Absolute symlinks cannot invoke themselves.
+        self.bin=self.root/'bin'
+        self.bin.mkdir()
+        # Full shell-command audit is recorded in fixture-path.md. Host/VM,
+        # network and installation boundaries below must never be real links.
+        utilities = ('awk basename bash cat chmod cp cut date dirname env find flock '
+                     'grep head hostname id ls mkdir mktemp mv paste readlink rm sed seq '
+                     'setsid sha256sum sha512sum sleep sort stat tail tar tee touch tr '
+                     'true timeout wc')
+        for tool in utilities.split():
+            real = shutil.which(tool, path='/usr/bin:/bin')
+            self.assertIsNotNone(real, 'required Linux fixture utility: '+tool)
+            (self.bin/tool).symlink_to(Path(real).resolve())
+        (self.bin/'python3').symlink_to(Path(sys.executable).resolve())
+        for tool in ('ansible ansible-playbook apt-get cloud-localds curl dpkg gpg '
+                     'gpgv ip ping qemu-img ssh ssh-keygen sudo terraform wslpath').split():
+            fake = self.bin/tool
+            fake.write_text('#!/bin/bash\necho "Unexpected fixture tool execution: $0" >&2\nexit 99\n', newline='\n')
+            fake.chmod(0o700)
+        self.env['PATH']=str(self.bin)
+
+
+    def prepare_bootstrap(self):
+        for name in ('config.sh','config-functions.sh','cloud-config.sh','bootstrap-guest.sh'):
+            shutil.copyfile(ROOT/'lib'/name,self.root/'lib'/name)
+        vmware=self.root/'vmware'
+        vmware.mkdir(exist_ok=True)
+        vmrun=vmware/'vmrun.exe'
+        vmrun.write_text('#!/bin/bash\nprintf "Total running VMs: 0\\n"\n',newline='\n')
+        vmrun.chmod(0o700)
+        self.env.update(VM_ID='fixture',VMX_WIN=(self.root/'fixture.vmx').as_posix(),
+                        LAB_PRIVATE_DIR=(self.root/'private').as_posix(),
+                        LAB_SSH_KEY=(self.root/'fixture-key').as_posix(),
+                        LAB_ENV_FILE=(self.root/'absent.env').as_posix(),
+                        LAB_WINDOWS_PROFILE='C:\\fixture',
+                        LAB_SECRETS_FILE=(self.root/'absent-secret').as_posix(),
+                        LAB_MGMT_VNET='VMnet1',LAB_NAT_VNET='VMnet8',LAB_LAN_VNET='',VM_LAN='none')
+        (self.root/'fixture-key.pub').write_text('ssh-ed25519 Zml4dHVyZQ== fixture\n')
+        fakes={
+            'wslpath': 'printf "%s\\n" "$2"',
+            'ssh-keygen': 'key="${@: -1}"; printf fixture > "$key"; printf "ssh-ed25519 Zml4dHVyZQ== fixture\\n" > "$key.pub"',
+            'cloud-localds': 'printf fixture > "$2"',
+        }
+        for name,body in fakes.items():
+            path=self.bin/name
+            path.write_text('#!/bin/bash\n'+body+'\n',newline='\n')
+            path.chmod(0o700)
+        vmx=self.root/'fixture.vmx'
+        vmx.write_text('displayName = "fixture"\n')
+        return vmx
+
+    def run_bootstrap(self):
+        return subprocess.run(['bash',(self.root/'lib/bootstrap-guest.sh').as_posix()],
+                              env=self.env,capture_output=True,text=True,timeout=5)
+
 
     def run_case(self,args,live=('a','b'),desired=('a','b','new'),replace=(),resize=False):
         (self.root/'fake.json').write_text(json.dumps(dict(live=list(live),desired=list(desired),replace=list(replace),resize=resize)))
         (self.root/'calls').write_text('')
         for name in set(live)|set(desired): (self.root/(name+'.vmx')).write_text('')
-        result=subprocess.run(['bash','-s','--',*args],input=self.source,env=self.env,
+        script=self.root/'lib/lifecycle.sh'
+        result=subprocess.run(['bash',script.as_posix(),*args],env=self.env,
                               capture_output=True,text=True,encoding='utf-8',errors='replace',timeout=30)
+        self.assertNotIn('command not found', result.stderr)
+        self.assertNotIn('Unexpected fixture tool execution:', result.stderr)
         calls=[json.loads(l) for l in (self.root/'calls').read_text().splitlines()]
         return result,calls
 
@@ -377,40 +474,24 @@ ansible() {
     def test_destroy_stdin_and_status_through_runner_and_profile_discovery(self):
         # Use the real discovery function against a fake PowerShell that drains
         # stdin, modelling the Windows interop boundary without calling Windows.
-        config=(ROOT/'lib/config.sh').read_text()
-        discovery=config[config.index('lab_windows_profile() {'):config.index('\nexport VMWS_ENDPOINT=')]
-        discovery=discovery.replace('local ps=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',
-                                    'local ps="$FIXTURE_NATIVE/fake-powershell"')
+        definitions=self.root/'lib/config-functions.sh'
+        definitions.write_text(definitions.read_text(encoding='utf-8').replace(
+            '/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe',
+            (self.root/'fake-powershell').as_posix()), encoding='utf-8', newline='\n')
         ps=self.root/'fake-powershell'
-        ps.write_text('#!/usr/bin/env bash\ncat >/dev/null\nprintf "fixture-profile"\n',newline='\n')
+        ps.write_text('#!/bin/bash\nprintf discovered > "$FIXTURE_NATIVE/profile-discovery"\n/bin/cat >/dev/null\nprintf "fixture-profile"\n',newline='\n')
         ps.chmod(0o700)
-        source=self.source.replace('operation="${1:-status}"',discovery+
-            '\nLAB_WINDOWS_PROFILE=$(lab_windows_profile)\noperation="${1:-status}"',1)
-        script=self.root/'lifecycle.sh'; script.write_text(source,newline='\n')
-        entry=(ROOT/'lab').read_text()
-        functions=entry[entry.index('lock() {'):entry.index('\ncase "$cmd" in')]
-        # Git Bash lacks setsid/flock. Model setsid's documented fork case:
-        # without --wait it returns success before the command completes.
-        # Linux additionally exercises the real tools in PowerTests.
-        shim='''
-lock() { :; }
-env() {
-  shift
-  [[ "$1" == setsid ]] || return 99
-  shift
-  if [[ "$1" == --wait ]]; then shift; "$@"
-  else "$@" & return 0
-  fi
-}
-run_locked "$1/lifecycle.sh" destroy
-'''
+        # Exercise the real Linux runner and lock with the disposable child.
+        shim='here="$1"\nsource "$here/lib/runner-functions.sh"\nrun_locked "$here/lib/lifecycle.sh" destroy --confirm=a\n'
         (self.root/'fake.json').write_text(json.dumps(dict(live=['a'],desired=['a'])))
         for code in [1,7,0]:
-            env=dict(self.env,DESTROY_RC=str(code))
-            run=subprocess.run(['bash','-c','set -euo pipefail\n'+functions+shim,'fixture',self.root.as_posix()],
+            (self.root/'profile-discovery').unlink(missing_ok=True)
+            env=dict(self.env,DESTROY_RC=str(code),LAB_WINDOWS_PROFILE='')
+            run=subprocess.run(['bash','-c','set -euo pipefail\n'+shim,'fixture',self.root.as_posix()],
                 input='no\n',env=env,capture_output=True,text=True,timeout=10)
             self.assertEqual(run.returncode,code,run.stderr)
-            self.assertEqual((self.root/'confirmation').read_text(),'no')
+            self.assertEqual((self.root/'profile-discovery').read_text(),'discovered')
+            self.assertFalse((self.root/'confirmation').exists())
 
     def test_gui_off_preserved_and_off_resize_can_start(self):
         self.env['POWER_OFF']='["a"]'
@@ -444,8 +525,82 @@ run_locked "$1/lifecycle.sh" destroy
         self.assertEqual(result.returncode,2,result.stderr)
         self.assertIn('folder already has files',result.stderr)
         self.assertFalse(any(c['args'][0]=='apply' for c in calls))
-        # Only the initial restore check may precede the collision gate.
-        self.assertEqual((self.root/'events').read_text().splitlines(),['restore'])
+        # With no pending backup, a refused run never enters restoration.
+        self.assertFalse((self.root/'events').exists())
+
+    def test_collision_listing_failure_precedes_replacement(self):
+        folder=self.root/'clones/new'
+        folder.mkdir(parents=True)
+        # Exercise a listing error even as root and even after partial output.
+        for output in ('', 'printf "partial-entry\\n"; '):
+            with self.subTest(output=output):
+                config=self.root/'lib/config.sh'
+                original=config.read_text(encoding='utf-8')
+                config.write_text(original+'\nfind() { '+output+'return 13; }\n', encoding='utf-8', newline='\n')
+                try:
+                    result,calls=self.run_case(['on','--allow-destroy'],replace=('a',))
+                finally:
+                    config.write_text(original, encoding='utf-8', newline='\n')
+                self.assertEqual(result.returncode,2,result.stderr)
+                self.assertIn('Cannot list VM folder',result.stderr)
+                self.assertFalse(any(c['args'][0]=='apply' for c in calls))
+                self.assertFalse((self.root/'events').exists())
+
+    def test_collision_unreadable_directory_precedes_replacement(self):
+        if os.geteuid() == 0:
+            self.skipTest('root can read chmod-000 directories; listing-error test covers root')
+        folder=self.root/'clones/new'
+        folder.mkdir(parents=True)
+        (folder/'.held').write_text('fixture')
+        folder.chmod(0)
+        try:
+            result,calls=self.run_case(['on','--allow-destroy'],replace=('a',))
+        finally:
+            folder.chmod(0o700)
+        self.assertEqual(result.returncode,2,result.stderr)
+        self.assertIn('Cannot read VM folder',result.stderr)
+        self.assertFalse(any(c['args'][0]=='apply' for c in calls))
+        self.assertFalse((self.root/'events').exists())
+
+    def test_base_identity_rejects_image_and_digest_command_failures(self):
+        functions='source "$FIXTURE_NATIVE/lib/config-functions.sh"\n'
+        base=self.root/'base/ubuntu-24.04'
+        base.mkdir(parents=True)
+        (base/'base.prepared').write_text('synthetic-marker')
+        (self.root/'lib/check-base.py').write_text('print("fixture-base-id")\n')
+        variables='''
+LAB_IMAGE=ubuntu-24.04
+LAB_VMS_FILE="$FIXTURE_NATIVE/images.tfvars"
+LAB_PROJECT_DIR="$FIXTURE_NATIVE"
+LAB_BASE_DIR="$FIXTURE_NATIVE/base"
+'''
+        (self.root/'images.tfvars').write_text('image = "ubuntu-24.04"\n')
+        for failure in ('sed() { return 17; }', 'sha256sum() { return 17; }'):
+            with self.subTest(failure=failure):
+                # Conditional invocation deliberately disables errexit inside
+                # the function: its explicit status checks must still work.
+                script=functions+'\n'+variables+'\n'+failure+'\nif lab_base_identity; then exit 0; else exit 7; fi\n'
+                result=subprocess.run(['bash','-c','set -euo pipefail\n'+script],
+                    env=self.env,capture_output=True,text=True,timeout=5)
+                self.assertEqual(result.returncode,7,result.stderr)
+                self.assertNotIn('command not found',result.stderr)
+
+    def test_running_vm_parser_uses_no_external_line_filters(self):
+        functions='source "$FIXTURE_NATIVE/lib/config-functions.sh"\n'
+        for output,expected in [('Total running VMs: 0',1),
+                ('Total running VMs: 1\nC:\\fixture\\a.vmx',0),
+                ('Total running VMs: 1',2),('garbled',2)]:
+            with self.subTest(output=output):
+                env=dict(self.env,VMWARE_DIR='unused',VMRUN_OUTPUT=output)
+                script=functions+r'''
+timeout() { printf '%s\n' "$VMRUN_OUTPUT"; }
+head() { return 17; }
+tail() { return 17; }
+lab_vm_running 'c:/fixture/a.vmx'
+'''
+                result=subprocess.run(['bash','-c','set -euo pipefail\n'+script],
+                    env=env,capture_output=True,text=True,timeout=5)
+                self.assertEqual(result.returncode,expected,result.stderr)
 
     def test_metadata_update_guard_and_off_staging(self):
         self.env['METADATA']='1'
@@ -484,11 +639,13 @@ run_locked "$1/lifecycle.sh" destroy
                 self.assertLess(args.index('-var-file=fixture.tfvars'),len(args)-1)
         diagnostic=(ROOT/'lib/diagnose.sh').read_text()
         self.assertIn('"${LAB_TF_VAR_ARGS[@]}" -var="power_states=$TF_VAR_power_states"',diagnostic)
-        # Execute the production diagnostic plan line against the same fake:
+        # Execute the complete production diagnostic against the same fakes:
         # explicit off must win over the conflicting variable-file on value.
-        command=next(line for line in diagnostic.splitlines() if line.startswith('terraform plan '))
-        script=self.config_mocks+"\nTF_VAR_power_states='"+json.dumps(dict(a='off',b='on'))+"'\nexport TF_VAR_power_states\nplan=preview\n"+command
-        run=subprocess.run(['bash','-s'],input=script,env=self.env,capture_output=True,text=True,timeout=5)
+        with (self.root/'lib/config.sh').open('a', encoding='utf-8', newline='\n') as stream:
+            stream.write('\nlab_used_images() { :; }\nlab_base_identity() { TF_VAR_bases=fixture; }\ntimeout() { return 1; }\n')
+        (self.root/'fake.json').write_text(json.dumps(dict(live=['a','b'],desired=['a','b'])))
+        run=subprocess.run(['bash',(self.root/'lib/diagnose.sh').as_posix()],
+                           env=dict(self.env,POWER_OFF='["a"]'),capture_output=True,text=True,timeout=5)
         self.assertEqual(run.returncode,0,run.stderr)
         last=json.loads((self.root/'calls').read_text().splitlines()[-1])
         self.assertEqual(last['seeds'],dict(a='off',b='on'))
@@ -596,7 +753,7 @@ class InventoryTests(unittest.TestCase):
     def test_zero_hosts_api_failure_and_frozen_set(self):
         for powers in [dict(a='off',b='off',c='off'),dict(a='error',b='off',c='off')]:
             with self.assertRaises(SystemExit) as exc: self.run_inventory(powers=powers)
-            self.assertEqual(exc.exception.code,3)
+            self.assertEqual(exc.exception.code,5 if powers['a']=='error' else 3)
         with self.assertRaises(SystemExit) as exc: self.run_inventory()
         self.assertEqual(exc.exception.code,1)  # b is unreachable
         self.assertEqual(json.loads((self.root/'selection').read_text()),['a','b'])
@@ -606,7 +763,7 @@ class InventoryTests(unittest.TestCase):
         self.assertEqual(exc.exception.code,1)  # b cannot silently drop out
 
     def test_configure_limit_uses_default_playbook_and_credentials(self):
-        source=(ROOT/'lib/configure.sh').read_text(encoding='utf-8')
+        copy_fixture_tree(self.root)
         mocks=r'''
 cd "$FIXTURE_NATIVE"
 LAB_PROJECT_DIR="$PWD"
@@ -615,15 +772,20 @@ LAB_INVENTORY=fixture
 LAB_GUEST_USER=lab
 LAB_PLAYBOOK="$PWD/playbook.yml"
 lab_require_credentials() { echo credentials; }
+lab_result() { :; }
+python3() { :; }
 timeout() { return 0; }
 ansible-playbook() { printf 'ARG=%s\n' "$@"; }
 '''
-        config=(ROOT/'lib/config.sh').read_text(encoding='utf-8')
-        ansible_env=config[config.index('lab_ansible_env() {'):config.index('\nLAB_ENV_FILE=')]
-        source=source.replace('source "$here/config.sh"',ansible_env+mocks)
+        with (self.root/'lib/config.sh').open('a', encoding='utf-8', newline='\n') as stream:
+            stream.write('\n'+mocks)
         (self.root/'playbook.yml').write_text('---\n')
-        run=subprocess.run(['bash','-s','--','--limit','db'],input=source,
-            env=dict(os.environ,FIXTURE_NATIVE=self.root.as_posix()),capture_output=True,text=True)
+        run=subprocess.run(['bash',(self.root/'lib/configure.sh').as_posix(),'--limit','db'],
+            env=dict(os.environ,FIXTURE_NATIVE=self.root.as_posix(),
+                     LAB_ENV_FILE=(self.root/'absent.env').as_posix(),
+                     LAB_WINDOWS_PROFILE='C:\\fixture',
+                     LAB_SECRETS_FILE=(self.root/'absent-secret').as_posix()),
+            capture_output=True,text=True)
         self.assertEqual(run.returncode,0,run.stderr)
         self.assertIn('credentials',run.stdout)
         self.assertIn('playbook.yml',run.stdout)

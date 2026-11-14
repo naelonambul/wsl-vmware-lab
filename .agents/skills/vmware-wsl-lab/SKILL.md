@@ -96,7 +96,7 @@ All bash scripts source `lib/config.sh`, which reads optional settings from `lab
 3. **Preserve.** Never delete or re-prepare the base VM, reset WSL distributions, restore VMware network defaults, or overwrite an existing Terraform state unless the user explicitly asks.
 4. **Check before lifecycle commands.** `./lab status` (or `lib/preflight.sh`) must exit 0 in this session before any Terraform command (section 0). `lab` runs one command at a time per checkout (`flock` on `.lab.lock`); a second one stops at once.
 5. **One runner per state.** One checkout = one state, one VM set, one inventory. Serialize work, or use a fully isolated checkout with its own `lab.env`.
-6. **Destroy via the wrapper.** Use `./lab destroy` (runs cleanup), never bare `terraform destroy`. `0 destroyed` with vmrest down is not success.
+6. **Destroy via the wrapper.** Use `./lab destroy --confirm=<names>` (exact state VM set; runs cleanup), never bare `terraform destroy`. `0 destroyed` with vmrest down is not success.
 7. **Never disable host key checking globally.** Clone host keys are generated in WSL and pinned before the first boot (`StrictHostKeyChecking=yes`); a mismatch means the address reached another VM.
 8. **Never disable Hyper-V / VBS / Secure Boot** to make VMware start; WSL2 needs them.
 9. **Verification.** Report a step as done only with the command and its actual output. Historical results in references are not fresh evidence. A test passes only under the conditions it claims: for example, a credential written and read in the same session proves nothing about a fresh boot.
@@ -120,9 +120,13 @@ cd "$repo"
 ./lab down --all                 # graceful shutdown; success requires vmrest poweredOff
 ./lab down <vm>...               # graceful shutdown of selection (bare down is an error)
 ./lab down <vm>... --hard        # hard stop only after asking the user
-./lab destroy                    # interactive; cleanup-aware, every VM
+./lab destroy --confirm=<names>  # exact comma-separated state VM set; cleanup-aware
 ./lab cleanup                    # retry cleanup left by a failed or interrupted delete
+./lab up --dry-run               # plan only; also down/destroy --dry-run
+./lab describe --json            # command arguments, envelope and error codes
 ```
+
+Every command writes one JSON envelope to stdout; logs go to stderr. Inspect `ok`, `error`, `changed` and `data`; an interrupted mutation requires status inspection. Dry runs report pending cleanup/restoration without running them.
 
 Several VMs: `cp vms.tfvars.example vms.tfvars`, edit, then `./lab up`. Changing the list later: edit and run `up` again (removing entries: `./lab up --allow-destroy`, after the user confirms).
 

@@ -46,14 +46,15 @@ lock_secrets_file() {
 }
 
 if [[ $lock_only -eq 1 ]]; then
-  [[ -f "$LAB_SECRETS_FILE" ]] || { echo "[ERROR] $LAB_SECRETS_FILE not found" >&2; exit 1; }
+  [[ -f "$LAB_SECRETS_FILE" ]] || lab_fail secrets_missing 'Secrets file not found.' 'The user runs ./lab account first.'
+  python3 "$LAB_PROJECT_DIR/lib/envelope.py" changed
   lock_secrets_file
   exit 0
 fi
 
 # vmrest.exe -C reads the console directly; piped input does not work, and the
 # password must be typed by a person.
-[[ -t 0 && -t 1 ]] || { echo '[ERROR] ./lab account is interactive: run it in a terminal and type the password yourself.' >&2; exit 1; }
+[[ -t 0 && -t 2 ]] || lab_fail needs_user './lab account requires a terminal.' 'Run ./lab account in your own terminal and type the password yourself.'
 vmrest="$VMWARE_DIR/vmrest.exe"
 [[ -f "$vmrest" ]] || { echo "[ERROR] vmrest.exe not found in VMWARE_DIR=$VMWARE_DIR" >&2; exit 1; }
 cfg="$(wslpath -u "$LAB_WINDOWS_PROFILE")/vmrest.cfg"
@@ -68,6 +69,7 @@ if [[ -f "$cfg" ]]; then
 fi
 echo '== vmrest.exe -C: choose the API username and password (8+ characters, upper and lower case, digit, special character)'
 before="$(stat -c %Y "$cfg" 2>/dev/null || echo 0)"
+python3 "$LAB_PROJECT_DIR/lib/envelope.py" changed
 "$vmrest" -C
 after="$(stat -c %Y "$cfg" 2>/dev/null || echo 0)"
 [[ -f "$cfg" && "$after" != "$before" ]] || { echo '[ERROR] vmrest.cfg was not written; nothing else changed.' >&2; exit 1; }
@@ -89,7 +91,13 @@ read -rsp 'Type the same vmrest password once more: ' pass; echo
 tmp="$(mktemp "$LAB_SECRETS_FILE.XXXXXX")"
 trap 'rm -f -- "$tmp"' EXIT
 if [[ -f "$LAB_SECRETS_FILE" ]]; then
-  tr -d '\r' < "$LAB_SECRETS_FILE" | grep -Ev '^[[:space:]]*(export[[:space:]]+)?(VMWS_USERNAME|VMWS_USER|VMWS_PASSWORD)[[:space:]]*=' >> "$tmp" || true
+  # A sentinel keeps command substitution from dropping trailing newlines.
+  other_lines=$(tr -d '\r' < "$LAB_SECRETS_FILE" && printf '\001') || lab_fail config_error 'Cannot read the existing secrets file; left unchanged.'
+  other_lines="${other_lines%$'\001'}"
+  filter_rc=0
+  printf '%s' "$other_lines" | grep -Ev '^[[:space:]]*(export[[:space:]]+)?(VMWS_USERNAME|VMWS_USER|VMWS_PASSWORD)[[:space:]]*=' >> "$tmp" || filter_rc=$?
+  [[ "$filter_rc" == 0 || "$filter_rc" == 1 ]] || lab_fail config_error 'Cannot preserve existing secrets file lines; left unchanged.'
+  unset other_lines
 fi
 printf 'VMWS_USERNAME=%s\nVMWS_PASSWORD=%s\n' "$user" "$pass" >> "$tmp"
 mv -f -- "$tmp" "$LAB_SECRETS_FILE"
@@ -119,6 +127,6 @@ for _ in $(seq 1 15); do
 done
 case "$code" in
   200) echo '[OK] vmrest restarted; authenticated request: HTTP 200. Account ready.' ;;
-  401) echo '[ERROR] HTTP 401: the password typed for the secrets file differs from the one given to vmrest.exe -C. Run ./lab account again.' >&2; exit 1 ;;
+  401) lab_fail vmrest_auth 'The secrets file account differs from vmrest.' 'The user runs ./lab account again.' ;;
   *)   echo "[ERROR] vmrest did not answer as expected (HTTP $code); check with ./lab status" >&2; exit 1 ;;
 esac

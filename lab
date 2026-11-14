@@ -3,66 +3,63 @@
 #
 #   ./lab account [--lock]         vmrest API account + secrets file (once; --lock: permissions only)
 #   ./lab setup [--recreate]       WSL tools, Ubuntu image, cloud-init seed, base VM (once)
-#   ./lab status [--start-vmrest | --plan]   checks; --plan: preview preserving live power
-#   ./lab up [--all | <vm>...] [--allow-destroy]  create/bootstrap off; start selection only
-#   ./lab down (--all | <vm>...) [--hard]  graceful shutdown; explicit hard stop
+#   ./lab status [--start-vmrest]   host and VM checks
+#   ./lab up [--all | <vm>...] [--allow-destroy] [--dry-run]  create/bootstrap off; start selection only
+#   ./lab down (--all | <vm>...) [--hard] [--dry-run]  graceful shutdown; explicit hard stop
 #   ./lab configure [PLAYBOOK] [ansible-playbook options]
-#   ./lab destroy [-auto-approve]  delete every VM of this checkout
+#   ./lab destroy --confirm=<names> [--dry-run]  delete the exact state VM set
 #   ./lab cleanup                  retry cleanup left by an interrupted delete
 #   ./lab network                  read-only Windows/VMX network evidence (no vmrest)
+# All commands emit one JSON envelope on stdout; logs go to stderr.
+#   ./lab describe --json          command and error reference
 set -euo pipefail
-here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+here=${BASH_SOURCE[0]%/*}
+[[ "$here" != "${BASH_SOURCE[0]}" ]] || here=.
 cmd="${1:-}"
 [[ $# -gt 0 ]] && shift
 
-usage() { sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+# Only this process writes fd 3. Children inherit logs on stderr and record
+# metadata in a private system-temp file; never exec away the EXIT trap.
+exec 3>&1 1>&2
+umask 077
+LAB_RESULT_FILE=
+LAB_DRY_RUN=0
+if [[ "$cmd" == up || "$cmd" == down || "$cmd" == destroy ]]; then
+  for arg in "$@"; do [[ "$arg" != --dry-run ]] || LAB_DRY_RUN=1; done
+fi
+export LAB_DRY_RUN
+finish() {
+  local rc=$?
+  # Ignored dispositions also protect the writer subprocess from group signals.
+  trap '' INT TERM
+  trap - EXIT
+  local envelope_rc=0
+  python3 "$here/lib/envelope.py" finish "$LAB_RESULT_FILE" "$cmd" "$LAB_DRY_RUN" "$rc" >&3 3>&- || envelope_rc=$?
+  rm -f -- "$LAB_RESULT_FILE" 3>&-
+  exit "$envelope_rc"
+}
+trap finish EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+here=$(cd "$here" && pwd)
+LAB_RESULT_FILE=$(mktemp 3>&-)
+export LAB_RESULT_FILE
+LAB_ENTRY_ONLY=1 source "$here/lib/config.sh" 3>&-
+
+usage() { sed -n '2,14p' "${BASH_SOURCE[0]}" 3>&- | sed 's/^# \{0,1\}//' >&2 3>&-; lab_fail usage_error "Invalid command or arguments." "Run ./lab describe --json."; }
 
 # Two lab commands on the same checkout (two terminals, an agent and a person)
 # would race on the Terraform state, the base and the inventory.
-lock() {
-  exec 9>"$here/.lab.lock"
-  if ! flock -n 9; then
-    echo "[ERROR] Another lab command is running in $here; wait for it to finish." >&2
-    exit 1
-  fi
-}
-
-# Keep fd 9 open through the session leader and every child. A wrapper must
-# not close it: a surviving Terraform/bootstrap child must retain the lock.
-run_locked() {
-  lock
-  local child rc signal_sent=0
-  # Bash background jobs otherwise inherit SIGINT ignored. Reset it before
-  # starting the session (GNU coreutils env, available on the supported WSL).
-  # --wait preserves the command's status even if setsid must fork because
-  # its caller is already a process-group leader.
-  env --default-signal=INT,TERM setsid --wait bash "$@" <&0 &
-  child=$!
-  forward() {
-    if [[ "$signal_sent" == 0 ]]; then
-      case "$1" in INT) signal_sent=130 ;; TERM) signal_sent=143 ;; esac
-      kill -s "$1" -- "-$child" 2>/dev/null || true
-    fi
-  }
-  trap 'forward INT' INT
-  trap 'forward TERM' TERM
-  while :; do
-    rc=0; wait "$child" || rc=$?
-    # wait can return for the trap while the child still runs; keep waiting.
-    kill -0 "$child" 2>/dev/null || break
-  done
-  trap - INT TERM
-  if [[ "$signal_sent" != 0 ]]; then
-    echo '[WARN] Run interrupted; check ./lab status before continuing.' >&2
-    return "$signal_sent"
-  fi
-  return "$rc"
-}
+# shellcheck source=lib/runner-functions.sh
+source "$here/lib/runner-functions.sh"
 
 case "$cmd" in
+  describe)
+    [[ "$#" == 1 && "$1" == --json ]] || usage
+    lab_result "$(cat "$here/lib/describe.json" 3>&-)" ;;
   network)
     [[ $# -eq 0 ]] || usage
-    exec bash "$here/lib/network.sh" ;;
+    bash "$here/lib/network.sh" 3>&- ;;
   setup)
     lock
     [[ $# -eq 0 || "$*" == --recreate ]] || usage
@@ -73,27 +70,38 @@ case "$cmd" in
     [[ -f /usr/share/keyrings/ubuntu-cloudimage-keyring.gpg ]] || missing+=(ubuntu-cloudimage-keyring)
     if [[ ${#missing[@]} -gt 0 ]]; then
       echo "[INFO] Installing WSL tools (missing: ${missing[*]}); sudo asks for your WSL password"
-      sudo bash "$here/lib/wsl-tools.sh"
+      if [[ ! -t 0 || ! -t 2 ]] && ! sudo -n true 3>&-; then
+        lab_fail needs_user "Installing WSL tools requires sudo authentication." "Run ./lab setup in your terminal."
+      fi
+      python3 "$here/lib/envelope.py" changed 3>&-
+      sudo bash "$here/lib/wsl-tools.sh" 3>&-
     fi
-    exec bash "$here/lib/base.sh" "$@" ;;
+    bash "$here/lib/base.sh" "$@" 3>&- ;;
   account)
     [[ $# -eq 0 || "$*" == --lock ]] || usage
-    exec bash "$here/lib/account.sh" "$@" ;;
+    bash "$here/lib/account.sh" "$@" 3>&- ;;
   status)
     case "${1:-}" in
-      --plan) shift; exec bash "$here/lib/diagnose.sh" "$@" ;;   # read-only Terraform plan
+      --plan) lab_fail usage_error "status --plan was removed." "Use ./lab up --dry-run, ./lab down --all --dry-run, or ./lab destroy --dry-run." ;;
       --start-vmrest|'') ;;
       *) usage ;;
     esac
+    [[ $# -le 1 ]] || usage
     rc=0
-    bash "$here/lib/preflight.sh" "$@" || rc=$?
+    bash "$here/lib/preflight.sh" "$@" 3>&- || rc=$?
+    preflight_rc=$rc
     echo '== VMs'
-    bash "$here/lib/lifecycle.sh" status || rc=$?
+    vm_rc=0
+    bash "$here/lib/lifecycle.sh" status 3>&- || vm_rc=$?
+    [[ "$rc" != 0 || "$vm_rc" == 0 ]] || rc=$vm_rc
+    lab_result "{\"sections\":{\"preflight\":$preflight_rc,\"vms\":$vm_rc}}"
     exit "$rc" ;;
   up)        run_locked "$here/lib/lifecycle.sh" on "$@" ;;
   down)      run_locked "$here/lib/lifecycle.sh" off "$@" ;;
   destroy)   run_locked "$here/lib/lifecycle.sh" destroy "$@" ;;
   cleanup)   run_locked "$here/lib/lifecycle.sh" cleanup "$@" ;;
-  configure) run_locked "$here/lib/configure.sh" "$@" ;;
+  configure)
+    for arg in "$@"; do [[ "$arg" != --dry-run ]] || lab_fail usage_error "--dry-run is only supported by up, down and destroy."; done
+    run_locked "$here/lib/configure.sh" "$@" ;;
   *) usage ;;
 esac
