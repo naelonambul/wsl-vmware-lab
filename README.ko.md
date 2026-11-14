@@ -93,9 +93,9 @@ Claude Code나 OpenAI Codex에게 저장소 설치나 점검을 맡기려면 에
 ```bash
 ./lab account [--lock]         # vmrest API 계정 + 시크릿 파일 (1회; --lock: 권한만 잠그기)
 ./lab setup [--recreate]       # WSL 도구, Ubuntu 이미지, cloud-init 시드, 베이스 VM 준비 (1회)
-./lab status [--start-vmrest | --plan [on|off]]   # 점검; --plan: up/down이 바꿀 내용을 미리 보기
-./lab up [--allow-destroy]     # vms.tfvars의 새 VM 만들기 + 모두 켜기
-./lab down                     # 기존 VM 전원 끄기
+./lab status [--start-vmrest | --plan]   # 점검; --plan: up/down이 바꿀 내용을 미리 보기
+./lab up [--all | <vm>...] [--allow-destroy]  # 꺼진 상태로 준비, 선택한 VM만 켜기
+./lab down (--all | <vm>...) [--hard]        # 정상 종료, 명시적 강제 종료
 ./lab configure [PLAYBOOK] [ansible-playbook options]
 ./lab destroy [-auto-approve]  # 이 체크아웃의 VM 모두 삭제
 ./lab cleanup                  # 중단된 삭제 작업이 남긴 정리 다시 시도
@@ -107,7 +107,8 @@ Claude Code나 OpenAI Codex에게 저장소 설치나 점검을 맡기려면 에
 
 ```bash
 cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, memory_mb, Ansible 그룹 정의 (git에 올라가지 않음)
-./lab up
+./lab up                         # 생성과 부트스트랩 후 꺼진 상태 유지
+./lab up --all                   # 또는 필요한 순서대로 ./lab up <vm>
 ./lab configure ansible/check-lab.yml      # 모든 VM의 SSH, cloud-init, 비밀번호 없는 sudo, OS 팩트 확인
 ./lab configure ~/my-system/site.yml       # 내 플레이북 실행 (저장소 밖 다른 폴더에 둬도 됨)
 ```
@@ -116,11 +117,11 @@ cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, memory_mb, Ansible 
 - 생략한 필드는 `processors = 2`, `memory_mb = 2048`, `groups = ["demo"]` 기본값을 씁니다.
 - `groups`의 그룹 이름은 `^[a-z_][a-z0-9_]*$` 형식이어야 합니다. 모든 VM은 지정한 `groups`에 들어가며, 항상 `lab` 그룹에도 추가됩니다(`ansible/check-lab.yml`은 `lab`에서, 기본 `ansible/configure-guest.yml`은 `demo`에서 실행됩니다).
 - **LAN NIC(선택):** `lan = true`를 주면 브리지 NIC(VMnet0)가 붙고, 게스트 안에서 `lan0`이라는 이름으로 공유기 DHCP에서 주소를 받습니다(예: 192.168.1.x). `lan_ip = "192.168.1.240/24"`를 주면 그 주소로 고정됩니다(공유기 DHCP 범위 밖의 주소를 쓰세요). 이 PC의 LAN 대역(기본 경로에서 감지, `./lab status`에 표시) 밖의 주소이거나 이미 응답하는 주소면 `./lab up`이 거부합니다. `lan0`은 기본 경로와 DNS를 바꾸지 않으므로 인터넷은 계속 NAT로 나갑니다. 플레이북에서는 `ansible_lan0.ipv4.address`로 읽습니다(`check-lab.yml`이 보여 줍니다). 같은 LAN의 여러 PC에 있는 VM들이 이 주소로 서로 통신할 수 있습니다. `lan`/`lan_ip`를 바꾸면 그 VM을 다시 만듭니다(`./lab up --allow-destroy`). Hyper-V 어댑터가 있는 PC에서는 VMware의 VMnet0이 실제 네트워크 어댑터에 브리지되는지 확인하세요(Virtual Network Editor).
-- `vms.tfvars`에 항목을 더하고 `./lab up`을 실행하면 이미 켜져 있는 VM은 그대로 둔 채 새 VM만 만들고 준비합니다(꺼진 상태로 만든 뒤 부트스트랩하고 전원을 켭니다).
+- `vms.tfvars`에 항목을 더하고 `./lab up`을 실행하면 기존 VM의 전원은 유지하고 새 VM은 꺼진 상태로 만들어 부트스트랩합니다. `./lab up <vm>...`은 선택한 VM만, `./lab up --all`은 모두 켭니다. 여러 이름을 한 번에 주면 시작 순서는 보장되지 않으므로 순서가 필요하면 따로 호출하세요.
 
 ## 지켜 주는 것
 
-- **의도하지 않은 VM 삭제 거부:** `./lab up`은 적용 전에 `terraform plan -json`을 검사합니다. 삭제되거나 교체될 VM이 하나라도 있으면 `--allow-destroy`를 붙이지 않는 한 VM 이름을 보여 주고 멈춥니다. `vms.tfvars`가 없어지거나 오타가 나도 기존 VM은 지워지지 않습니다. `./lab down`은 state에 이미 있는 VM만 대상으로 삼으며, 전원 변경 외의 다른 변경이 있는 플랜은 거부합니다.
+- **의도하지 않은 VM 삭제 거부:** `./lab up`은 적용 전에 `terraform plan -json`을 검사합니다. 삭제되거나 교체될 VM이 하나라도 있으면 `--allow-destroy`를 붙이지 않는 한 VM 이름을 보여 주고 멈춥니다. `vms.tfvars`가 없어지거나 오타가 나도 기존 VM은 지워지지 않습니다. `./lab down --all` 또는 `./lab down <vm>...`은 기존 VM을 정상 종료하며 삭제·교체와 CPU/메모리 변경을 먼저 거부합니다. vmrest가 선택한 VM 모두의 꺼짐을 확인해야 성공합니다. 연결되지 않는 VM은 계속 켜져 있습니다. 기본 대기 시간은 120초(`LAB_DOWN_WAIT_SECONDS`, 서비스 종료 90초와 여유 30초 예산)이며 `--hard`는 명시적인 강제 종료입니다. 인자 없는 `down`은 오류입니다.
 - **베이스 VM 확인:** `up`이나 `down` 전에 `lib/check-base.py`가 쓰이는 이미지마다 `vmrest`에 등록된 VM 중 `displayName`이 `<image>-base`이고 `base/<image>/base.vmx`를 가리키는 VM이 정확히 하나인지 확인합니다. 그리고 베이스마다 VM ID와 `base.prepared`의 SHA-256 해시를 Terraform에 넘기고, Terraform은 이를 클론마다 기록합니다(`terraform_data.vm_base`). 베이스를 다시 만들거나(`./lab setup --recreate`) VM의 이미지를 바꾸면 해당 클론이 교체 대상으로 표시되며, `./lab up --allow-destroy`로 확인해 줄 때까지 `./lab up`이 멈춥니다(클론을 교체하면 디스크 내용이 지워집니다).
 - **현재 DHCP 임대 + 부팅 전에 고정한 호스트 키:** 새 클론마다 `lib/bootstrap-guest.sh`가 WSL에서 `ssh-ed25519` 호스트 키를 만들어 클론의 cloud-init 시드(`ssh_keys`, 기존 키는 삭제)에 넣고, 클론이 처음 부팅하기 전에 `known_hosts-<id>`를 씁니다. `lib/guest-inventory.py`는 각 VM의 관리 NIC MAC(`ethernet1.generatedAddress`)을 `vmnetdhcp.leases`에서 `LAB_MGMT_VNET`의 만료되지 않은 활성 임대(IP별 마지막 항목 사용)와만 대조하고, 그 고정 키로 `lab` 사용자 SSH 접속이 성공해야 준비된 것으로 봅니다(`StrictHostKeyChecking=yes`, `HostKeyAlias`). 다른 VM이 IP를 재사용하더라도 Ansible이 엉뚱한 VM에 접속하지 않습니다. 클론 디스크 옆의 시드 ISO에는 부팅 뒤 디스크에 들어가는 것과 같은 개인키가 들어 있습니다.
 - **이어서 실행할 수 있는 정리 기록:** Terraform이 VM을 삭제하거나 교체하기 전에 `lib/cleanup-guest.py`가 대상을 `terraform/cleanup-pending.json`에 적어 둡니다. VM이 state에서 빠지고(`.vmx`와 `.vmdk`도 사라진 뒤) 나면 정리 과정에서 `cloud-init-<id>.iso`, 남은 `.vmxf`, `known_hosts-<id>`, `seed-<id>/`, 빈 클론 폴더를 지웁니다. 항목은 정리가 끝날 때까지 기록에 남아 있으며 다음 `up`, `destroy`, `./lab cleanup`이 자동으로 이어서 시도합니다.

@@ -50,3 +50,6 @@ cleanup-pending.json.tmp
 
 # lab command lock
 .lab.lock
+
+# Durable replacement recovery records (private Terraform metadata)
+bootstrap-records.backup.json

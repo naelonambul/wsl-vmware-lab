@@ -3,9 +3,9 @@
 #
 #   ./lab account [--lock]         vmrest API account + secrets file (once; --lock: permissions only)
 #   ./lab setup [--recreate]       WSL tools, Ubuntu image, cloud-init seed, base VM (once)
-#   ./lab status [--start-vmrest | --plan [on|off]]   checks; --plan: what up/down would change
-#   ./lab up [--allow-destroy]     create new VMs from vms.tfvars and power all on
-#   ./lab down                     power the existing VMs off
+#   ./lab status [--start-vmrest | --plan]   checks; --plan: preview preserving live power
+#   ./lab up [--all | <vm>...] [--allow-destroy]  create/bootstrap off; start selection only
+#   ./lab down (--all | <vm>...) [--hard]  graceful shutdown; explicit hard stop
 #   ./lab configure [PLAYBOOK] [ansible-playbook options]
 #   ./lab destroy [-auto-approve]  delete every VM of this checkout
 #   ./lab cleanup                  retry cleanup left by an interrupted delete
@@ -25,6 +25,38 @@ lock() {
     echo "[ERROR] Another lab command is running in $here; wait for it to finish." >&2
     exit 1
   fi
+}
+
+# Keep fd 9 open through the session leader and every child. A wrapper must
+# not close it: a surviving Terraform/bootstrap child must retain the lock.
+run_locked() {
+  lock
+  local child rc signal_sent=0
+  # Bash background jobs otherwise inherit SIGINT ignored. Reset it before
+  # starting the session (GNU coreutils env, available on the supported WSL).
+  # --wait preserves the command's status even if setsid must fork because
+  # its caller is already a process-group leader.
+  env --default-signal=INT,TERM setsid --wait bash "$@" <&0 &
+  child=$!
+  forward() {
+    if [[ "$signal_sent" == 0 ]]; then
+      case "$1" in INT) signal_sent=130 ;; TERM) signal_sent=143 ;; esac
+      kill -s "$1" -- "-$child" 2>/dev/null || true
+    fi
+  }
+  trap 'forward INT' INT
+  trap 'forward TERM' TERM
+  while :; do
+    rc=0; wait "$child" || rc=$?
+    # wait can return for the trap while the child still runs; keep waiting.
+    kill -0 "$child" 2>/dev/null || break
+  done
+  trap - INT TERM
+  if [[ "$signal_sent" != 0 ]]; then
+    echo '[WARN] Run interrupted; check ./lab status before continuing.' >&2
+    return "$signal_sent"
+  fi
+  return "$rc"
 }
 
 case "$cmd" in
@@ -58,10 +90,10 @@ case "$cmd" in
     echo '== VMs'
     bash "$here/lib/lifecycle.sh" status || rc=$?
     exit "$rc" ;;
-  up)        lock; exec bash "$here/lib/lifecycle.sh" on "$@" ;;
-  down)      lock; exec bash "$here/lib/lifecycle.sh" off "$@" ;;
-  destroy)   lock; exec bash "$here/lib/lifecycle.sh" destroy "$@" ;;
-  cleanup)   lock; exec bash "$here/lib/lifecycle.sh" cleanup "$@" ;;
-  configure) lock; exec bash "$here/lib/configure.sh" "$@" ;;
+  up)        run_locked "$here/lib/lifecycle.sh" on "$@" ;;
+  down)      run_locked "$here/lib/lifecycle.sh" off "$@" ;;
+  destroy)   run_locked "$here/lib/lifecycle.sh" destroy "$@" ;;
+  cleanup)   run_locked "$here/lib/lifecycle.sh" cleanup "$@" ;;
+  configure) run_locked "$here/lib/configure.sh" "$@" ;;
   *) usage ;;
 esac

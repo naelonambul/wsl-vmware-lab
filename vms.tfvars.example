@@ -14,8 +14,11 @@
 # Omitted values default to 2 vCPU, 2048 MB and groups ["demo"].
 #
 # Adding an entry and running `./lab up` creates only the new VM
-# (running VMs stay on). Removing an entry needs `./lab up --allow-destroy`,
-# which destroys that VM and cleans its files; plain `on` refuses to delete VMs.
+# powered off and leaves it off (existing power is preserved).
+# Start with `./lab up --all` or `./lab up web1`; stop with
+# `./lab down --all` or `./lab down web1` (graceful; --hard is explicit).
+# Removing an entry needs `./lab up --allow-destroy`,
+# which destroys that VM and cleans its files; plain `up` refuses to delete VMs.
 
 vms = {
   "web1" = {

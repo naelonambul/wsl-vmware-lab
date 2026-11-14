@@ -15,6 +15,7 @@ for this VM before its first boot (lib/bootstrap-guest.sh). A VM counts as ready
 once SSH as the guest user with the lab key succeeds against that pin.
 """
 from datetime import datetime, timezone
+import importlib
 import ipaddress
 import json
 import os
@@ -25,6 +26,7 @@ import subprocess
 import sys
 
 NOT_READY, FATAL = 1, 3
+power_api = importlib.import_module('power-map')
 
 
 def fatal(msg):
@@ -101,14 +103,50 @@ def pick_address(leases, mac, subnet, now):
 def main():
     here = Path(__file__).resolve().parent
     project = here.parent
+    best_effort = '--best-effort' in sys.argv[1:]
     try:
-        vms = json.loads(subprocess.check_output(
-            ['terraform', '-chdir=' + str(project / 'terraform'), 'output', '-json', 'vms'],
-            text=True, stderr=subprocess.DEVNULL))
+        if best_effort:
+            state = json.loads(subprocess.check_output(
+                ['terraform', '-chdir=' + str(project / 'terraform'), 'show', '-json'], text=True))
+            vms = {vm['name']: vm for vm in power_api.vm_instances(state)}
+        else:
+            vms = json.loads(subprocess.check_output(
+                ['terraform', '-chdir=' + str(project / 'terraform'), 'output', '-json', 'vms'],
+                text=True, stderr=subprocess.DEVNULL))
     except subprocess.CalledProcessError:
-        fatal('No Terraform output "vms"; run ./lab up first')
-    if not vms:
+        fatal('Cannot read Terraform state' if best_effort else 'No Terraform output "vms"; run ./lab up first')
+    if not vms and not best_effort:
         fatal('No lab VMs in the Terraform state')
+
+    selected = os.environ.get('LAB_INVENTORY_SELECTED')
+    frozen = set(json.loads(selected)) if selected is not None else None
+    powered, power_waiting = {}, []
+    if frozen is not None:
+        power_waiting += [name + ': missing from Terraform output' for name in sorted(frozen - set(vms))]
+    for name, vm in sorted(vms.items()):
+        if frozen is not None and name not in frozen:
+            continue
+        try:
+            value = power_api.power(vm)
+        except (ValueError, KeyError, OSError):
+            if best_effort:
+                power_waiting.append(name + ': power unknown; omitted')
+                continue
+            fatal(name + ': vm_power_unknown')
+        if value == 'on':
+            powered[name] = vm
+        elif frozen is not None:
+            power_waiting.append(name + ': powered off after selection')
+        else:
+            print('[WARN] ' + name + ': powered off, omitted', file=sys.stderr)
+    # The parent passes this first-attempt set to every retry, including when
+    # readiness fails. It is private metadata, removed by configure's trap.
+    selection_file = os.environ.get('LAB_INVENTORY_SELECTION_FILE')
+    if frozen is None and selection_file:
+        Path(selection_file).write_text(json.dumps(sorted(powered)))
+    vms = powered
+    if not vms and not power_waiting and not best_effort:
+        fatal('no VM is powered on; ./lab up <vm> or ./lab up --all')
 
     private = Path(os.environ.get('LAB_PRIVATE_DIR', str(Path.home() / '.config/wsl-vmware-lab')))
     key = Path(os.environ.get('LAB_SSH_KEY', str(private / 'lab_ed25519')))
@@ -142,7 +180,7 @@ def main():
         lines = [l for l in run.stderr.strip().splitlines() if l.strip()]
         return lines[-1] if lines else 'SSH exit ' + str(run.returncode)
 
-    hosts, groups, waiting = {}, {}, []
+    hosts, groups, waiting = {}, {}, power_waiting
     for name, vm in sorted(vms.items()):
         if not re.fullmatch(r'[A-Za-z0-9_-]+', vm['id']):
             fatal(name + ': unexpected VM id ' + repr(vm['id']))
@@ -161,6 +199,9 @@ def main():
         alias = 'wsl-vmware-lab-' + vm['id']
         known_hosts = private / ('known_hosts-' + vm['id'])
         if not known_hosts.is_file() or (alias + ' ') not in known_hosts.read_text():
+            if best_effort:
+                waiting.append(name + ': no pinned SSH host key; omitted')
+                continue
             fatal(name + ': no pinned SSH host key (' + str(known_hosts) + '). The clone was created by an '
                   'older version of this lab; rebuild it: ./lab setup --recreate, then ./lab up --allow-destroy')
         # Direct first; if WSL cannot reach the management network, through Windows.
@@ -189,7 +230,8 @@ def main():
 
     if waiting:
         print('Not ready, retrying: ' + '; '.join(waiting), file=sys.stderr)
-        sys.exit(NOT_READY)
+        if not best_effort:
+            sys.exit(NOT_READY)
 
     def write_private(path, text):
         tmp = path.with_name(path.name + '.tmp')

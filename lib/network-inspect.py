@@ -60,7 +60,7 @@ def lan_evidence(vm):
         'connectionType': settings.get('ethernet2.connectiontype'),
         'vnet': settings.get('ethernet2.vnet')}
     lan = None if actual is None else (actual['present'] or '').upper() == 'TRUE'
-    desired = desired_lan()
+    desired = 'none' if lan is False else desired_lan()
     mismatch = None if actual is None else lan and any(
         actual[key] != value for key, value in desired.items())
     return dict(vm, lan=lan, desired=desired, actual=actual,

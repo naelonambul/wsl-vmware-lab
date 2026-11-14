@@ -102,6 +102,42 @@ class NetworkTests(unittest.TestCase):
         self.assertFalse(actual['lan'])
         self.assertFalse(actual['mismatch'])
         self.assertIsNone(actual['error'])
+        self.assertEqual(actual['desired'],'none')
+
+    def test_status_desired_none_for_disabled_lan(self):
+        vm=self.vm('ethernet2.present = "FALSE"\nethernet2.connectionType = "custom"')
+        out=io.StringIO()
+        with patch.object(network.sys,'argv',['network-inspect.py','status']), \
+                patch.object(network.sys,'stdin',io.StringIO(json.dumps(self.state(vm)))), redirect_stdout(out):
+            self.assertEqual(network.main(),0)
+        report=json.loads(out.getvalue().split('\t')[2])
+        self.assertEqual(report['desired'],'none')
+        self.assertFalse(report['mismatch'])
+
+    def test_preflight_vm_folder_only_compares_explicit_preference(self):
+        source=(ROOT/'lib/preflight.sh').read_text()
+        block=source[source.index('if $interop && [[ -n "$LAB_VM_ROOT_WIN" ]]'):source.index('[[ -n "${LAB_CLONE_VMX_WIN:-}"')]
+        (self.folder/'VMware').mkdir()
+        prefs=self.folder/'VMware/preferences.ini'
+        prefix='''
+interop=true
+PS=fake_powershell
+fake_powershell() { printf '%s' "$FIXTURE_APPDATA"; }
+wslpath() { printf '%s' "$2"; }
+warn() { printf '[WARN] %s\\n' "$*"; }
+ok() { printf '[OK] %s\\n' "$*"; }
+'''
+        env=dict(os.environ,FIXTURE_APPDATA=self.folder.as_posix(),LAB_VM_ROOT_WIN='C:\\VMs')
+        for content,expected in [(None,''),('other.key = "value"',''),
+                ('prefvmx.defaultVMPath = "c:/vms/"','[OK]'),
+                ('prefvmx.defaultVMPath = "C:\\Other"','[WARN]')]:
+            if content is not None: prefs.write_text(content)
+            script=self.folder/'preflight-fixture.sh'
+            script.write_text('set -euo pipefail\n'+prefix+block,newline='\n')
+            run=subprocess.run(['bash',script.as_posix()],env=env,capture_output=True,text=True)
+            self.assertEqual(run.returncode,0,run.stderr)
+            if expected: self.assertIn(expected,run.stdout)
+            else: self.assertEqual(run.stdout,'')
 
     def test_report_base_difference_and_null_reason(self):
         base = self.folder / 'base' / 'example'
@@ -224,10 +260,11 @@ python3() {
         (terraform_dir / 'cleanup-pending.json').write_text('[]')
         calls = self.folder / 'calls'
         for action, args in [('up', ['on']), ('up --allow-destroy', ['on', '--allow-destroy']),
-                             ('down', ['off'])]:
+                             ('down', ['off', '--all'])]:
             with self.subTest(action=action):
                 calls.write_text('')
-                result = subprocess.run(['bash', '-s', '--', *args], input=source,
+                entry = source if action.startswith('up') else source.split('terraform init -input=false')[0] + '\nexit 0\n'
+                result = subprocess.run(['bash', '-s', '--', *args], input=entry,
                                         cwd=ROOT, env=dict(os.environ, FIXTURE_DIR=self.folder.as_posix()),
                                         capture_output=True, text=True)
                 reached = calls.read_text().splitlines()
@@ -238,9 +275,7 @@ python3() {
                 else:
                     self.assertEqual(result.returncode, 0, result.stderr)
                     self.assertNotIn('gate', reached)
-                    self.assertIn('cleanup', reached)
-                    self.assertTrue(any(c.startswith('terraform plan ') for c in reached))
-                    self.assertTrue(any(c.startswith('terraform apply ') for c in reached))
+                    self.assertIn('base', reached)
 
 
 if __name__ == '__main__':

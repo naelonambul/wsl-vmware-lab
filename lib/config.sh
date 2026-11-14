@@ -14,12 +14,18 @@ export LAB_PROJECT_DIR
 lab_fail() {
   local code="$1" message="$2" rc=1
   case "$code" in
-    config_error) rc=2 ;;
-    lan_vnet_mismatch) rc=5 ;;
+    usage_error|config_error|unknown_vm) rc=2 ;;
+    lan_vnet_mismatch|vm_power_unknown|config_change_requires_off) rc=5 ;;
   esac
   printf '[ERROR] %s: %s\n' "$code" "$message" >&2
   [[ -z "${3:-}" ]] || printf '        %s\n' "$3" >&2
   exit "$rc"
+}
+
+lab_ansible_env() {
+  export ANSIBLE_PIPELINING=true
+  # The default 12 s privilege-escalation wait timed out on slower hosts.
+  export ANSIBLE_TIMEOUT="${ANSIBLE_TIMEOUT:-60}"
 }
 
 LAB_ENV_FILE="${LAB_ENV_FILE:-$LAB_PROJECT_DIR/lab.env}"
@@ -48,8 +54,9 @@ fi
 lab_windows_profile() {
   local ps=/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe
   [[ -x "$ps" ]] || return 0
+  # Discovery must not consume a piped Terraform destroy confirmation.
   "$ps" -NoProfile -NonInteractive -Command '[Environment]::GetFolderPath("UserProfile")' \
-    2>/dev/null | tr -d '\r' || true
+    </dev/null 2>/dev/null | tr -d '\r' || true
 }
 
 export VMWS_ENDPOINT="${VMWS_ENDPOINT:-http://127.0.0.1:8697/api}"

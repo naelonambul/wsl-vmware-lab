@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Internal: called by ./lab (up -> on, down -> off, status, cleanup, destroy).
-# bash terraform-vm.sh on [--allow-destroy] | off | status | cleanup | destroy [terraform args]
+# up selects power-on; bare up prepares off. down requires --all or names.
 # VMs come from vms.tfvars (LAB_VMS_FILE) if present, else one VM from lab.env.
 # on/off check the base VM first (check-base.py) and read the plan: on refuses
 # to delete or replace VMs unless --allow-destroy is given (a rebuilt base
@@ -10,6 +10,25 @@
 # retried by the next on/destroy/cleanup.
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
+operation="${1:-status}"
+# Selections are VM keys, never Terraform addresses or free-form CLI options.
+select_vms() {
+  all=0; hard=0; allow_destroy=0; selected=()
+  local arg
+  for arg in "${@:2}"; do
+    case "$arg" in
+      --all) all=1 ;;
+      --allow-destroy) [[ "$1" == on ]] || lab_fail usage_error '--allow-destroy is for up'; allow_destroy=1 ;;
+      --hard) [[ "$1" == off ]] || lab_fail usage_error '--hard is for down'; hard=1 ;;
+      -*) lab_fail usage_error "Unknown option: $arg" ;;
+      *) [[ "$arg" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || lab_fail unknown_vm "Invalid VM name: $arg"
+         selected+=("$arg") ;;
+    esac
+  done
+  [[ "$all" == 0 || ${#selected[@]} == 0 ]] || lab_fail usage_error '--all cannot be combined with VM names'
+  [[ "$1" != off || "$all" == 1 || ${#selected[@]} -gt 0 ]] || lab_fail usage_error 'Use ./lab down --all or ./lab down <vm>...'
+}
+case "$operation" in on|off) select_vms "$@" ;; esac
 lab_terraform_env
 cd "$LAB_PROJECT_DIR/terraform"
 # Gate every up entry before init, cleanup replay or planning. Read instances
@@ -46,15 +65,23 @@ else vm_list_desc="single VM $LAB_CLONE_NAME (no $LAB_VMS_FILE)"; fi
 echo "[OK] VM list: $vm_list_desc"
 
 state_json() { terraform show -json; }
+umask 077
+mkdir -p "$LAB_PRIVATE_DIR"
+chmod 700 "$LAB_PRIVATE_DIR"
+# Called under the checkout lock; these are private saved plans left by SIGKILL.
+case "${1:-status}" in on|off) rm -f -- "$LAB_PRIVATE_DIR"/plan.* ;; esac
 before=$(mktemp); after=$(mktemp); plan=$(mktemp)
-trap 'rm -f "$before" "$after" "$plan"' EXIT
+plan_file=$(mktemp "$LAB_PRIVATE_DIR/plan.XXXXXX")
+shutdown_inventory=$(mktemp "$LAB_PRIVATE_DIR/down-inventory.XXXXXX.yml")
+backup="$LAB_PROJECT_DIR/terraform/bootstrap-records.backup.json"
+trap 'rm -f "$before" "$after" "$plan" "$plan_file" "$shutdown_inventory"' EXIT
 
 journal="$LAB_PROJECT_DIR/terraform/cleanup-pending.json"
 
 # Clean every journal entry that is no longer in the state (the journal keeps
 # failures for the next run).
 run_cleanup() {
-  state_json > "$after"
+  state_json > "$after" || return 1
   python3 ../lib/cleanup-guest.py run "$journal" "$after"
 }
 
@@ -64,24 +91,23 @@ run_cleanup() {
 # not left with its seed ISO, known_hosts and folder.
 apply_and_clean() {
   local rc=0
-  state_json > "$before"
-  terraform apply -input=false -auto-approve -parallelism=1 "${LAB_TF_VAR_ARGS[@]}" "$@" || rc=$?
-  state_json > "$after"
-  python3 ../lib/cleanup-guest.py record "$journal" "$before" --gone "$after"
+  state_json > "$before" || return 1
+  terraform apply -input=false -parallelism=1 "$plan_file" || rc=$?
+  state_json > "$after" || return 1
+  python3 ../lib/cleanup-guest.py record "$journal" "$before" --gone "$after" || rc=1
   run_cleanup || { [[ $rc -ne 0 ]] || rc=1; }
   return "$rc"
 }
 
-# Retry cleanup left over from an earlier failed or interrupted run.
-if [[ -f "$journal" && "${1:-status}" != status && "${1:-status}" != cleanup ]]; then
-  echo '[INFO] Retrying cleanup left from an earlier run'
-  run_cleanup || true
-fi
-
-# Write a `plan -json` message stream to $plan (no plan file is written: a
-# saved plan would contain the vmrest password). Prints plan errors.
+# Saved plans are private and removed by the EXIT trap; the stream contains
+# action metadata only. Variable arguments belong to plan, never saved apply.
+# Explicit CLI power wins over tfvars (Terraform variable precedence):
+# https://developer.hashicorp.com/terraform/language/values/variables#assign-values-to-variables
 run_plan() {
-  if ! terraform plan -input=false -lock=false -json "${LAB_TF_VAR_ARGS[@]}" "$@" > "$plan"; then
+  if [[ "$operation" == on ]]; then
+    state_json | python3 ../lib/power-map.py coverage
+  fi
+  if ! terraform plan -input=false -json -out="$plan_file" "${LAB_TF_VAR_ARGS[@]}" "$@" -var="power_states=$TF_VAR_power_states" > "$plan"; then
     python3 -c 'import json, sys
 for line in open(sys.argv[1]):
     try:
@@ -129,6 +155,20 @@ guard_vm_destroy() {
   doomed=$(plan_changes | awk -F'\t' '($1 == "delete" || $1 == "replace") && $3 == "vmworkstation_virtual_machine" { print $5 }' | sort -u)
   [[ -z "$doomed" ]] && return 0
   if [[ "$allow_destroy" == 1 ]]; then
+    if [[ "${1:-}" == --check-only ]]; then
+      local name
+      for name in $doomed; do
+        grep -Fxq "$name" <<< "$authorised_deletes" || lab_fail runtime_error "Unexpected deletion: $name"
+      done
+      # Replacement preparation already ran. Refuse an unexpected new replace
+      # rather than apply it without its powered-off bootstrap phase.
+      if plan_changes | awk -F'\t' '$1 == "replace" && $3 == "vmworkstation_virtual_machine" { f=1 } END { exit !f }'; then
+        lab_fail runtime_error 'A new replacement appeared in the final plan; inspect ./lab status before retrying.'
+      fi
+      state_json > "$before"
+      python3 ../lib/cleanup-guest.py record "$journal" "$before" $doomed
+      return 0
+    fi
     echo "[WARN] --allow-destroy: deleting or replacing VMs: $(tr '\n' ' ' <<<"$doomed")"
     state_json > "$before"
     # shellcheck disable=SC2086 # names are validated VM keys
@@ -139,8 +179,9 @@ guard_vm_destroy() {
     # holds the old seed ISO and .vmxf, and vmrest refuses that. VMs that are
     # only deleted stay in the main apply: a targeted destroy also takes the
     # bootstrap of every other clone with it.
-    local name targets=()
-    for name in $(plan_changes | awk -F'\t' '$1 == "replace" && $3 == "vmworkstation_virtual_machine" { print $5 }' | sort -u); do
+    local name replaced targets=()
+    replaced=$(plan_changes | awk -F'\t' '$1 == "replace" && $3 == "vmworkstation_virtual_machine" { print $5 }' | sort -u)
+    for name in $replaced; do
       [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "[ERROR] Unexpected VM name from plan: $name" >&2; exit 1; }
       targets+=(-target="vmworkstation_virtual_machine.vm[\"$name\"]")
     done
@@ -150,39 +191,16 @@ guard_vm_destroy() {
       # are untouched, so put their records back from the state as it was
       # before: re-running their bootstrap would pin a new host key the guest
       # does not have, and a targeted apply would pull in the new clones too.
-      local was now restored
-      was=$(mktemp); now=$(mktemp)
-      terraform state pull > "$was"
-      terraform apply -destroy -input=false -auto-approve -parallelism=1 "${LAB_TF_VAR_ARGS[@]}" "${targets[@]}" || exit 1
+      python3 ../lib/bootstrap-records.py save "$backup" $doomed
+      terraform apply -destroy -input=false -auto-approve -parallelism=1 "${LAB_TF_VAR_ARGS[@]}" "${targets[@]}" -var="power_states=$TF_VAR_power_states" || exit 1
+      python3 ../lib/bootstrap-records.py restore "$backup"
       run_cleanup || exit 1
-      terraform state pull > "$now"
-      # shellcheck disable=SC2086 # names are validated VM keys
-      restored=$(python3 - "$was" "$now" $doomed <<'PY'
-import json, sys
-was, now = (json.load(open(p)) for p in sys.argv[1:3])
-doomed = set(sys.argv[3:])
-def bootstrap(state):
-    return next((r for r in state['resources'] if r['mode'] == 'managed'
-                 and r['type'] == 'terraform_data' and r['name'] == 'guest_bootstrap'), None)
-old, new = bootstrap(was), bootstrap(now)
-have = {i.get('index_key') for i in (new or {}).get('instances', [])}
-add = [i for i in (old or {}).get('instances', [])
-       if i.get('index_key') not in doomed and i.get('index_key') not in have]
-if add:
-    if new is None:
-        new = dict(old, instances=[])
-        now['resources'].append(new)
-    new['instances'] += add
-    now['serial'] += 1
-    json.dump(now, open(sys.argv[2], 'w'))
-print(' '.join(i['index_key'] for i in add))
-PY
-)
-      if [[ -n "$restored" ]]; then
-        terraform state push "$now" || exit 1
-        echo "[OK] Kept the bootstrap records of untouched clones: $restored"
-      fi
-      rm -f -- "$was" "$now"
+      # Replacement clones must bootstrap off; retain all surviving seeds.
+      TF_VAR_power_states=$(python3 -c 'import json,os,sys
+p=json.loads(os.environ["TF_VAR_power_states"])
+for name in sys.argv[1:]: p[name]="off"
+print(json.dumps(p))' $replaced)
+      export TF_VAR_power_states
       run_plan "$@"
     fi
     return 0
@@ -198,70 +216,133 @@ PY
   exit 1
 }
 
-# Targets for the VMs that already exist in the state.
-existing_targets() {
-  terraform state list 2>/dev/null | grep -E '^vmworkstation_virtual_machine\.vm\[' | sed 's/^/-target=/' || true
+validate_selection() {
+  local name
+  for name in "${selected[@]}"; do
+    grep -Fxq "$name" <<< "$valid" || lab_fail unknown_vm "Unknown VM: $name. Valid VMs: $(tr '\n' ' ' <<< "$valid")"
+  done
+}
+resize_check() { terraform show -json "$plan_file" | TF_VAR_power_states="${2:-$TF_VAR_power_states}" python3 ../lib/plan-inspect.py "$1"; }
+select_power() {
+  TF_VAR_power_states=$(python3 -c 'import json,os,sys
+p=json.loads(os.environ["TF_VAR_power_states"])
+for name in sys.argv[2:]: p[name]=sys.argv[1]
+print(json.dumps(p))' "$@")
+  export TF_VAR_power_states
+}
+check_down_plan() {
+  local other
+  other=$(plan_changes | awk -F'\t' '!($1 == "update" && $3 == "vmworkstation_virtual_machine") &&
+    !($1 == "create" && $3 == "terraform_data" && $4 == "vm_base") &&
+    !($1 == "delete" && $3 == "terraform_data" && $4 == "base_identity") &&
+    $1 != "no-op" && $1 != "noop" && $1 != "read" { print "  " $1 ": " $2 }')
+  [[ -z "$other" ]] || lab_fail config_change_requires_off "down would do more than power off: $other" 'Fix vms.tfvars; review ./lab status --plan.'
+  resize_check down
 }
 
 case "${1:-status}" in
   on)
-    allow_destroy=0
-    for arg in "${@:2}"; do
-      case "$arg" in
-        --allow-destroy) allow_destroy=1 ;;
-        *) echo "[ERROR] Unknown option for on: $arg" >&2; exit 2 ;;
-      esac
-    done
-    run_plan -var=power_state=on
-    guard_vm_destroy -var=power_state=on
-    # Bootstrap needs a powered-off clone: create new VMs off first, targeting
-    # only them so VMs that are already running stay on.
+    python3 ../lib/bootstrap-records.py restore "$backup"
+    state_json > "$before"
+    TF_VAR_power_states=$(python3 ../lib/power-map.py seed < "$before")
+    export TF_VAR_power_states
+    run_plan
+    authorised_deletes=$(plan_changes | awk -F'\t' '$1 == "delete" && $3 == "vmworkstation_virtual_machine" { print $5 }' | sort -u)
+    valid=$( { python3 ../lib/power-map.py names < "$before"; planned_new_vms; } | sort -u | while read -r name; do
+      if ! grep -Fxq "$name" <<< "$authorised_deletes"; then echo "$name"; fi
+    done)
+    validate_selection
+    resize_check up
+    # Refuse unauthorised destruction before replay; cleanup refuses folders
+    # containing VMX/disks. Recover interrupted cleanup before collision checks.
+    if [[ "$allow_destroy" == 0 ]]; then guard_vm_destroy; fi
+    [[ ! -f "$journal" ]] || run_cleanup
+    # Check every prospective folder before replacement destroy.
     new_vms=$(planned_new_vms)
-    targets=()
+    existing=$(python3 ../lib/power-map.py names < "$before")
     root_unix=$(wslpath -u "$LAB_VM_ROOT_WIN")
     for name in $new_vms; do
-      [[ "$name" =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "[ERROR] Unexpected VM name from plan: $name" >&2; exit 1; }
-      # A folder left by an earlier failed create (VM not in the state) makes
-      # vmrest answer 409. Stop and let the user decide; never delete it here.
-      if [[ -d "$root_unix/$name" ]] && [[ -n "$(ls -A "$root_unix/$name")" ]] \
-         && ! terraform state list 2>/dev/null | grep -Fxq "vmworkstation_virtual_machine.vm[\"$name\"]"; then
-        echo "[ERROR] $LAB_VM_ROOT_WIN\\$name already has files but $name is not in the Terraform state:" >&2
-        ls -A "$root_unix/$name" | sed 's/^/          /' >&2
-        echo "        Check 'bash api-status.sh'. Remove that VM in VMware Workstation (or rename the entry), then retry." >&2
-        exit 1
+      [[ "$name" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || lab_fail runtime_error 'Unexpected VM name in plan'
+      if [[ -d "$root_unix/$name" && -n "$(ls -A "$root_unix/$name")" ]] && ! grep -Fxq "$name" <<< "$existing"; then
+        lab_fail config_error "VM folder already has files but $name is absent from state; inspect ./lab status before retrying."
       fi
+    done
+    guard_vm_destroy
+    new_vms=$(planned_new_vms)
+    targets=()
+    # Populate the map for newly created instances before they enter state;
+    # bootstrap-only records on existing VMs retain their original seed.
+    TF_VAR_power_states=$(python3 -c 'import json,os,sys
+p=json.loads(os.environ["TF_VAR_power_states"])
+for name in sys.argv[1:]: p.setdefault(name,"off")
+print(json.dumps(p))' $new_vms)
+    export TF_VAR_power_states
+    for name in $new_vms; do
       targets+=(-target="vmworkstation_virtual_machine.vm[\"$name\"]" -target="terraform_data.guest_bootstrap[\"$name\"]")
     done
     if [[ ${#targets[@]} -gt 0 ]]; then
-      echo "[OK] New VMs to prepare (powered off first): $new_vms" | tr '\n' ' '; echo
-      terraform apply -input=false -auto-approve -parallelism=1 "${LAB_TF_VAR_ARGS[@]}" \
-        -var=power_state=off "${targets[@]}"
+      echo "[OK] Preparing powered-off clones: $(tr '\n' ' ' <<< "$new_vms")"
+      run_plan "${targets[@]}"
+      resize_check up
+      # No deletion may appear unexpectedly in the creation phase.
+      guard_vm_destroy --check-only
+      apply_and_clean
     fi
-    apply_and_clean -var=power_state=on
+    if [[ "$all" == 1 ]]; then
+      state_json > "$before"
+      mapfile -t selected < <(python3 ../lib/power-map.py names < "$before")
+    fi
+    # Reconcile configuration while selected off VMs are still off. The
+    # subsequent saved plan contains their power-on transition separately.
+    run_plan
+    resize_check up
+    guard_vm_destroy --check-only
+    if plan_changes | awk -F'\t' '$1 == "update" && $3 == "vmworkstation_virtual_machine" { f=1 } END { exit !f }'; then
+      apply_and_clean
+    fi
+    select_power on "${selected[@]}"
+    run_plan
+    resize_check up
+    guard_vm_destroy --check-only
+    rc=0; apply_and_clean || rc=$?
+    if [[ "$rc" != 0 ]]; then
+      state_json | python3 ../lib/power-map.py report || true
+      lab_fail runtime_error 'Apply failed; inspect ./lab status and decide how to recover before retrying.'
+    fi
+    state_json | python3 ../lib/power-map.py report
     ;;
   off)
-    [[ $# -le 1 ]] || { echo '[ERROR] off takes no options' >&2; exit 2; }
-    # Power off only the VMs that exist; never create list entries here. The
-    # targeted apply is still a full apply for those VMs, so check its plan
-    # first and refuse anything but an in-place power change.
-    mapfile -t targets < <(existing_targets)
-    if [[ ${#targets[@]} -eq 0 ]]; then echo '[OK] No VMs in the state'; exit 0; fi
-    run_plan -var=power_state=off "${targets[@]}"
-    # Recording a clone's base the first time (vm_base create) and dropping the
-    # single base_identity of older versions are harmless; a changed base shows
-    # up as clone replacements and is refused.
-    other=$(plan_changes | awk -F'\t' '!($1 == "update" && $3 == "vmworkstation_virtual_machine") &&
-      !($1 == "create" && $3 == "terraform_data" && $4 == "vm_base") &&
-      !($1 == "delete" && $3 == "terraform_data" && $4 == "base_identity") &&
-      $1 != "no-op" && $1 != "noop" && $1 != "read" { print "  " $1 ": " $2 }')
-    if [[ -n "$other" ]]; then
-      echo '[ERROR] off would do more than power VMs off; nothing changed:' >&2
-      echo "$other" >&2
-      echo "        VM list in use: $vm_list_desc. Fix vms.tfvars, or review with: ./lab status --plan" >&2
-      exit 1
+    export LAB_DOWN_WAIT_SECONDS="${LAB_DOWN_WAIT_SECONDS:-120}"
+    [[ "$LAB_DOWN_WAIT_SECONDS" =~ ^[1-9][0-9]*$ ]] || lab_fail config_error 'LAB_DOWN_WAIT_SECONDS must be a positive integer'
+    state_json > "$before"
+    valid=$(python3 ../lib/power-map.py names < "$before")
+    validate_selection
+    if [[ "$all" == 1 ]]; then
+      selected=(); [[ -z "$valid" ]] || mapfile -t selected <<< "$valid"
     fi
-    terraform apply -input=false -auto-approve -parallelism=1 "${LAB_TF_VAR_ARGS[@]}" \
-      -var=power_state=off "${targets[@]}"
+    if [[ ${#selected[@]} == 0 ]]; then echo '[OK] No VMs in the state'; exit 0; fi
+    TF_VAR_power_states=$(python3 ../lib/power-map.py seed "${selected[@]}" < "$before")
+    export TF_VAR_power_states
+    running=$(python3 -c 'import json,os; print(json.dumps([n for n,p in json.loads(os.environ["TF_VAR_power_states"]).items() if p=="on"]))')
+    targets=()
+    for name in "${selected[@]}"; do targets+=(-target="vmworkstation_virtual_machine.vm[\"$name\"]"); done
+    select_power off "${selected[@]}"
+    run_plan "${targets[@]}"
+    check_down_plan
+    if [[ "$hard" == 0 ]]; then
+      # Best effort never consumes a previous shared inventory. Ansible's SSH
+      # return code cannot establish shutdown; only the power API below can.
+      if [[ "$running" != '[]' ]] && LAB_INVENTORY="$shutdown_inventory" LAB_INVENTORY_SELECTED="$running" \
+          python3 ../lib/guest-inventory.py --best-effort &&
+          python3 -c 'import json,sys; sys.exit(not bool(json.load(open(sys.argv[1]))["all"]["hosts"]))' "$shutdown_inventory"; then
+        lab_ansible_env
+        ansible -i "$shutdown_inventory" all -b -m ansible.builtin.command -a 'systemctl poweroff --no-block' || true
+      fi
+      python3 ../lib/power-map.py wait "${selected[@]}" < "$before"
+    fi
+    run_plan "${targets[@]}"
+    check_down_plan
+    apply_and_clean
     ;;
   status)
     # Short summary: each VM of this checkout and its power state (vmrest).
@@ -281,9 +362,11 @@ case "${1:-status}" in
     ;;
   cleanup)
     [[ $# -le 1 ]] || { echo '[ERROR] cleanup takes no options' >&2; exit 2; }
+    python3 ../lib/bootstrap-records.py restore "$backup"
     run_cleanup
     ;;
   destroy)
+    [[ ! -f "$journal" ]] || run_cleanup
     state_json > "$before"
     python3 ../lib/cleanup-guest.py record "$journal" "$before" --all
     rc=0
@@ -291,5 +374,5 @@ case "${1:-status}" in
     run_cleanup || { [[ $rc -ne 0 ]] || rc=1; }
     exit "$rc"
     ;;
-  *) echo 'Usage: bash terraform-vm.sh on [--allow-destroy] | off | status | cleanup | destroy [terraform args] (normally via ./lab)' >&2; exit 2 ;;
+  *) echo 'Usage: ./lab up [--all | <vm>...] [--allow-destroy] | down (--all | <vm>...) [--hard] | status [--plan] | cleanup | destroy [terraform args]' >&2; exit 2 ;;
 esac

@@ -8,7 +8,7 @@ source lib/cloud-config.sh
 # vmrun answer must stop here, before any file is changed.
 power=0; lab_vm_running "$VMX_WIN" || power=$?
 if [[ $power -eq 0 ]]; then
-  echo 'Power the clone off with Terraform before bootstrap; use ./lab up.' >&2
+  echo 'Power the clone off before bootstrap; use ./lab down <vm>.' >&2
   exit 1
 elif [[ $power -ne 1 ]]; then
   echo '[ERROR] Could not confirm the clone is powered off; not editing it.' >&2
@@ -16,6 +16,10 @@ elif [[ $power -ne 1 ]]; then
 fi
 [[ "$VM_ID" =~ ^[A-Za-z0-9_-]+$ ]] || { echo 'Invalid VM id from Terraform' >&2; exit 1; }
 vmx=$(wslpath -u "$VMX_WIN")
+if grep -Eqi '^[[:space:]]*ide1:0\.fileName[[:space:]]*=' "$vmx"; then
+  echo '[ERROR] already bootstrapped; restore records or rebuild this VM' >&2
+  exit 1
+fi
 seed_dir="$LAB_PRIVATE_DIR/seed-$VM_ID"
 umask 077
 mkdir -p "$seed_dir"

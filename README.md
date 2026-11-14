@@ -93,9 +93,9 @@ Following [`INSTALL.md`](INSTALL.md), the agent finds or clones the repository o
 ```bash
 ./lab account [--lock]         # vmrest API account + secrets file (once; --lock: permissions only)
 ./lab setup [--recreate]       # WSL tools, Ubuntu image, cloud-init seed, base VM (once)
-./lab status [--start-vmrest | --plan [on|off]]   # checks; --plan: what up/down would change
-./lab up [--allow-destroy]     # create new VMs from vms.tfvars and power all on
-./lab down                     # power the existing VMs off
+./lab status [--start-vmrest | --plan]   # checks; --plan: what up/down would change
+./lab up [--all | <vm>...] [--allow-destroy]  # prepare off; start selection only
+./lab down (--all | <vm>...) [--hard]        # graceful shutdown; explicit hard stop
 ./lab configure [PLAYBOOK] [ansible-playbook options]
 ./lab destroy [-auto-approve]  # delete every VM of this checkout
 ./lab cleanup                  # retry cleanup left by an interrupted delete
@@ -103,11 +103,14 @@ Following [`INSTALL.md`](INSTALL.md), the agent finds or clones the repository o
 
 Only one `lab` command runs at a time per checkout (`flock` on `.lab.lock`); a second concurrent command exits immediately.
 
+VM configuration edits require the VM to be off. Revert edits before `./lab down <vm>`, restore them, then run `./lab up <vm>`; edits are applied off before a separate power-on plan. Pure power changes remain allowed.
+
 ### Building Your Own System
 
 ```bash
 cp vms.tfvars.example vms.tfvars           # define VM names, CPUs, memory_mb, and Ansible groups (gitignored)
-./lab up
+./lab up                         # create and bootstrap, leave off
+./lab up --all                   # or ./lab up web1, then db1 in your required order
 ./lab configure ansible/check-lab.yml      # verify SSH, cloud-init, passwordless sudo, and OS facts on all VMs
 ./lab configure ~/my-system/site.yml       # run your own playbook (can live outside this repository)
 ```
@@ -116,11 +119,11 @@ cp vms.tfvars.example vms.tfvars           # define VM names, CPUs, memory_mb, a
 - Omitted fields default to `processors = 2`, `memory_mb = 2048`, and `groups = ["demo"]`.
 - Group names in `groups` must match `^[a-z_][a-z0-9_]*$`. Every VM is placed in its listed `groups` and is always added to the `lab` group (`ansible/check-lab.yml` runs on `lab`; the default `ansible/configure-guest.yml` runs on `demo`).
 - **LAN NIC (optional):** `lan = true` adds a bridged NIC (VMnet0), named `lan0` in the guest, that gets an address from your LAN router's DHCP (for example 192.168.1.x). `lan_ip = "192.168.1.240/24"` makes it static instead (pick an address outside the router's DHCP range); `./lab up` refuses an address that is not on this PC's LAN (detected from the default route, shown by `./lab status`) or that already answers. `lan0` adds no default route or DNS; internet traffic stays on NAT. Playbooks read it as `ansible_lan0.ipv4.address` (`check-lab.yml` reports it). VMs on several PCs on the same LAN can reach each other this way. Changing `lan`/`lan_ip` rebuilds that VM (`./lab up --allow-destroy`). On a PC with Hyper-V adapters, check that VMware's VMnet0 bridges to the physical adapter (Virtual Network Editor).
-- Adding an entry to `vms.tfvars` and running `./lab up` creates and bootstraps only the new VM (created powered off, bootstrapped, then powered on) while already-running VMs stay on.
+- Adding an entry to `vms.tfvars` and running `./lab up` creates and bootstraps only the new VM (created powered off and left off) while existing VMs retain their live power. Start selected VMs with `./lab up <vm>...`, or all with `./lab up --all`. Multiple names are applied together without a start-order guarantee; use separate calls for ordered roles.
 
 ## Safety Guarantees
 
-- **Refuses unintended VM deletion:** `./lab up` inspects `terraform plan -json` before applying. If any VM would be deleted or replaced, it prints the VM names and exits unless `--allow-destroy` is passed. A missing or mistyped `vms.tfvars` will not delete existing VMs. `./lab down` targets only VMs already in the state and refuses any plan that does more than change power state.
+- **Refuses unintended VM deletion:** `./lab up` inspects `terraform plan -json` before applying. If any VM would be deleted or replaced, it prints the VM names and exits unless `--allow-destroy` is passed. A missing or mistyped `vms.tfvars` will not delete existing VMs. `./lab down --all` or `./lab down <vm>...` targets existing VMs and refuses destructive plans and CPU/memory edits before touching guests. Graceful shutdown succeeds only when vmrest confirms every selected VM is off; an unreachable guest is left running. The default wait is 120 seconds (`LAB_DOWN_WAIT_SECONDS`): the plan budgets 90 seconds for service stops plus 30 seconds for power-off. `--hard` explicitly permits a hard power-off. Bare `down` is an error.
 - **Base VM verification:** Before `up` or `down`, `lib/check-base.py` confirms for each image in use that exactly one registered VM in `vmrest` has `displayName` `<image>-base` and points to `base/<image>/base.vmx`. It passes each base's VM ID and the SHA-256 hash of its `base.prepared` to Terraform, which records them per clone (`terraform_data.vm_base`). Rebuilding a base (`./lab setup --recreate`) or changing a VM's image marks those clones for replacement, and `./lab up` stops until you confirm with `./lab up --allow-destroy` (replacing clones erases their disks).
 - **Current DHCP lease + host key pinned before boot:** for each new clone, `lib/bootstrap-guest.sh` generates an `ssh-ed25519` host key in WSL, puts it in the clone's cloud-init seed (`ssh_keys`, old keys deleted) and writes `known_hosts-<id>` before the clone first boots. `lib/guest-inventory.py` matches each VM's management NIC MAC (`ethernet1.generatedAddress`) against only active, non-expired leases on `LAB_MGMT_VNET` in `vmnetdhcp.leases` (using the last entry per IP), and counts a VM as ready only when SSH as `lab` succeeds against that pin (`StrictHostKeyChecking=yes`, `HostKeyAlias`). Ansible will never connect to a different VM that reused an IP. The seed ISO next to the clone's disk holds the same private key the disk holds once booted.
 - **Replayable cleanup journal:** Before Terraform deletes or replaces VMs, `lib/cleanup-guest.py` records them in `terraform/cleanup-pending.json`. After a VM leaves the state (and its `.vmx` and `.vmdk` are gone), cleanup removes `cloud-init-<id>.iso`, leftover `.vmxf`, `known_hosts-<id>`, `seed-<id>/`, and the empty clone directory. Entries remain in the journal until cleanup succeeds and are retried automatically by the next `up`, `destroy`, or `./lab cleanup`.
