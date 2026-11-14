@@ -366,6 +366,32 @@ ssh-keygen() {
         self.assertFalse(value['changed'])
         self.assertFalse(any(c[0] in ('apply','destroy') for c in self.calls()))
 
+    def test_lab_env_syntax_error_does_not_echo_credentials(self):
+        marker='SECRET-MARKER-456'
+        lab_env=self.root/'syntax-error.env'
+        lab_env.write_text(f'VMWS_PASSWORD={marker} )\n',newline='\n')
+        self.env['LAB_ENV_FILE']=lab_env.as_posix()
+        run,value=self.run_lab('status')
+        self.assertEqual(run.returncode,2,run.stderr)
+        self.assertEqual(value['error']['code'],'config_error')
+        self.assertFalse(value['changed'])
+        self.assertIn('lab.env has a shell syntax error',value['error']['message'])
+        self.assertIn('bash -n lab.env',run.stderr)
+        self.assertNotIn(marker,run.stdout)
+        self.assertNotIn(marker,run.stderr)
+
+    def test_lab_env_extglob_is_not_rejected_as_syntax_error(self):
+        lab_env=self.root/'extglob.env'
+        lab_env.write_text('shopt -s extglob\n'
+                           'case ubuntu in @(ubuntu|debian)) LAB_IMAGE=ubuntu-24.04 ;; esac\n',
+                           newline='\n')
+        self.env['LAB_ENV_FILE']=lab_env.as_posix()
+        run,value=self.run_lab('status')
+        error=value.get('error') or {}
+        self.assertFalse(error.get('code')=='config_error' and
+                         'lab.env has a shell syntax error' in error.get('message',''),
+                         run.stderr)
+
     def test_config_errors_before_mutation(self):
         self.env['LAB_VM_ROOT_WIN']=''
         self.env['LAB_WINDOWS_PROFILE']=''

@@ -88,12 +88,18 @@ class NetworkTests(unittest.TestCase):
                      'ethernet2.vnet = "VMnet2', 'ethernet2.vnet "VMnet2"',
                      'ethernet2.vnet = "VMnet2" trailing', 'not an assignment',
                      'displayName = unquoted',
-                     'ETHERNET2.PRESENT = FALSE']:
+                     'ETHERNET2.PRESENT = FALSE',
+                     'guestinfo.secret = "SECRET-MARKER-123 with "quote"']:
             with self.subTest(line=line):
                 vm = self.vm('ethernet2.present = "TRUE"\n' + line)
-                rc, error = self.gate(vm)
+                out = io.StringIO()
+                with redirect_stdout(out):
+                    rc, error = self.gate(vm)
                 self.assertEqual(rc, 1)
                 self.assertIn('malformed VMX line', json.loads(error)[0]['error'])
+                self.assertNotIn('SECRET-MARKER-123', json.loads(error)[0]['error'])
+                self.assertNotIn('SECRET-MARKER-123', error)
+                self.assertNotIn('SECRET-MARKER-123', out.getvalue())
 
     def test_mixed_case_keys_and_case_colliding_duplicates(self):
         vm = self.vm('Ethernet2.Present = "true"\nETHERNET2.ConnectionType = "bridged"')

@@ -21,6 +21,11 @@ if [[ -f "$LAB_ENV_FILE" ]]; then
   # "\r" into VM names (VMX syntax error, vmrest HTTP 500 on registration).
   # shellcheck disable=SC1090
   lab_env_text=$(tr -d '\r' < "$LAB_ENV_FILE") || lab_fail config_error 'Cannot read LAB_ENV_FILE.'
+  # Enable extglob because syntax checks do not execute lab.env's shopt commands.
+  if ! bash -O extglob -n <<< "$lab_env_text" 2>/dev/null; then
+    unset lab_env_text
+    lab_fail config_error 'lab.env has a shell syntax error; check it yourself with: bash -n lab.env'
+  fi
   source /dev/stdin <<< "$lab_env_text"
   unset lab_env_text
 fi
