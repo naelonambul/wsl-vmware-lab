@@ -22,6 +22,8 @@ jobs:
         run: shellcheck -S warning -e SC2154 -x lab lib/*.sh tools/*.sh
       - name: python
         run: python3 -m py_compile lib/*.py
+      - name: offline tests
+        run: python3 -B -m unittest discover -s tests -v
       - uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: 1.17.1

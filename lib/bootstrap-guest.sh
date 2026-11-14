@@ -8,7 +8,7 @@ source lib/cloud-config.sh
 # vmrun answer must stop here, before any file is changed.
 power=0; lab_vm_running "$VMX_WIN" || power=$?
 if [[ $power -eq 0 ]]; then
-  echo 'Power the clone off with Terraform before bootstrap; use ./lab up.' >&2
+  echo 'Power the clone off before bootstrap; use ./lab down <vm>.' >&2
   exit 1
 elif [[ $power -ne 1 ]]; then
   echo '[ERROR] Could not confirm the clone is powered off; not editing it.' >&2
@@ -16,6 +16,13 @@ elif [[ $power -ne 1 ]]; then
 fi
 [[ "$VM_ID" =~ ^[A-Za-z0-9_-]+$ ]] || { echo 'Invalid VM id from Terraform' >&2; exit 1; }
 vmx=$(wslpath -u "$VMX_WIN")
+bootstrap_rc=0
+grep -Eqi '^[[:space:]]*ide1:0\.fileName[[:space:]]*=' "$vmx" || bootstrap_rc=$?
+if [[ "$bootstrap_rc" == 0 ]]; then
+  echo '[ERROR] already bootstrapped; restore records or rebuild this VM' >&2
+  exit 1
+fi
+[[ "$bootstrap_rc" == 1 ]] || { echo '[ERROR] Cannot inspect VMX bootstrap state; not editing it.' >&2; exit 1; }
 seed_dir="$LAB_PRIVATE_DIR/seed-$VM_ID"
 umask 077
 mkdir -p "$seed_dir"
@@ -40,7 +47,9 @@ printf 'instance-id: %s\nlocal-hostname: %s\n' "$VM_ID" "${VM_NAME:-$LAB_CLONE_N
 # lan0, it no longer matches en* above. No default route or DNS from it:
 # internet traffic stays on the NAT NIC.
 lan="${VM_LAN:-none}"
-h=$(printf '%s %s' "$(hostname)" "$VM_ID" | sha256sum | cut -c1-6)
+host_name=$(hostname)
+[[ -n "$host_name" ]] || { echo '[ERROR] Cannot identify this host for LAN MAC allocation.' >&2; exit 1; }
+h=$(printf '%s %s' "$host_name" "$VM_ID" | sha256sum | cut -c1-6)
 lan_mac=$(printf '00:50:56:%02x:%s:%s' $((16#${h:0:2} % 64)) "${h:2:2}" "${h:4:2}")
 # The NAT and management NICs (e1000) get DHCP. With a LAN NIC, match them by
 # driver instead of name: on first boot the vmxnet3 LAN NIC is still en* until
@@ -79,9 +88,12 @@ CFG
 a = ipaddress.ip_interface(sys.argv[1]); n = ipaddress.ip_network(sys.argv[2])
 sys.exit(0 if a.network == n and a.ip not in (n.network_address, n.broadcast_address) else 1)' "$lan" "${net%% *}" \
       || { echo "[ERROR] lan_ip $lan is not a host address on this PC's LAN ${net%% *}" >&2; exit 1; }
-    if ping -c 2 -W 1 "${lan%/*}" >/dev/null 2>&1; then
+    ping_rc=0
+    ping -c 2 -W 1 "${lan%/*}" >/dev/null 2>&1 || ping_rc=$?
+    if [[ "$ping_rc" == 0 ]]; then
       echo "[ERROR] lan_ip ${lan%/*} already answers on the LAN; pick a free address outside the router's DHCP range" >&2; exit 1
     fi
+    [[ "$ping_rc" == 1 ]] || { echo '[ERROR] Cannot probe lan_ip; not configuring it.' >&2; exit 1; }
     cat >> "$seed_dir/network-config" <<CFG
   lan0:
     match:
@@ -115,13 +127,19 @@ settings={
  'uuid.action':'create',
 }
 if os.environ['VM_LAN'] != 'none':
-    # Bridged to the physical LAN through VMnet0. vmxnet3 sits on PCIe, so the
+    # LAN uses implicit VMnet0 bridging or the configured custom VMnet.
+    # vmxnet3 sits on PCIe, so the
     # VM needs a PCIe root port (the base VMX has none).
     settings.update({'pciBridge0.present':'TRUE', 'pciBridge4.present':'TRUE',
                      'pciBridge4.virtualDev':'pcieRootPort', 'pciBridge4.functions':'8',
                      'ethernet2.present':'TRUE', 'ethernet2.startConnected':'TRUE',
                      'ethernet2.connectionType':'bridged', 'ethernet2.virtualDev':'vmxnet3',
                      'ethernet2.addressType':'static', 'ethernet2.address':os.environ['LAN_MAC']})
+    lan_vnet = os.environ['LAB_LAN_VNET']
+    if lan_vnet and lan_vnet != 'VMnet0':
+        settings.update({'ethernet2.connectionType':'custom', 'ethernet2.vnet':lan_vnet})
+    else:
+        s=re.sub(r'(?mi)^\s*ethernet2\.vnet\s*=.*\n?', '', s)
 s=re.sub(r'(?mi)^\s*(uuid\.bios|uuid\.location|vc\.uuid|ethernet\d+\.generatedAddress(Offset)?)\s*=.*\n?','',s)
 for key,value in settings.items():
     line=f'{key} = "{value}"'

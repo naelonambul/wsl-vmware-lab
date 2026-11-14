@@ -10,7 +10,7 @@ WSL Terraform --> vmrest http://127.0.0.1:8697/api --> VMware Workstation --> �
 WSL Ansible --SSH--> 실습 VM (VMnet1 host-only 관리망; VMnet8 NAT)
 ```
 
-배경 설명 글(글 발행 뒤로 저장소가 바뀌었으니, 내용이 다르면 **이 README가 기준**입니다):
+배경 설명 글(글 발행 뒤로 저장소가 바뀌었으니, 내용이 다르면 **현재 스크립트와 이 README가 기준**입니다):
 - 한국어 연재: [0편 — WSL](https://naelonambul.tistory.com/210) · [1편 — VMware + vmrest 계정](https://naelonambul.tistory.com/211) · [2편 — SSH + 부팅 작업 (`setup.ps1`)](https://naelonambul.tistory.com/207) · [3편 — 베이스 VM (`./lab setup`)](https://naelonambul.tistory.com/208) · [4편 — Terraform/Ansible (`./lab`)](https://naelonambul.tistory.com/209)
 - 영문 완결판: [Complete Guide](https://naelonambul.tistory.com/212)
 
@@ -54,7 +54,7 @@ WSL Ansible --SSH--> 실습 VM (VMnet1 host-only 관리망; VMnet8 NAT)
    .\setup.cmd Remove                                          # 작업과 방화벽 규칙 제거 (전원 설정은 그대로)
    ```
    `setup.cmd`는 같은 인자로 `setup.ps1`을 실행하면서 그 한 번만 PowerShell 실행 정책을 우회합니다(Windows는 기본적으로 `.ps1` 스크립트를 막음). 시스템 설정은 바꾸지 않습니다. `windows\setup.ps1` 옵션:
-   - `-Action`: `Install`, `Status`(기본값), `Remove`
+   - `-Action`: `Install`, `Status`(기본값), `Network`(조회 전용), `Remove`
    - `-AllowedRemoteAddress <subnet>`: TCP 22를 허용할 출발지 대역. 기본값은 기본 경로가 나가는 어댑터의 LAN, 즉 다른 PC가 이 PC에 접속하는 네트워크입니다(미러드 모드라 WSL도 같은 네트워크). 예: `192.168.1.0/24`. `Status`가 보여 줍니다
    - `-Distro <name>`: WSL 배포판 이름(기본값 `Ubuntu-24.04`)
    - `-VmrestPath <path>`: `vmrest.exe` 경로(기본값 `$env:ProgramFiles\VMware\VMware Workstation\vmrest.exe`)
@@ -74,11 +74,15 @@ WSL Ansible --SSH--> 실습 VM (VMnet1 host-only 관리망; VMnet8 NAT)
 
 4. **베이스 VM 준비 및 호스트 점검 (WSL):**
    ```bash
+   ./lab network   # setup 전에 VMware 역할과 브리지 정보 확인
+   bash lib/preflight.sh # Terraform 설치 전에도 가능한 호스트 전용 사전 검사
    ./lab setup     # 1회: 부족한 WSL 도구를 sudo로 설치하고, Ubuntu 이미지 서명을 확인해 베이스 VM 준비
    ./lab status    # 환경, vmrest, Windows 작업·전원, VM을 읽기 전용으로 점검
    ```
-   - `terraform`, `ansible-playbook`, `qemu-img`, `cloud-localds`, `gpgv`, `ubuntu-cloudimage-keyring` 가운데 없는 것이 있으면 `./lab setup`이 먼저 `sudo bash lib/wsl-tools.sh`를 실행합니다(WSL 비밀번호를 묻습니다). 이어서 `LAB_IMAGE` 클라우드 이미지를 내려받아 확인하고(위 표 참고), 이미지를 `base/ubuntu-base.vmdk`로 변환하고, `~/.config/wsl-vmware-lab/lab_ed25519`를 만들고, `base/ubuntu-base.vmx`(`ubuntu24-base`)를 작성·등록한 뒤 `base/ubuntu-base.prepared`를 기록합니다. 베이스는 부팅하지 않으므로 클론마다 첫 부팅이 이미지의 첫 부팅입니다.
-   - `./lab status`는 아무것도 바꾸지 않고 호스트 설정, `vmrest` 루프백 리스너와 인증 정보, Windows 부팅 작업과 전원 설정, 실습 VM들의 전원 상태를 점검합니다.
+   - `terraform`, `ansible-playbook`, `qemu-img`, `cloud-localds`, `gpgv`, `ubuntu-cloudimage-keyring` 가운데 없는 것이 있으면 `./lab setup`이 먼저 `sudo bash lib/wsl-tools.sh`를 실행합니다(WSL 비밀번호를 묻습니다). 이어서 `LAB_IMAGE` 클라우드 이미지를 내려받아 확인하고(위 표 참고), 이미지를 `base/<image>/base.vmdk`로 변환하고, `~/.config/wsl-vmware-lab/lab_ed25519`를 만들고, `base/<image>/base.vmx`(`<image>-base`)를 작성·등록한 뒤 `base/<image>/base.prepared`를 기록합니다. 베이스는 부팅하지 않으므로 클론마다 첫 부팅이 이미지의 첫 부팅입니다.
+   - 공개 `./lab` 명령에는 호스트 전용 하위 명령이 없습니다. 최초 setup 전에는 WSL에서 `bash lib/preflight.sh`를 실행하고 종료값 0을 확인하세요. Terraform을 실행하지 않고 호스트·vmrest 조건을 점검하며 부족한 도구는 경고합니다. JSON 대신 텍스트를 출력합니다. 이어서 위 순서대로 setup과 전체 status를 실행하세요.
+   - Status는 진단 명령입니다. 종료값 0 / `ok: true`만으로 모든 VM이 정상임을 판단하지 마세요. `data.vms`의 전원·LAN 정보와 `warnings`를 읽으세요. `vm_power_unknown`, `lan_vnet_mismatch` 경고는 해당 VM을 표시합니다.
+   - `./lab status`는 호스트 설정, `vmrest` 루프백 리스너와 인증 정보, Windows 부팅 작업과 전원 설정, 실습 VM들의 전원 상태를 점검합니다. Terraform/provider를 자동 초기화하며 이 초기화는 `changed`를 설정하지 않습니다.
 
 ### AI 에이전트로 설치하기
 
@@ -93,34 +97,69 @@ Claude Code나 OpenAI Codex에게 저장소 설치나 점검을 맡기려면 에
 ```bash
 ./lab account [--lock]         # vmrest API 계정 + 시크릿 파일 (1회; --lock: 권한만 잠그기)
 ./lab setup [--recreate]       # WSL 도구, Ubuntu 이미지, cloud-init 시드, 베이스 VM 준비 (1회)
-./lab status [--start-vmrest | --plan [on|off]]   # 점검; --plan: up/down이 바꿀 내용을 미리 보기
-./lab up [--allow-destroy]     # vms.tfvars의 새 VM 만들기 + 모두 켜기
-./lab down                     # 기존 VM 전원 끄기
+./lab status [--start-vmrest]   # 점검; 선택적으로 vmrest 시작
+./lab up [--all | <vm>...] [--allow-destroy] [--dry-run]  # 꺼진 상태로 준비, 선택한 VM만 켜기
+./lab down (--all | <vm>...) [--hard] [--dry-run]  # 정상 종료, 명시적 강제 종료
 ./lab configure [PLAYBOOK] [ansible-playbook options]
-./lab destroy [-auto-approve]  # 이 체크아웃의 VM 모두 삭제
+./lab destroy --confirm=<names> [--dry-run]  # state의 전체 VM 이름을 쉼표로 구분
 ./lab cleanup                  # 중단된 삭제 작업이 남긴 정리 다시 시도
+./lab network                  # Windows/VMX 네트워크 정보 조회; vmrest 불필요
+./lab describe --json          # 명령 인자, JSON 응답, 오류 코드 안내
 ```
 
-체크아웃당 한 번에 하나의 `lab` 명령만 실행됩니다(`.lab.lock`에 `flock` 사용). 동시에 두 번째 명령을 실행하면 바로 종료됩니다.
+모든 명령은 **stdout**에 JSON 응답 하나를 쓰며 사람이 읽는 로그와 Terraform·Ansible 진단은 **stderr**로 보냅니다. `./lab describe --json`의 안내는 `data` 안에 들어 있습니다.
+
+```json
+{"ok":true,"command":"up","dry_run":true,"changed":false,"data":{},"warnings":[],"error":null}
+```
+
+위는 응답 구조 예시이며 `data`는 명령마다 다릅니다. `error`가 null일 때만 `ok`가 true입니다. 오류에는 `code`, `message`, `hint`, `details`가, 경고에는 `code`, `message`, `vm`이 들어 있습니다. `changed`는 변경을 시도했다는 뜻이며 부분 변경이나 실패도 가능하므로 성공 증거가 아닙니다. stderr는 진단용으로 보관하되 시크릿이 모두 가려진 기록으로 취급하지 마세요.
+
+`./lab up --dry-run`, `./lab down --all --dry-run`, `./lab destroy --dry-run`은 apply, 게스트 SSH, 정리, 저널 쓰기, state 복원 없이 계획과 안전 검사를 미리 봅니다. Terraform/provider를 자동 초기화하고 비공개 임시 파일을 사용하며, 이 작업은 `changed`를 설정하지 않습니다. 인증 정보와 연결 가능한 vmrest가 필요합니다. up/down에는 준비된 베이스도 필요합니다. 대기 중인 정리·복원은 보고만 합니다. destroy 미리 보기에는 확인 인자가 필요 없지만 주면 일치해야 합니다. 실제 destroy는 state의 전체 VM 이름을 중복 없이 쉼표로 구분해 확인해야 합니다(순서 무관). 대화형 확인이나 Terraform 인자 전달은 없습니다. 빈 state에서는 확인 인자 없이 성공하며 아무것도 삭제하지 않습니다.
+
+| 오류 코드 | 종료값 | 다음 조치 |
+|---|---|---|
+| `usage_error` | 2 | 안내에 따라 인자를 수정합니다. |
+| `config_error` | 2 | lab.env / vms.tfvars를 수정하고 불명확하면 묻습니다. |
+| `unknown_vm` | 2 | 표시된 유효한 VM 이름을 씁니다. |
+| `secrets_missing` | 3 | 변수 이름만으로 기존 파일을 찾고, 없으면 사용자가 ./lab account를 실행합니다. |
+| `vmrest_auth` | 3 | 사용자가 인증 정보를 고치거나 ./lab account를 실행합니다. |
+| `needs_user` | 3 | 터미널, sudo, 관리자 PowerShell이 필요한 명령을 사용자에게 전달합니다. |
+| `lock_held` | 4 | 다른 작업을 기다렸다 재시도하며 잠금을 지우지 않습니다. |
+| `vmrest_unreachable` | 4 | 사전 검사 단계에서 사용자에게 vmrest 시작을 요청한 뒤 재시도합니다. |
+| `plan_destroy_refused` | 5 | VM 목록을 검토하고 --allow-destroy / --confirm 전에 삭제 의사를 확인합니다. |
+| `config_change_requires_off` | 5 | 편집을 되돌리고 VM을 종료한 뒤 편집을 복원하고 up을 실행합니다. |
+| `lan_vnet_mismatch` | 5 | 실제 연결과 설정을 비교하고 사용자와 오프라인 VMX 수정을 결정합니다. |
+| `vm_power_unknown` | 5 | ./lab status를 확인하고 자동 복구 없이 보고합니다. |
+| `guest_not_ready` | 1 | VM별 원인과 pitfalls 참고 문서를 읽고 자동 재시도하지 않습니다. |
+| `runtime_error` | 1 (SIGINT: 130; SIGTERM: 143) | stderr와 ./lab status를 읽고 부분 변경된 분산 시스템의 복구 전에 묻습니다. |
+
+성공 종료값은 0이며 분류되지 않은 실패는 `runtime_error`가 됩니다. 중단된 실행도 `runtime_error`를 출력하며 SIGINT는 130, SIGTERM은 143으로 종료합니다.
+
+Setup, up, down, destroy, cleanup, configure는 체크아웃 잠금(`.lab.lock`에 `flock`)을 잡습니다. 잠금이 필요한 다른 명령은 `lock_held`로 종료됩니다. Status, network, describe, account는 이 잠금을 잡지 않습니다.
+
+전원 이외의 모든 VM 속성의 in-place 변경은 VM을 꺼야 합니다(CPU/메모리에 한정되지 않음). `./lab down <vm>` 전에 편집을 되돌리고, 종료 후 복원한 다음 `./lab up <vm>`을 실행하세요. 꺼진 상태에서 설정을 적용한 뒤 별도 계획으로 켭니다. 전원만 바꾸는 작업은 허용됩니다.
 
 ### 내 시스템 올리기
 
 ```bash
 cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, memory_mb, Ansible 그룹 정의 (git에 올라가지 않음)
-./lab up
-./lab configure ansible/check-lab.yml      # 모든 VM의 SSH, cloud-init, 비밀번호 없는 sudo, OS 팩트 확인
+./lab network                    # 실제 VMware 네트워크 역할 먼저 확인
+./lab up                         # 생성과 부트스트랩 후 꺼진 상태 유지
+./lab up --all                   # 또는 필요한 순서대로 ./lab up <vm>
+./lab configure ansible/check-lab.yml      # 켜진 VM의 SSH, cloud-init, 비밀번호 없는 sudo, OS 팩트 확인
 ./lab configure ~/my-system/site.yml       # 내 플레이북 실행 (저장소 밖 다른 폴더에 둬도 됨)
 ```
 
 - `vms.tfvars`의 `vms = { ... }` 안 각 키가 VM 이름입니다(`^[a-z0-9][a-z0-9-]{0,62}$`, 영문 소문자·숫자·`-`만 사용, 베이스 이름 `<image>-base`와 같을 수 없음). 이 이름이 Windows 폴더 및 VMX 경로(`<LAB_VM_ROOT_WIN>\<name>\<name>.vmx`), 게스트 호스트 이름, Ansible 호스트 이름이 됩니다.
 - 생략한 필드는 `processors = 2`, `memory_mb = 2048`, `groups = ["demo"]` 기본값을 씁니다.
 - `groups`의 그룹 이름은 `^[a-z_][a-z0-9_]*$` 형식이어야 합니다. 모든 VM은 지정한 `groups`에 들어가며, 항상 `lab` 그룹에도 추가됩니다(`ansible/check-lab.yml`은 `lab`에서, 기본 `ansible/configure-guest.yml`은 `demo`에서 실행됩니다).
-- **LAN NIC(선택):** `lan = true`를 주면 브리지 NIC(VMnet0)가 붙고, 게스트 안에서 `lan0`이라는 이름으로 공유기 DHCP에서 주소를 받습니다(예: 192.168.1.x). `lan_ip = "192.168.1.240/24"`를 주면 그 주소로 고정됩니다(공유기 DHCP 범위 밖의 주소를 쓰세요). 이 PC의 LAN 대역(기본 경로에서 감지, `./lab status`에 표시) 밖의 주소이거나 이미 응답하는 주소면 `./lab up`이 거부합니다. `lan0`은 기본 경로와 DNS를 바꾸지 않으므로 인터넷은 계속 NAT로 나갑니다. 플레이북에서는 `ansible_lan0.ipv4.address`로 읽습니다(`check-lab.yml`이 보여 줍니다). 같은 LAN의 여러 PC에 있는 VM들이 이 주소로 서로 통신할 수 있습니다. `lan`/`lan_ip`를 바꾸면 그 VM을 다시 만듭니다(`./lab up --allow-destroy`). Hyper-V 어댑터가 있는 PC에서는 VMware의 VMnet0이 실제 네트워크 어댑터에 브리지되는지 확인하세요(Virtual Network Editor).
-- `vms.tfvars`에 항목을 더하고 `./lab up`을 실행하면 이미 켜져 있는 VM은 그대로 둔 채 새 VM만 만들고 준비합니다(꺼진 상태로 만든 뒤 부트스트랩하고 전원을 켭니다).
+- **LAN NIC(선택):** `lan = true`를 주면 LAN NIC(기본은 VMnet0 브리지, `LAB_LAN_VNET`으로 사용자 지정 VMnet 선택)가 붙고, 게스트 안에서 `lan0`이라는 이름으로 공유기 DHCP에서 주소를 받습니다(실제 LAN 주소는 조회해서 사용). `lan_ip = "192.0.2.240/24"`는 문서용 고정 주소 예시입니다(실제 LAN 대역의 공유기 DHCP 범위 밖 주소로 바꾸세요). 이 PC의 LAN 대역(기본 경로에서 감지, `./lab status`에 표시) 밖의 주소이거나 이미 응답하는 주소면 `./lab up`이 거부합니다. `lan0`은 기본 경로와 DNS를 바꾸지 않으므로 인터넷은 계속 NAT로 나갑니다. 플레이북에서는 `ansible_lan0.ipv4.address`로 읽습니다(`check-lab.yml`이 보여 줍니다). 같은 LAN의 여러 PC에 있는 VM들이 이 주소로 서로 통신할 수 있습니다. `lan`/`lan_ip`를 바꾸면 그 VM을 다시 만듭니다(`./lab up --allow-destroy`). Hyper-V 어댑터가 있는 PC에서는 VMware의 VMnet0이 실제 네트워크 어댑터에 브리지되는지 확인하세요(Virtual Network Editor).
+- `vms.tfvars`에 항목을 더하고 `./lab up`을 실행하면 기존 VM의 전원은 유지하고 새 VM은 꺼진 상태로 만들어 부트스트랩합니다. `./lab up <vm>...`은 선택한 VM만, `./lab up --all`은 모두 켭니다. 여러 이름을 한 번에 주면 시작 순서는 보장되지 않으므로 순서가 필요하면 따로 호출하세요.
 
 ## 지켜 주는 것
 
-- **의도하지 않은 VM 삭제 거부:** `./lab up`은 적용 전에 `terraform plan -json`을 검사합니다. 삭제되거나 교체될 VM이 하나라도 있으면 `--allow-destroy`를 붙이지 않는 한 VM 이름을 보여 주고 멈춥니다. `vms.tfvars`가 없어지거나 오타가 나도 기존 VM은 지워지지 않습니다. `./lab down`은 state에 이미 있는 VM만 대상으로 삼으며, 전원 변경 외의 다른 변경이 있는 플랜은 거부합니다.
+- **의도하지 않은 VM 삭제 거부:** `./lab up`은 적용 전에 `terraform plan -json`을 검사합니다. 삭제되거나 교체될 VM이 하나라도 있으면 `--allow-destroy`를 붙이지 않는 한 VM 이름을 보여 주고 멈춥니다. `vms.tfvars`가 없어지거나 오타가 나도 기존 VM은 지워지지 않습니다. `./lab down --all` 또는 `./lab down <vm>...`은 기존 VM을 정상 종료하며 삭제·교체와 전원 이외의 모든 VM 속성 변경을 먼저 거부합니다. vmrest가 선택한 VM 모두의 꺼짐을 확인해야 성공합니다. 연결되지 않는 VM은 계속 켜져 있습니다. 기본 대기 시간은 120초(`LAB_DOWN_WAIT_SECONDS`, 서비스 종료 90초와 여유 30초 예산)이며 `--hard`는 명시적인 강제 종료입니다. 인자 없는 `down`은 오류입니다.
 - **베이스 VM 확인:** `up`이나 `down` 전에 `lib/check-base.py`가 쓰이는 이미지마다 `vmrest`에 등록된 VM 중 `displayName`이 `<image>-base`이고 `base/<image>/base.vmx`를 가리키는 VM이 정확히 하나인지 확인합니다. 그리고 베이스마다 VM ID와 `base.prepared`의 SHA-256 해시를 Terraform에 넘기고, Terraform은 이를 클론마다 기록합니다(`terraform_data.vm_base`). 베이스를 다시 만들거나(`./lab setup --recreate`) VM의 이미지를 바꾸면 해당 클론이 교체 대상으로 표시되며, `./lab up --allow-destroy`로 확인해 줄 때까지 `./lab up`이 멈춥니다(클론을 교체하면 디스크 내용이 지워집니다).
 - **현재 DHCP 임대 + 부팅 전에 고정한 호스트 키:** 새 클론마다 `lib/bootstrap-guest.sh`가 WSL에서 `ssh-ed25519` 호스트 키를 만들어 클론의 cloud-init 시드(`ssh_keys`, 기존 키는 삭제)에 넣고, 클론이 처음 부팅하기 전에 `known_hosts-<id>`를 씁니다. `lib/guest-inventory.py`는 각 VM의 관리 NIC MAC(`ethernet1.generatedAddress`)을 `vmnetdhcp.leases`에서 `LAB_MGMT_VNET`의 만료되지 않은 활성 임대(IP별 마지막 항목 사용)와만 대조하고, 그 고정 키로 `lab` 사용자 SSH 접속이 성공해야 준비된 것으로 봅니다(`StrictHostKeyChecking=yes`, `HostKeyAlias`). 다른 VM이 IP를 재사용하더라도 Ansible이 엉뚱한 VM에 접속하지 않습니다. 클론 디스크 옆의 시드 ISO에는 부팅 뒤 디스크에 들어가는 것과 같은 개인키가 들어 있습니다.
 - **이어서 실행할 수 있는 정리 기록:** Terraform이 VM을 삭제하거나 교체하기 전에 `lib/cleanup-guest.py`가 대상을 `terraform/cleanup-pending.json`에 적어 둡니다. VM이 state에서 빠지고(`.vmx`와 `.vmdk`도 사라진 뒤) 나면 정리 과정에서 `cloud-init-<id>.iso`, 남은 `.vmxf`, `known_hosts-<id>`, `seed-<id>/`, 빈 클론 폴더를 지웁니다. 항목은 정리가 끝날 때까지 기록에 남아 있으며 다음 `up`, `destroy`, `./lab cleanup`이 자동으로 이어서 시도합니다.
@@ -143,6 +182,7 @@ cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, memory_mb, Ansible 
 | `LAB_DHCP_CONF` | `/mnt/c/ProgramData/VMware/vmnetdhcp.conf` | VMware DHCP 설정 파일 |
 | `LAB_NAT_VNET` | `VMnet8` | NAT 가상 네트워크(`ethernet0`) |
 | `LAB_MGMT_VNET` | `VMnet1` | Host-only 관리용 가상 네트워크(`ethernet1`) |
+| `LAB_LAN_VNET` | 빈 값(실제 `VMnet0`) | LAN NIC: 빈 값/VMnet0 = 브리지, VMnet1–19 = 사용자 지정; NAT·관리 VMnet과 달라야 함 |
 | `LAB_BASE_DIR` | `<repo>/base` | 베이스마다 `<image>/` 폴더(`base.vmx`, `base.vmdk`, `base.prepared`)를 두는 폴더 |
 | `LAB_IMAGE` | `ubuntu-24.04` | `vms.tfvars`에 `image`가 없는 VM의 게스트 이미지: `ubuntu-24.04`, `ubuntu-22.04`, `debian-13` |
 | `LAB_UBUNTU_IMAGE_URL` | `https://cloud-images.ubuntu.com/<noble 또는 jammy>/current` | 선택한 Ubuntu 이미지와 `SHA256SUMS`를 받을 폴더(미러) |
@@ -152,24 +192,45 @@ cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, memory_mb, Ansible 
 | `LAB_CLONE_CPUS` | `2` | 단일 기본 VM의 vCPU 수 |
 | `LAB_CLONE_MEMORY_MB` | `2048` | 단일 기본 VM의 메모리(MB) |
 | `LAB_PLAYBOOK` | `<repo>/ansible/configure-guest.yml` | 플레이북을 지정하지 않았을 때 `./lab configure`가 실행하는 기본 플레이북 |
-| `LAB_GUEST_WAIT_SECONDS` | `300` | 모든 VM이 IP, 사용자, 호스트 키를 알려 줄 때까지 `./lab configure`가 기다리는 최대 시간(초) |
+| `LAB_GUEST_WAIT_SECONDS` | `300` | configure 시작 시 고정한 켜진 VM 집합의 준비 대기 시간(초) |
+| `LAB_DOWN_WAIT_SECONDS` | `120` | 정상 종료 전원 확인 대기 시간(초); 5초마다 확인 |
+
+## 네트워크와 실행 중 인벤토리
+
+setup이나 모든 up 전에 `./lab network`를 실행하고 [네트워크 참고 문서](.claude/skills/vmware-wsl-lab/reference/network.md)를 읽으세요. VMnet 번호로 역할을 단정하지 마세요. NAT·관리·LAN 연결, DHCP/NAT/포워딩, 물리 어댑터와 브리지 바인딩을 확인하세요. 바인딩은 Automatic이 고른 어댑터의 증거가 아닙니다. 불명확하면 LAN 활성화 전에 묻습니다. Network는 setup 전에도 인증 정보나 vmrest 없이 동작하며 기존 state가 있으면 Terraform으로 읽습니다.
+
+`LAB_LAN_VNET` 변경은 클론을 다시 만들지 않습니다. 기존 LAN 연결이 다르면 모든 up이 거부됩니다. 사용자가 수정을 선택하면 LAN MAC을 유지하는 문서의 오프라인 VMX 절차를 따릅니다. `LAB_NAT_VNET` 변경은 베이스 재생성과 클론 재생성이 필요하므로 먼저 데이터 손실을 검토하세요.
+
+Configure의 인벤토리와 그룹에는 켜진 VM만 들어갑니다. 최초의 켜진 VM 집합은 준비 재시도 중 고정됩니다. 꺼진 VM은 제외하고, 전원 불명/API 오류는 실패하며 실행 중인 호스트가 0개여도 실패합니다. `configure --limit db`는 기본 플레이북을 사용하고 limit를 그대로 전달하지만 모든 켜진 VM의 준비 상태를 확인합니다. 지속적인 클러스터 토폴로지는 프로젝트 변수에 정의하세요.
+
+복제, master/worker, 멤버십, 쿼럼 서비스를 설정하거나 시작하기 전에 정확한 버전의 공식 문서 출처와 준비 확인 쿼리를 포함한 부트스트랩·종료·재시작 순서를 기록하세요. [분산 시스템 참고 문서](.claude/skills/vmware-wsl-lab/reference/distributed-systems.md)에 따라 필요한 패키지 자동 시작을 막고 되돌릴 수 없는 초기화의 반복을 방지하며 단계별로 `./lab up <vm>` / `./lab down <vm>`을 호출하세요. apply가 일부만 성공했다면 status를 확인하고 복구 전에 묻습니다.
+
+## 기존 체크아웃 업그레이드
+
+이번 업그레이드는 state 마이그레이션이 필요 없습니다. 리소스 주소와 교체 트리거는 같고 전원 변수는 state에 저장되지 않습니다. `vms.tfvars`와 `lab.env` 형식도 유지됩니다. 인자 없는 up은 준비만 하며 전체 시작은 `./lab up --all`입니다. Down에는 `--all`이나 이름이, destroy에는 `--confirm=<names>`가 필요합니다. 첫 apply 전에 `./lab up --dry-run`을 검토하세요. 전원 동작 변경 전 리비전 `b97feef`를 체크아웃해 롤백하면 해당 리비전의 up은 모든 VM을 켭니다.
+
+## 개발자 검증
+
+오프라인 테스트는 **Linux 전용**입니다(WSL Ubuntu 또는 CI `ubuntu-latest`). Windows Git Bash/MSYS에서는 절대 실행하지 마세요. 시간·프로세스 제한, fixture 격리, fork 반복 방지 방법과 명령은 [tests/README.md](tests/README.md)를 보세요.
+
+현재 CLI의 실제 호스트 검증은 수동으로 진행합니다. Virtual Network Editor(조회만)와 네트워크 정보를 비교하고, 혼합 전원 상태, 생성 전용 up, 선택 시작과 교체, 정상 종료, JSON 결과, 중단 복구, 교체 없는 업그레이드를 확인하세요. 여러 PC에서는 호스트별로 state·비공개 폴더·VM 이름을 격리하고 버전별 서비스 순서를 문서화하며 전체 종료·재시작 뒤 멤버십과 새 쓰기/읽기를 확인하세요. 재부팅은 승인받은 경우에만 검증합니다. 호스트별 증거는 비공개로 보관하고 실제 실행한 검사만 보고하세요.
 
 ## 폴더 구조
 
 | 경로 | 내용 |
 |---|---|
 | `lab` | WSL에서 실행하는 단일 CLI 진입점 |
-| `lib/` | `lab`이 부르는 내부 스크립트(`config.sh`, `account.sh`, `wsl-tools.sh`, `base.sh`, `cloud-config.sh`, `register-vm.py`, `check-base.py`, `preflight.sh`, `diagnose.sh`, `lifecycle.sh`, `bootstrap-guest.sh`, `cleanup-guest.py`, `configure.sh`, `guest-inventory.py`, `guest-proxy.sh`) |
-| `windows/` | `setup.ps1`(관리자 PowerShell 설치·점검·제거)과 `tcp-relay.ps1`(WSL에서 게스트로 바로 SSH 연결이 안 될 때 Windows를 거치는 stdio TCP 중계) |
+| `lib/` | `lab`이 부르는 내부 스크립트(`config.sh`, `account.sh`, `wsl-tools.sh`, `base.sh`, `cloud-config.sh`, `register-vm.py`, `check-base.py`, `preflight.sh`, `network.sh`, `describe.json`, `envelope.py`, `power-map.py`, `lifecycle.sh`, `bootstrap-guest.sh`, `cleanup-guest.py`, `configure.sh`, `guest-inventory.py`, `guest-proxy.sh`, `config-functions.sh`, `runner-functions.sh`, `preflight-functions.sh`, `network-inspect.py`, `plan-inspect.py`, `bootstrap-records.py`, `diagnose.sh`) |
+| `windows/` | `setup.ps1`(PowerShell 설치·점검·네트워크 조회·제거)과 `tcp-relay.ps1`(WSL에서 게스트로 바로 SSH 연결이 안 될 때 Windows를 거치는 stdio TCP 중계) |
 | `terraform/` | `elsudano/vmworkstation` `2.0.1`을 고정한 Terraform 설정(`main.tf`, `variables.tf`) |
-| `ansible/` | 기본 nginx 동작 확인 플레이북(`configure-guest.yml`)과 전체 VM 준비 상태 점검 플레이북(`check-lab.yml`) |
+| `ansible/` | 기본 nginx 동작 확인 플레이북(`configure-guest.yml`)과 켜진 VM 준비 상태 점검 플레이북(`check-lab.yml`) |
 | `lab.env.example`, `vms.tfvars.example` | `lab.env`와 `vms.tfvars` 템플릿 |
 | `INSTALL.md` | Claude Code와 Codex용 에이전트 설치 안내서 |
 | `.claude/skills/vmware-wsl-lab/` | `vmware-wsl-lab` 에이전트 스킬 원본(`SKILL.md`, `reference/`). `.agents/skills/vmware-wsl-lab/`은 `tools/sync-agent-skills.sh`로 복사한 Codex용 사본 |
 
 ## 주의
 
-- **검증 범위:** 2026-11-09 노트북 1대(VMware Workstation Pro 기설치, WSL2 미러드 네트워크, Windows 방화벽의 Private·Public 프로필 꺼짐)에서 확인했습니다: `windows\setup.ps1 Install`, 베이스 VM까지 만드는 `./lab setup`, `./lab up`으로 클론 생성, `./lab configure` 2회(두 번째 `changed=0`), `./lab configure ansible/check-lab.yml`, 파일 정리까지 포함한 `./lab destroy`, 재부팅 후 로그온 전 WSL `sshd`와 `vmrest` 기동. 부팅하지 않는 베이스와 고정 호스트 키, `lab` 사용자 방식도 같은 날 `./lab setup --recreate`, `up`, `configure` 2회, `check-lab.yml`, `down`/`up`으로 확인했고, 게스트에서 `open-vm-tools`를 끄고 `vmware-rpctool`을 치운 뒤에도 다시 확인했습니다. `LAB_IMAGE`의 세 이미지(`ubuntu-24.04`, `ubuntu-22.04`, `debian-13`)도 같은 날 각각 `setup --recreate`, `up`, `configure` 2회, `check-lab.yml`, `down`/`up`, `destroy`를 통과했습니다. Ubuntu 24.04와 Debian 13을 섞은 `vms.tfvars`도 같은 단계를 통과했고, VM 하나의 이미지를 Ubuntu 22.04로 바꾸자 그 VM만 다시 만들어졌으며(`up --allow-destroy`) 다른 VM은 켜진 채 그대로였습니다. 이전 버전으로 만든 클론도 업그레이드 뒤 그대로 동작했습니다(`configure` `changed=0`). 같은 유선 노트북에서 LAN NIC도 확인했습니다: `lan = true`(Ubuntu)는 공유기 DHCP 주소를, `lan_ip`(Debian)는 지정한 고정 주소를 받았고, LAN의 다른 기기와 서로 간에 접속됐으며, 인터넷은 계속 NAT로 나갔고, `down`/`up` 뒤에도 유지됐습니다. 이미 쓰이는 주소는 거부됐습니다. **아직 확인하지 않은 환경:** Wi-Fi 브리지에서의 LAN NIC, 여러 PC의 VM을 함께 쓰는 구성, VMware Workstation이 없는 새 PC와 Windows 방화벽 프로필이 켜진 PC.
+- **검증 범위:** 이전 단일 호스트 검증은 현재 CLI 도입 전 기록입니다. 새 네트워크·전원·JSON·업그레이드 동작은 개발자 절의 실제 호스트 검증이 필요합니다. 여러 PC의 시스템, Wi-Fi 브리지, VMware 신규 설치, Windows 방화벽 프로필이 켜진 환경도 이 문서에서 검증하지 않았습니다.
 - **올리면 안 되는 파일:** `lab.env`, `*.env`, `vmrest.env`, `*.tfvars`(`vms.tfvars`), SSH 키(`*_ed25519*`), `inventory.json`, `known_hosts*`, `*.tfstate*`, `cleanup-pending.json`, VM 디스크·이미지·ISO(`base/`, `cloud-init/`, `*.ova`, `*.vmdk`, `*.vmx`, `*.iso`)는 `.gitignore`에 들어 있으며 버전 관리에 올라가면 안 됩니다.
 - **비공식 Terraform provider:** `elsudano/vmworkstation`(`2.0.1`)은 커뮤니티 provider입니다. 베이스 VM을 `displayName`으로 찾아 첫 번째 항목을 고르고, 베이스 VM을 다시 만들어도 스스로 클론을 교체하지 않습니다. 이 저장소가 그 둘을 대신 확인합니다(`lib/check-base.py`와 `terraform_data.vm_base`). provider 버전을 올리기 전에 스키마를 확인하세요.
 - **문제가 생기면:** 알려진 증상과 해결 방법은 [`.claude/skills/vmware-wsl-lab/reference/pitfalls.md`](.claude/skills/vmware-wsl-lab/reference/pitfalls.md)에서 찾으세요.

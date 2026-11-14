@@ -1,0 +1,117 @@
+{
+  "commands": {
+    "account": [
+      "--lock"
+    ],
+    "setup": [
+      "--recreate"
+    ],
+    "status": [
+      "--start-vmrest"
+    ],
+    "network": [],
+    "up": [
+      "--all | <vm>...",
+      "--allow-destroy",
+      "--dry-run"
+    ],
+    "down": [
+      "--all | <vm>... (required)",
+      "--hard",
+      "--dry-run"
+    ],
+    "destroy": [
+      "--confirm=<comma-separated state VM names> (required except dry-run or empty-state no-op)",
+      "--dry-run"
+    ],
+    "cleanup": [],
+    "configure": [
+      "[PLAYBOOK]",
+      "[ansible-playbook options]"
+    ],
+    "describe": [
+      "--json (required)"
+    ]
+  },
+  "exit_codes": {
+    "0": "success",
+    "1": "runtime or guest failure",
+    "2": "usage/configuration",
+    "3": "authentication/user required",
+    "4": "safe precheck retry",
+    "5": "safety refusal",
+    "130": "SIGINT interruption; runtime_error",
+    "143": "SIGTERM interruption; runtime_error"
+  },
+  "errors": {
+    "usage_error": {
+      "exit": 2,
+      "next_action": "Fix the call from the message."
+    },
+    "config_error": {
+      "exit": 2,
+      "next_action": "Fix lab.env / vms.tfvars; ask the user if unclear."
+    },
+    "unknown_vm": {
+      "exit": 2,
+      "next_action": "Use one of the listed names."
+    },
+    "secrets_missing": {
+      "exit": 3,
+      "next_action": "Find an existing file by variable names only; else the user runs ./lab account."
+    },
+    "vmrest_auth": {
+      "exit": 3,
+      "next_action": "The user corrects credentials or runs ./lab account."
+    },
+    "needs_user": {
+      "exit": 3,
+      "next_action": "Hand the user the command requiring their terminal, sudo or elevated PowerShell."
+    },
+    "lock_held": {
+      "exit": 4,
+      "next_action": "Wait and retry; never delete the lock."
+    },
+    "vmrest_unreachable": {
+      "exit": 4,
+      "next_action": "Precheck only: ask the user to start vmrest and retry."
+    },
+    "plan_destroy_refused": {
+      "exit": 5,
+      "next_action": "Review the VM list; ask the user before --allow-destroy / --confirm."
+    },
+    "config_change_requires_off": {
+      "exit": 5,
+      "next_action": "Revert configuration edits, down the VM, then restore edits and up."
+    },
+    "lan_vnet_mismatch": {
+      "exit": 5,
+      "next_action": "Show desired and actual wiring; ask the user about offline VMX repair."
+    },
+    "vm_power_unknown": {
+      "exit": 5,
+      "next_action": "Run ./lab status; report; no automatic repair."
+    },
+    "guest_not_ready": {
+      "exit": 1,
+      "next_action": "Read the per-VM reason and reference/pitfalls.md; no automatic retry."
+    },
+    "runtime_error": {
+      "exit": 1,
+      "next_action": "Read stderr and ./lab status; ask the user about partly changed distributed systems.",
+      "signal_exits": {
+        "SIGINT": 130,
+        "SIGTERM": 143
+      }
+    }
+  },
+  "envelope": {
+    "ok": "true exactly when error is null",
+    "command": "requested command",
+    "dry_run": "boolean",
+    "changed": "boolean: mutation attempted, possibly partial",
+    "data": "command metadata only",
+    "warnings": "[{code,message,vm}]; status emits vm_power_unknown / lan_vnet_mismatch per affected VM; inspect data.vms and warnings, not only ok",
+    "error": "null | {code,message,hint,details}"
+  }
+}

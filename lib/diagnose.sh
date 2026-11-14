@@ -2,12 +2,11 @@
 # Read-only Terraform diagnosis: shows the VM list in use, the state, the base
 # VM's power state and what a plan would change. It never applies, destroys or
 # powers anything off. Use ./lab up/down/destroy for changes.
-# ./lab status --plan [on|off]   (power_state to plan with; default off)
+# ./lab status --plan (preserve live power)
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
 lab_terraform_env
-power="${1:-off}"
-[[ "$power" == on || "$power" == off ]] || { echo 'Usage: ./lab status --plan [on|off]' >&2; exit 2; }
+[[ $# -eq 0 ]] || { echo 'Usage: ./lab status --plan' >&2; exit 2; }
 
 echo '== VM list'
 if [[ ${#LAB_TF_VAR_ARGS[@]} -gt 0 ]]; then
@@ -35,10 +34,12 @@ terraform init -input=false >/dev/null
 echo '== Terraform state'
 terraform state list 2>/dev/null || echo '(empty or unreadable)'
 
-echo "== Plan (power_state=$power, not applied; no plan file is saved)"
+TF_VAR_power_states=$(terraform show -json | python3 ../lib/power-map.py seed)
+export TF_VAR_power_states
+echo '== Plan (live power preserved, not applied; no plan file is saved)'
 plan=$(mktemp); trap 'rm -f "$plan"' EXIT
 rc=0
-terraform plan -input=false -lock=false -json "${LAB_TF_VAR_ARGS[@]}" -var=power_state="$power" > "$plan" || rc=$?
+terraform plan -input=false -lock=false -json "${LAB_TF_VAR_ARGS[@]}" -var="power_states=$TF_VAR_power_states" > "$plan" || rc=$?
 python3 - "$plan" <<'PY'
 import json, sys
 changes, errors = [], []

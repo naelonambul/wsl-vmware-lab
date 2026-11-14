@@ -1,10 +1,11 @@
 <#
 Windows side of the lab, for WSL mirrored networking. Run from an elevated
-PowerShell in this folder (Status needs no elevation). setup.cmd runs this
+PowerShell in this folder (Status/Network need no elevation). setup.cmd runs this
 script past the default execution policy (for that run only):
 
   .\setup.cmd Install                                         # tasks, firewall, power, then checks
   .\setup.cmd Status                                          # read only
+  .\setup.cmd Network                                         # read-only JSON evidence
   .\setup.cmd Remove                                          # tasks and firewall rules (power values stay)
 
 Install sets up, idempotently:
@@ -27,7 +28,7 @@ this folder, so the repository can move. It removes what older versions installe
 #requires -Version 5.1
 [CmdletBinding()]
 param(
-    [Parameter(Position = 0)][ValidateSet('Install', 'Status', 'Remove')][string]$Action = 'Status',
+    [Parameter(Position = 0)][ValidateSet('Install', 'Status', 'Network', 'Remove')][string]$Action = 'Status',
     [string]$Distro = 'Ubuntu-24.04',
     [string]$AllowedRemoteAddress,
     [string]$VmrestPath = (Join-Path $env:ProgramFiles 'VMware\VMware Workstation\vmrest.exe'),
@@ -157,10 +158,8 @@ function Set-Power {
     Ok "power on AC$(if ($IncludeBattery) { ' and battery' }): no sleep, no hibernation, lid does nothing"
 }
 
-# VMnet0 on "Automatic" bridges to the first adapter bound to the VMware Bridge
-# Protocol; WSL mirrored mode adds a Hyper-V vEthernet adapter that can come
-# first, and then bridged VMs never reach the LAN. Keep the bridge only on
-# physical adapters (Ethernet, Wi-Fi), so "Automatic" picks a real one.
+# Bindings are candidates for bridging, not proof of Automatic's selection.
+# Keep Install's existing policy of removing bindings from virtual adapters.
 function Get-BridgeAdapters {
     $physical = @(Get-NetAdapter -Physical -ErrorAction SilentlyContinue |
         Where-Object { $_.InterfaceDescription -notmatch 'Bluetooth' } | ForEach-Object { $_.Name })
@@ -175,7 +174,7 @@ function Set-Bridge {
         Ok "VMware bridge removed from virtual adapter '$($a.Name)'"
     }
     $left = @(Get-BridgeAdapters | ForEach-Object { $_.Name })
-    if ($left) { Ok "VMware bridge (VMnet0 Automatic) on: $($left -join ', ')" }
+    if ($left) { Ok "VMware Bridge Protocol bound to: $($left -join ', ')" }
     else { Warn 'no physical adapter has the VMware Bridge Protocol; VMs with lan = true cannot reach the LAN' }
 }
 
@@ -193,6 +192,123 @@ function Get-Lan {
     $mask = ($all -shl (32 - $ip.PrefixLength)) -band $all
     $net = [BitConverter]::GetBytes([uint32]([uint64][BitConverter]::ToUInt32($b, 0) -band $mask)); [Array]::Reverse($net)
     [pscustomobject]@{ Cidr = "$(([Net.IPAddress]$net).IPAddressToString)/$($ip.PrefixLength)"; Address = $ip.IPAddress; Adapter = $ip.InterfaceAlias }
+}
+
+# Every evidence item has data + reason. Missing and denied evidence stays
+# null, rather than becoming a guessed default. Registry views are explicit:
+# Registry64 is primary; Registry32 is supplementary evidence only.
+function Read-Evidence([scriptblock]$Read) {
+    try {
+        $data = & $Read
+        if ([object]::ReferenceEquals($data, [System.Management.Automation.Internal.AutomationNull]::Value)) { $data = $null }
+        [pscustomobject]@{ data = $data; reason = $null }
+    }
+    catch { [pscustomobject]@{ data = $null; reason = $_.Exception.Message } }
+}
+
+function Read-RegistryTree($Root, [string]$Path) {
+    $key = $Root.OpenSubKey($Path, $false)
+    if ($null -eq $key) { throw "Registry key missing: $Path" }
+    try {
+        $values = [ordered]@{}
+        foreach ($name in $key.GetValueNames()) { $values[$name] = $key.GetValue($name) }
+        # Flat path records retain all subkeys without growing JSON nesting.
+        # Registry GetValue returns only strings, numeric values or byte/string arrays.
+        [pscustomobject]@{ path = $Path; values = $values; reason = $null }
+        foreach ($name in $key.GetSubKeyNames()) {
+            $childPath = "$Path\$name"
+            try { Read-RegistryTree $Root $childPath }
+            catch { [pscustomobject]@{ path = $childPath; values = $null; reason = [string]$_.Exception.Message } }
+        }
+    } finally { $key.Dispose() }
+}
+
+function Read-RegistryValue($Root, [string]$Path, [string]$Name) {
+    $key = $Root.OpenSubKey($Path, $false)
+    if ($null -eq $key) { throw "Registry key missing: $Path" }
+    try {
+        if ($key.GetValueNames() -notcontains $Name) { throw "Registry value missing: $Path\$Name" }
+        $key.GetValue($Name)
+    } finally { $key.Dispose() }
+}
+
+function Get-NetworkEvidence {
+    $views = [ordered]@{}
+    foreach ($view in 'Registry64', 'Registry32') {
+        $views[$view] = Read-Evidence {
+            $root = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', $view)
+            try {
+                $config = 'SOFTWARE\VMware, Inc.\VMnetLib\VMnetConfig'
+                $vmnets = [ordered]@{}
+                # Default numbers first for comparison, never inferred types.
+                # Workstation supports VMnet0-19; absent keys retain reasons.
+                foreach ($number in @(0, 1, 8) + @(2..7) + @(9..19)) {
+                    $path = "$config\vmnet$number"
+                    $vmnets["VMnet$number"] = [ordered]@{
+                        raw = Read-Evidence { ,@(Read-RegistryTree $root $path) }
+                        subnet = Read-Evidence { Read-RegistryValue $root $path 'IPSubnetAddress' }
+                        subnetMask = Read-Evidence { Read-RegistryValue $root $path 'IPSubnetMask' }
+                        useAdapter = Read-Evidence { Read-RegistryValue $root "$path\Adapter" 'UseAdapter' }
+                        useDHCP = Read-Evidence { Read-RegistryValue $root "$path\DHCP" 'UseDHCP' }
+                        useNAT = Read-Evidence { Read-RegistryValue $root "$path\NAT" 'UseNAT' }
+                        natTCPForwardCount = Read-Evidence {
+                            $tcp = $root.OpenSubKey("$path\NAT\TCP", $false)
+                            if ($null -eq $tcp) { throw "Registry key missing: $path\NAT\TCP" }
+                            try { @($tcp.GetValueNames() | Where-Object { $_ -ne '' }).Count }
+                            finally { $tcp.Dispose() }
+                        }
+                    }
+                }
+                [pscustomobject]@{
+                    vmnets = $vmnets
+                    bridgeAdapters = Read-Evidence {
+                        ,@(Read-RegistryTree $root 'SYSTEM\CurrentControlSet\Services\VMnetBridge\Parameters\Adapters')
+                    }
+                }
+            } finally { $root.Dispose() }
+        }
+    }
+    [pscustomobject]@{
+        # File API returns a plain string, without provider ETS PS* properties.
+        netmap = Read-Evidence { [System.IO.File]::ReadAllText((Join-Path $env:ProgramData 'VMware\netmap.conf')) }
+        registry = $views
+        adapters = Read-Evidence {
+            ,@(Get-NetAdapter -IncludeHidden -ErrorAction Stop | ForEach-Object {
+                [pscustomobject]@{
+                    Name = [string]$_.Name; InterfaceDescription = [string]$_.InterfaceDescription
+                    Status = [string]$_.Status; Virtual = [bool]$_.Virtual; HardwareInterface = [bool]$_.HardwareInterface
+                }
+            })
+        }
+        physicalAdapters = Read-Evidence {
+            ,@(Get-NetAdapter -Physical -ErrorAction Stop | ForEach-Object {
+                [pscustomobject]@{
+                    Name = [string]$_.Name; InterfaceDescription = [string]$_.InterfaceDescription; Status = [string]$_.Status
+                }
+            })
+        }
+        ipConfiguration = Read-Evidence {
+            ,@(Get-NetIPConfiguration -All -ErrorAction Stop | ForEach-Object {
+                [pscustomobject]@{
+                    InterfaceAlias = [string]$_.InterfaceAlias
+                    InterfaceIndex = [int]$_.InterfaceIndex
+                    IPv4Address = @(if ($_.IPv4Address) { $_.IPv4Address | ForEach-Object { [pscustomobject]@{ IPAddress = [string]$_.IPAddress; PrefixLength = [int]$_.PrefixLength } } })
+                    IPv6Address = @(if ($_.IPv6Address) { $_.IPv6Address | ForEach-Object { [pscustomobject]@{ IPAddress = [string]$_.IPAddress; PrefixLength = [int]$_.PrefixLength } } })
+                    IPv4DefaultGateway = @(if ($_.IPv4DefaultGateway) { $_.IPv4DefaultGateway | ForEach-Object { [pscustomobject]@{ NextHop = [string]$_.NextHop } } })
+                    IPv6DefaultGateway = @(if ($_.IPv6DefaultGateway) { $_.IPv6DefaultGateway | ForEach-Object { [pscustomobject]@{ NextHop = [string]$_.NextHop } } })
+                    DNSServer = @(if ($_.DNSServer) { $_.DNSServer | ForEach-Object { [pscustomobject]@{ AddressFamily = [int]$_.AddressFamily; ServerAddresses = [string[]]$_.ServerAddresses } } })
+                }
+            })
+        }
+        bridgeBindings = Read-Evidence {
+            ,@(Get-NetAdapterBinding -IncludeHidden -ComponentID vmware_bridge -ErrorAction Stop | ForEach-Object {
+                [pscustomobject]@{
+                    Name = [string]$_.Name; InterfaceDescription = [string]$_.InterfaceDescription
+                    ComponentID = [string]$_.ComponentID; Enabled = [bool]$_.Enabled
+                }
+            })
+        }
+    }
 }
 
 function Show-Status {
@@ -218,11 +334,18 @@ function Show-Status {
     $bridge = @(Get-BridgeAdapters)
     $virtual = @($bridge | Where-Object { -not $_.Physical } | ForEach-Object { $_.Name })
     if ($virtual) { Warn "VMware bridge also on virtual adapters: $($virtual -join ', ') (VMnet0 Automatic may pick one; Install fixes it)" }
-    elseif ($bridge) { Ok "VMware bridge (VMnet0 Automatic) on: $(($bridge | ForEach-Object { $_.Name }) -join ', ')" }
+    elseif ($bridge) { Ok "VMware Bridge Protocol bound to: $(($bridge | ForEach-Object { $_.Name }) -join ', ')" }
     return $ok
 }
 
 switch ($Action) {
+    'Network' {
+        [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+        # Deepest container: registry/view/data/vmnets/VMnetN/raw/data/[record]/values/[array].
+        # Root is depth 0; depth 10 retains registry byte/string arrays. Subkeys are flat path records.
+        Get-NetworkEvidence | ConvertTo-Json -Depth 10
+        exit 0
+    }
     'Status' { if (Show-Status) { exit 0 } else { exit 1 } }
     'Remove' {
         Assert-Admin

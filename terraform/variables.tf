@@ -14,14 +14,14 @@ variable "vmrest_password" {
   sensitive   = true
 }
 
-variable "power_state" {
-  description = "Desired VM power state"
-  type        = string
-  default     = "off"
+variable "power_states" {
+  description = "Per-VM power seeded from live vmrest; new VMs default off"
+  type        = map(string)
+  default     = {}
 
   validation {
-    condition     = contains(["on", "off"], var.power_state)
-    error_message = "power_state must be on or off."
+    condition     = alltrue([for state in values(var.power_states) : contains(["on", "off"], state)])
+    error_message = "power_states values must be on or off."
   }
 }
 

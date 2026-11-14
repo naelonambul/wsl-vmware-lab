@@ -72,7 +72,7 @@ resource "vmworkstation_virtual_machine" "vm" {
   path        = "${var.vm_root_win}\\${each.key}\\${each.key}.vmx"
   processors  = each.value.processors
   memory      = each.value.memory_mb
-  state       = var.power_state
+  state       = lookup(var.power_states, each.key, "off")
 
   lifecycle {
     replace_triggered_by = [terraform_data.vm_base[each.key]]
