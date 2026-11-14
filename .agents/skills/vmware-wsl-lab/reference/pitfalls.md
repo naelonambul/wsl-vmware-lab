@@ -90,3 +90,12 @@ Do not restart WSL or edit scheduled tasks during an active remote session witho
 | `Resource targeting is in effect` warning during `on` | expected: new VMs are created powered off with `-target` so running VMs stay on | none; the following full apply converges everything |
 | Old `verify-lifecycle.sh` | uses bare destroy, predates cleanup flow | read its results; do not rerun as the preferred entry point |
 | `REMOTE HOST IDENTIFICATION HAS CHANGED` in Ansible after re-creating the clone | vmrest derives the VM id from the VMX path, so a clone re-created at the same path reuses the id and its old `known_hosts-<id>` | `lib/bootstrap-guest.sh` writes a new pin for every new disk; on older checkouts `git pull` and re-run `on`. Never disable host key checking |
+
+## LAN and distributed systems
+
+| Symptom | Check before acting | Scoped response |
+|---|---|---|
+| `lan0` gets no router DHCP | Fresh `./lab network`: actual VMnet roles, bridge registry and bindings, physical adapter/link, VMX desired/actual; bindings do not identify Automatic's selection | Show unresolved evidence and ask the user; never reset networks. See the network reference's offline VMX procedure |
+| `lan_vnet_mismatch` on `up` | Compare each VM's desired and actual ethernet2 | Ask whether to revert the setting or repair powered-off VMXs; `down` is allowed; no bypass and no re-bootstrap |
+| Cluster does not form after install or reboot | Exact-version official bootstrap/restart order, package auto-start, system readiness/membership, `lan0` addresses | Establish the distributed-systems record before configuring/starting; a listening port alone is insufficient |
+| Node cannot join after a playbook rerun | One-time initialization guards, membership identity, persistent state and state-dependent bootstrap procedure | Stop and inspect; never repeat formatting/bootstrap or erase data to make a node join. Ask the user using the documented recovery options |

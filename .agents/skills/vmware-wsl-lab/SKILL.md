@@ -9,7 +9,13 @@ description: Sets up and operates a Windows + WSL2 + VMware Workstation lab wher
 
 Host name, Windows user, WSL user, distro and repository location differ on every machine. Discover them; never reuse values from examples or earlier sessions.
 
-## 0. Detect the environment, then run preflight
+## 0. VMware networks first, then environment and preflight
+
+Before `./lab setup` or **any** `./lab up`, run `./lab network` read-only in each host's checkout. Read [reference/network.md](reference/network.md) for the evidence checklist and read-only PowerShell fallback when WSL/scripts cannot run. Record VMnet0/1/8 and every other VMnet: actual role evidence, subnet, host adapter, DHCP/NAT settings, NAT forwards, physical adapters and bridge bindings. A VMnet number does not prove its type. Bindings are candidates, not proof of the adapter Automatic selected. Never reset VMware networks.
+
+If VMnet0 Automatic's physical bridge remains unresolved, show the fresh evidence and ask the user before enabling `lan`. Select `LAB_LAN_VNET` only from inspected evidence; empty/VMnet0 is bridged, VMnet1-19 is custom, and the effective LAN network must differ from NAT and management. Existing LAN mismatches block every `up`, including `--allow-destroy`; `down` stays available for offline repair. Never bypass the gate or rerun bootstrap on an existing disk. A base NAT mismatch needs `setup --recreate` and rebuilt clones: show the impact and ask the user first.
+
+`setup.cmd Install` is a host mutation: boot tasks for WSL sshd and vmrest, legacy cleanup, Windows/Hyper-V SSH firewall rules, AC power policy (battery only with `-IncludeBattery`, power skipped with `-SkipPower`), and removing VMware Bridge Protocol bindings from virtual adapters. Network inspection does not authorize Install. `setup.cmd Network` and Status are read-only and need no elevation.
 
 On Windows, inspect `wsl --version` and `wsl --list --verbose` first. For initial WSL setup or a pending installation reboot, read [reference/install-new-pc.md](reference/install-new-pc.md), section 2, before attempting Bash preflight. The setup order is WSL web update, host-specific resource settings, then Ubuntu preparation. A reboot-required result is a checkpoint, not completed installation. Keep the setup checkpoint in `%LOCALAPPDATA%\wsl-vmware-lab\setup-checkpoint.json` (non-secret JSON: stage, boot time, completed and pending steps, next checks); read it first when resuming. Resume from recorded evidence after reboot; do not reset or reinstall an existing distribution. An explicit update/setup request follows this path even when WSL is already installed.
 
@@ -80,7 +86,7 @@ All bash scripts source `lib/config.sh`, which reads optional settings from `lab
 - Guest image: `ubuntu-24.04`, `ubuntu-22.04` or `debian-13` (Debian's checksum list is not signed; say so), per VM with `image` in `vms.tfvars`, default `LAB_IMAGE` in `lab.env`. Guests need cloud-init, an SSH server, sudo and python3, not VMware Tools. Changing a VM's image rebuilds that VM with `./lab up --allow-destroy`: ask first. For an image not in the table, stop and ask the user; do not swap images silently.
 - Guest VM user (inside the VM) is fixed: cloud-init creates `lab` (lab key, passwordless sudo) in every clone, and the clone's SSH host key is generated in WSL and pinned before its first boot (`lib/cloud-config.sh`, `lib/bootstrap-guest.sh`). The base is never booted. The WSL user is separate: the account the user SSHes into this PC as (the `User` of their SSH config entry); scripts run as it and never set it.
 - Private files live in `~/.config/wsl-vmware-lab/` (`LAB_PRIVATE_DIR`).
-- Windows side: one script, `windows\setup.cmd Install|Status|Remove` (runs `setup.ps1` past the default execution policy for that run only; `-AllowedRemoteAddress` defaults to the LAN of the default route) (`-AllowedRemoteAddress <LAN>`, `-Distro`, `-VmrestPath`, `-IncludeBattery`, `-SkipPower`). Its two boot tasks run `wsl.exe` and `vmrest.exe` directly, so nothing depends on the checkout path; re-run Install only to change its parameters. Mirrored networking only.
+- Windows side: one script, `windows\setup.cmd Install|Status|Network|Remove` (runs `setup.ps1` past the default execution policy for that run only; `-AllowedRemoteAddress` defaults to the LAN of the default route) (`-AllowedRemoteAddress <LAN>`, `-Distro`, `-VmrestPath`, `-IncludeBattery`, `-SkipPower`). Its two boot tasks run `wsl.exe` and `vmrest.exe` directly, so nothing depends on the checkout path; re-run Install only to change its parameters. Mirrored networking only.
 - vmrest starts at Windows boot before any logon (`VMware vmrest API`: boot trigger, S4U, no time limit, restart 5 x 1 min). A logon-only start is not acceptable.
 
 ## 4. Rules that always apply
@@ -96,6 +102,8 @@ All bash scripts source `lib/config.sh`, which reads optional settings from `lab
 9. **Verification.** Report a step as done only with the command and its actual output. Historical results in references are not fresh evidence. A test passes only under the conditions it claims: for example, a credential written and read in the same session proves nothing about a fresh boot.
 10. **Hosts that differ from the skill.** When a host was set up another way (a vmrest task with another name or a logon trigger, the account in another file or under `VMWS_USER`, the OVA under an old name), do not work around it silently. Show the difference, propose converting the host to the skill's way, and on the user's OK convert it: disable rather than delete foreign tasks and keep foreign files. Then re-run preflight. If the difference reveals a gap in the skill itself, fix the skill and repository too.
 11. **Test hosts.** Run disruptive tests (stopping vmrest, reboots, lifecycle runs) only on a host the user names as free for testing, never on a host in use.
+
+12. **Distributed systems require a documented order.** Before configuring or starting replication, master/worker, membership or quorum services, read the official documentation for the exact installed version and write the configuration, first-start/bootstrap, full-shutdown and restart order, with sources and readiness queries. No record, no configure and no start. Follow [reference/distributed-systems.md](reference/distributed-systems.md), including package auto-start suppression and guards for irreversible initialization. Several PCs need a written order per host, one checkout per PC, services over `lan0`.
 
 ## 5. Routine command set (in WSL, from the repository found in section 0)
 
@@ -116,7 +124,7 @@ cd "$repo"
 
 Several VMs: `cp vms.tfvars.example vms.tfvars`, edit, then `./lab up`. Changing the list later: edit and run `on` again (removing entries: `./lab up --allow-destroy`, after the user confirms).
 
-`ANSIBLE_TIMEOUT=60` avoids the known 12-second privilege-escalation prompt timeout.
+`ANSIBLE_TIMEOUT=60` gives slow privilege escalation a one-minute budget, avoiding the known 12-second prompt timeout.
 
 ## 6. Acceptance checklist (copy and tick)
 

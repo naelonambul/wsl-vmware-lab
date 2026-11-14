@@ -9,12 +9,37 @@
 LAB_PROJECT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 export LAB_PROJECT_DIR
 
+# PR 3 will record these errors in the command envelope. Until then keep the
+# same names and exit codes in a small text-only shim.
+lab_fail() {
+  local code="$1" message="$2" rc=1
+  case "$code" in
+    config_error) rc=2 ;;
+    lan_vnet_mismatch) rc=5 ;;
+  esac
+  printf '[ERROR] %s: %s\n' "$code" "$message" >&2
+  [[ -z "${3:-}" ]] || printf '        %s\n' "$3" >&2
+  exit "$rc"
+}
+
 LAB_ENV_FILE="${LAB_ENV_FILE:-$LAB_PROJECT_DIR/lab.env}"
 if [[ -f "$LAB_ENV_FILE" ]]; then
   # Strip CR so a lab.env saved with Windows (CRLF) line endings does not put
   # "\r" into VM names (VMX syntax error, vmrest HTTP 500 on registration).
   # shellcheck disable=SC1090
   source <(tr -d '\r' < "$LAB_ENV_FILE")
+fi
+
+# VMnet0 is Workstation's implicit bridged network; custom VMnets are 0-19.
+# Validate before profile discovery or any command can touch the host.
+export LAB_NAT_VNET="${LAB_NAT_VNET:-VMnet8}"
+export LAB_MGMT_VNET="${LAB_MGMT_VNET:-VMnet1}"
+export LAB_LAN_VNET="${LAB_LAN_VNET:-}"
+if [[ -n "$LAB_LAN_VNET" && ! "$LAB_LAN_VNET" =~ ^VMnet([0-9]|1[0-9])$ ]]; then
+  lab_fail config_error 'LAB_LAN_VNET must be empty or VMnet0 through VMnet19.'
+fi
+if [[ "${LAB_LAN_VNET:-VMnet0}" == "$LAB_NAT_VNET" || "${LAB_LAN_VNET:-VMnet0}" == "$LAB_MGMT_VNET" ]]; then
+  lab_fail config_error 'The effective LAN VMnet must differ from LAB_NAT_VNET and LAB_MGMT_VNET.'
 fi
 
 # Windows user profile of the logged-in Windows account, as a Windows path.
@@ -34,8 +59,6 @@ export LAB_SSH_KEY="${LAB_SSH_KEY:-$LAB_PRIVATE_DIR/lab_ed25519}"
 export LAB_INVENTORY="${LAB_INVENTORY:-$LAB_PRIVATE_DIR/inventory.json}"
 export LAB_DHCP_LEASES="${LAB_DHCP_LEASES:-/mnt/c/ProgramData/VMware/vmnetdhcp.leases}"
 export LAB_DHCP_CONF="${LAB_DHCP_CONF:-/mnt/c/ProgramData/VMware/vmnetdhcp.conf}"
-export LAB_NAT_VNET="${LAB_NAT_VNET:-VMnet8}"
-export LAB_MGMT_VNET="${LAB_MGMT_VNET:-VMnet1}"
 export LAB_BASE_DIR="${LAB_BASE_DIR:-$LAB_PROJECT_DIR/base}"
 # Guest image of VMs that do not name one in vms.tfvars (lib/base.sh lists the
 # supported images). Each image in use has its own base: VM "<image>-base",

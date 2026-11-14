@@ -9,12 +9,13 @@
 #   ./lab configure [PLAYBOOK] [ansible-playbook options]
 #   ./lab destroy [-auto-approve]  delete every VM of this checkout
 #   ./lab cleanup                  retry cleanup left by an interrupted delete
+#   ./lab network                  read-only Windows/VMX network evidence (no vmrest)
 set -euo pipefail
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 cmd="${1:-}"
 [[ $# -gt 0 ]] && shift
 
-usage() { sed -n '2,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
+usage() { sed -n '2,12p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//' >&2; exit 2; }
 
 # Two lab commands on the same checkout (two terminals, an agent and a person)
 # would race on the Terraform state, the base and the inventory.
@@ -27,6 +28,9 @@ lock() {
 }
 
 case "$cmd" in
+  network)
+    [[ $# -eq 0 ]] || usage
+    exec bash "$here/lib/network.sh" ;;
   setup)
     lock
     [[ $# -eq 0 || "$*" == --recreate ]] || usage

@@ -12,6 +12,18 @@ set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/config.sh"
 lab_terraform_env
 cd "$LAB_PROJECT_DIR/terraform"
+# Gate every up entry before init, cleanup replay or planning. Read instances
+# from state JSON, including clones absent from stale Terraform outputs.
+if [[ "${1:-status}" == on && -f terraform.tfstate ]]; then
+  lan_rc=0
+  terraform show -json | python3 ../lib/network-inspect.py gate || lan_rc=$?
+  case "$lan_rc" in
+    0) ;;
+    5) lab_fail lan_vnet_mismatch 'Existing LAN VM wiring differs from LAB_LAN_VNET.' \
+         'Power off for offline VMX repair; see reference/network.md. There is no bypass.' ;;
+    *) lab_fail runtime_error 'Cannot inspect existing clone LAN wiring; nothing changed.' ;;
+  esac
+fi
 if [[ "${1:-status}" != status ]]; then
   if ! api_code=$(curl --connect-timeout 3 --max-time 8 -sS -o /dev/null -w '%{http_code}' \
     -K - "${TF_VAR_vmrest_endpoint%/}/vms" < <(lab_curl_auth)); then
@@ -253,15 +265,15 @@ case "${1:-status}" in
     ;;
   status)
     # Short summary: each VM of this checkout and its power state (vmrest).
-    vms=$(terraform output -json vms 2>/dev/null || echo '{}')
-    python3 -c 'import json,sys; [print(k, v["id"]) for k, v in sorted(json.loads(sys.argv[1]).items())]' "$vms" |
-    while read -r name id; do
+    vms=$(state_json | python3 ../lib/network-inspect.py status)
+    while IFS=$'\t' read -r name id lan; do
+      [[ -n "$name" ]] || continue
       [[ "$id" =~ ^[A-Za-z0-9_-]+$ ]] || continue
       p=$(curl --connect-timeout 3 --max-time 10 -fsS -K - "${TF_VAR_vmrest_endpoint%/}/vms/$id/power" < <(lab_curl_auth) 2>/dev/null |
           python3 -c 'import json,sys; print(json.load(sys.stdin).get("power_state", "?"))' 2>/dev/null || echo unknown)
-      echo "[VM] $name: $p"
-    done
-    [[ "$vms" == '{}' ]] && echo '[OK] No VMs in this checkout'
+      echo "[VM] $name: $p ethernet2=$lan"
+    done <<< "$vms"
+    [[ -z "$vms" ]] && echo '[OK] No VMs in this checkout'
     if [[ -f "$journal" ]]; then
       echo '[WARN] Cleanup pending for deleted VMs (run: ./lab cleanup):'
       python3 ../lib/cleanup-guest.py list "$journal" | sed 's/^/       /'

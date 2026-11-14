@@ -115,13 +115,19 @@ settings={
  'uuid.action':'create',
 }
 if os.environ['VM_LAN'] != 'none':
-    # Bridged to the physical LAN through VMnet0. vmxnet3 sits on PCIe, so the
+    # LAN uses implicit VMnet0 bridging or the configured custom VMnet.
+    # vmxnet3 sits on PCIe, so the
     # VM needs a PCIe root port (the base VMX has none).
     settings.update({'pciBridge0.present':'TRUE', 'pciBridge4.present':'TRUE',
                      'pciBridge4.virtualDev':'pcieRootPort', 'pciBridge4.functions':'8',
                      'ethernet2.present':'TRUE', 'ethernet2.startConnected':'TRUE',
                      'ethernet2.connectionType':'bridged', 'ethernet2.virtualDev':'vmxnet3',
                      'ethernet2.addressType':'static', 'ethernet2.address':os.environ['LAN_MAC']})
+    lan_vnet = os.environ['LAB_LAN_VNET']
+    if lan_vnet and lan_vnet != 'VMnet0':
+        settings.update({'ethernet2.connectionType':'custom', 'ethernet2.vnet':lan_vnet})
+    else:
+        s=re.sub(r'(?mi)^\s*ethernet2\.vnet\s*=.*\n?', '', s)
 s=re.sub(r'(?mi)^\s*(uuid\.bios|uuid\.location|vc\.uuid|ethernet\d+\.generatedAddress(Offset)?)\s*=.*\n?','',s)
 for key,value in settings.items():
     line=f'{key} = "{value}"'
