@@ -119,6 +119,44 @@ elif args[0]=='destroy':
 
 
 class PowerTests(unittest.TestCase):
+    def test_status_warnings_preserve_success_and_all_vm_rows(self):
+        vms = [dict(name=name, id=name) for name in ('unknown', 'mismatch', 'both', 'healthy')]
+        network = importlib.import_module('network-inspect')
+
+        def live(vm):
+            if vm['name'] in ('unknown', 'both'):
+                raise ValueError('power API failed')
+            return 'off' if vm['name'] == 'healthy' else 'on'
+
+        def lan(vm):
+            return dict(desired=None, actual=None, error=None,
+                        mismatch=vm['name'] in ('mismatch', 'both'))
+
+        with tempfile.TemporaryDirectory() as folder:
+            result = Path(folder) / 'result.jsonl'
+            with patch.dict(os.environ, LAB_RESULT_FILE=str(result)), \
+                    patch.object(power.sys, 'argv', ['power-map.py', 'status']), \
+                    patch.object(power.sys, 'stdin', io.StringIO('{}')), \
+                    patch.object(power, 'vm_instances', return_value=vms), \
+                    patch.object(power, 'power', side_effect=live), \
+                    patch.object(network, 'lan_evidence', side_effect=lan), \
+                    patch('sys.stdout', new_callable=io.StringIO):
+                self.assertEqual(power.main(), 0)
+            with patch('sys.stdout', new_callable=io.StringIO) as output:
+                self.assertEqual(power.envelope.finish(str(result), 'status', False, 0), 0)
+            report = json.loads(output.getvalue())
+        self.assertTrue(report['ok'])
+        self.assertIsNone(report['error'])
+        self.assertFalse(report['changed'])
+        self.assertEqual([(row['name'], row['power'], row['lan']['mismatch'])
+                          for row in report['data']['vms']],
+                         [('unknown', 'unknown', False), ('mismatch', 'on', True),
+                          ('both', 'unknown', True), ('healthy', 'off', False)])
+        self.assertEqual([(w['vm'], w['code']) for w in report['warnings']],
+                         [('unknown', 'vm_power_unknown'), ('mismatch', 'lan_vnet_mismatch'),
+                          ('both', 'vm_power_unknown'), ('both', 'lan_vnet_mismatch')])
+        self.assertTrue(all(w['message'] for w in report['warnings']))
+
     def test_live_power_table_and_no_provider_state_guess(self):
         vm = dict(id='fixture', name='fixture')
         env = dict(VMWS_USERNAME='fake', VMWS_PASSWORD='fake', VMWS_ENDPOINT='offline')

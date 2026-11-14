@@ -29,11 +29,7 @@ controls package scripts that honor that policy; verify the service's state.
 Guard format/init steps using the system's persistent state, not a temporary
 marker. A rerun must not reformat a node or bootstrap another independent cluster.
 
-Ordered VM selection (`./lab up <vm>` / `./lab down <vm>`) is introduced in
-PR 2. **Until then this CLI starts/stops the whole checkout:** do not use a
-multi-VM up for a system that requires ordered VM starts. Stop and explain the
-limitation. Once selection exists, use one invocation per ordered step; a
-multi-name call gives no ordering guarantee. Between steps check readiness with
+Use one `./lab up <vm>` or `./lab down <vm>` invocation per ordered step; a multi-name call gives no ordering guarantee. Between steps check readiness with
 the system's own query, for example a check playbook with `--limit`; an open
 TCP port alone is insufficient. Inventory readiness can still depend on other
 running VMs, and inventory groups are not a durable source of cluster topology.

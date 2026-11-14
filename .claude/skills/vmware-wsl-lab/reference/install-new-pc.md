@@ -33,7 +33,7 @@ This is an agent workflow, not a bundled unattended installer. It tells the exec
 - Never disable Hyper-V, Virtual Machine Platform, virtualization-based security or Secure Boot merely to make VMware start: WSL2 depends on the Windows virtualization stack. Diagnose compatibility for the installed Workstation version first.
 - Use official downloads. Ask the user to complete account credentials, MFA and CAPTCHA themselves. Do not bypass these controls.
 - Keep secret values in a private `.env` outside the shared project; create `.env.example` with fake placeholders for every introduced environment variable. Do not log secret values or copy private keys, generated inventories or Terraform state into a repository.
-- This repository reads `lab.env` (or `LAB_ENV_FILE`). A legacy `vmrest.env` is still read when `VMWS_CREDENTIALS_FILE` points to it. Paths and usernames from the original lab are examples, never defaults for a new machine; the defaults here are the Windows user profile; the guest VM user is the image's default user (reported via guestinfo), and the WSL user is whoever the user SSHes in as (their SSH config `User`), never set by scripts.
+- This repository reads `lab.env` (or `LAB_ENV_FILE`). A legacy `vmrest.env` is still read when `VMWS_CREDENTIALS_FILE` points to it. Paths and usernames from the original lab are examples, never defaults for a new machine; the defaults here are the Windows user profile; the guest VM user is fixed `lab` (created by cloud-init; host keys generated and pinned in WSL before first boot), and the WSL user is whoever the user SSHes in as (their SSH config `User`), never set by scripts.
 - Record chosen package versions in an installation manifest. Pin Terraform providers. Do not silently install an unbounded latest version and describe it as reproduced.
 
 ## 1. Discover the machine and create a checkpoint
@@ -52,9 +52,9 @@ Get-NetTCPConnection -State Listen | Where-Object LocalPort -in 22,8697
 
 Some commands fail normally on a machine without WSL; distinguish missing software from failed installation. Determine the actual Windows profile, LAN address/subnet, WSL user, available disk space, existing Workstation version, VM locations and port ownership. This playbook targets an x64 Windows host and amd64 Ubuntu guest. Stop and redesign for ARM rather than downloading amd64 VM images blindly.
 
-Prefer a supported Windows 11 release with mirrored WSL networking. Microsoft documents mirrored mode for Windows 11 22H2 and later. For a host without that capability, use the NAT branch below and verify its different API/SSH routes explicitly.
+Prefer a supported Windows 11 release with mirrored WSL networking. Microsoft documents mirrored mode for Windows 11 22H2 and later. A host without mirrored-networking capability is unsupported; stop and resolve that prerequisite before proceeding.
 
-Choose and record these non-secret parameters in a local installation checkpoint: distribution name, WSL username, project Windows path, corresponding WSL path, VM root directory, base name, unique test clone name, LAN subnet, chosen versions and current stage. Use `wslpath` for path conversion. Place VM files on a Windows drive, not the WSL ext4 filesystem. If antivirus blocks downloads or writes under the Windows user profile, as on one host, put the repository outside it (for example `C:\wsl-vmware-lab`). The clone folder is VMware Workstation's default VM location (Edit > Preferences > Workspace; `prefvmx.defaultVMPath` in `%APPDATA%\VMware\preferences.ini`, default `%USERPROFILE%\Documents\Virtual Machines`): vmrest clones there whatever path Terraform asks for, so `LAB_VM_ROOT_WIN` must equal it (preflight checks). To keep VMs outside the profile, change that Workstation setting first, restart vmrest, then set `LAB_VM_ROOT_WIN` to the same folder. After moving an existing repository, re-register the base VM with `./lab setup` (registration is idempotent), re-run `windows/install-vmrest-task.ps1` and `wsl2-ssh-forward.ps1 InstallTask` (elevated) so the tasks point at the new path, then run preflight.
+Choose and record these non-secret parameters in a local installation checkpoint: distribution name, WSL username, project Windows path, corresponding WSL path, VM root directory, base name, unique test clone name, LAN subnet, chosen versions and current stage. Use `wslpath` for path conversion. Place VM files on a Windows drive, not the WSL ext4 filesystem. If antivirus blocks downloads or writes under the Windows user profile, as on one host, put the repository outside it (for example `C:\wsl-vmware-lab`). The clone folder is VMware Workstation's default VM location (Edit > Preferences > Workspace; `prefvmx.defaultVMPath` in `%APPDATA%\VMware\preferences.ini`, default `%USERPROFILE%\Documents\Virtual Machines`): vmrest clones there whatever path Terraform asks for, so `LAB_VM_ROOT_WIN` must equal it (preflight checks). To keep VMs outside the profile, change that Workstation setting first, restart vmrest, then set `LAB_VM_ROOT_WIN` to the same folder. After moving an existing repository, re-register the base VM with `./lab setup` (registration is idempotent), then run host preflight. Boot tasks execute system binaries directly and do not need reinstalling after a repository move. Use `windows\setup.cmd Install` (elevated) only for initial host installation or an authorized parameter change.
 
 ## 2. Update WSL, set resources, then prepare Ubuntu
 
@@ -79,7 +79,7 @@ Inspect `%USERPROFILE%\.wslconfig` if present and back it up before editing. Mer
 
 For example, on a roughly 32 GiB / 16 logical CPU host, 8GB memory, 4 processors and 4GB swap can be an initial allocation when leaving capacity for Windows and VMware. This is a sizing example, not a verified setting for every workload.
 
-For supported mirrored mode, merge `networkingMode=mirrored` into the same section when configuring the lab network; otherwise use the NAT branch in section 3.
+Merge `networkingMode=mirrored` into the same section when configuring the lab network. Mirrored networking is required; there is no supported NAT branch.
 
 A resource/configuration change normally needs only `wsl --shutdown` and a new WSL start. This stops all running distributions: inspect `wsl --list --running`, coordinate active work, and keep Windows-side recovery access. A shutdown does not replace a Windows restart explicitly requested by an installer.
 
@@ -193,7 +193,7 @@ curl --max-time 8 -sS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8697/api
 
 HTTP 401 demonstrates reachability and an authentication requirement. HTTP 000/timeouts do not. Next verify authenticated `GET /api/vms` using the private `.env` without printing credentials or enabling shell tracing. Avoid passing credentials in command-line arguments when implementing a reusable client; load them inside a Python API client and construct the Authorization header in memory.
 
-For NAT WSL, do not assume localhost reaches Windows. Discover the Windows-facing route and implement the narrowest necessary API bridge/bind/firewall configuration, documenting its authentication and exposure. Never apply a broad LAN rule to an unauthenticated endpoint.
+If WSL is in NAT mode, stop and configure supported mirrored networking in `.wslconfig`, coordinate WSL shutdown/restart, then recheck the loopback endpoint and listener. Do not bridge/bind the API to another address or expose vmrest to the LAN.
 
 vmrest must start at Windows **boot, before any logon**. `windows\setup.cmd Install` registers task `VMware vmrest API`: boot trigger, S4U as the Windows user who ran `vmrest.exe -C` (the account lives in that user's profile), no time limit, restart 5 times 1 minute apart, action `vmrest.exe` itself. If another tool already registered a vmrest task, disable it (do not delete) so only one launcher remains. Acceptance: reboot, then confirm with nobody logged on (`quser` reports no users) that `curl` from WSL gets HTTP 401. A logon-triggered start is not acceptable.
 
@@ -222,20 +222,18 @@ The repository implements the following artifacts. If you rebuild them elsewhere
 | Artifact | Required behavior |
 | --- | --- |
 | `terraform/main.tf`, `variables.tf` | Pin `elsudano/vmworkstation` 2.0.1 for reproducing the tested example; endpoint includes `/api`; explicit base and unique clone name/path; 2 vCPU and 2048 MB test RAM if resources permit |
-| Base preparation scripts | Verify official Ubuntu 24.04 amd64 cloud-image checksum; extract/convert VMDK; generate VMX and base seed; register VMX via API without GUI |
+| Base preparation scripts | Support `ubuntu-24.04`, `ubuntu-22.04`, and `debian-13`; verify image checksums (Ubuntu signed manifests; Debian checksum list unsigned); convert disk, generate/register VMX without GUI; keep base unbooted with no base seed (seeds belong to clones) |
 | Registration client | Authenticated `POST /api/vms/registration`; first list inventory and match normalized Windows path to avoid duplicate registration |
 | `lib/bootstrap-guest.sh` | While clone is OFF, attach per-clone cloud-init ISO on Windows storage and configure NAT plus host-only management NIC |
-| `lib/lifecycle.sh` | Initialize; apply OFF for initial creation/bootstrap, then ON; explicit OFF/status; cleanup-aware destroy |
-| `lib/guest-inventory.py` | Read state VMX path, management MAC and DHCP leases; select the current lease on the management subnet; pin the guest-reported SSH host key; write private inventory |
+| `lib/lifecycle.sh` | Initialize; plain `./lab up` creates/bootstraps new or replacement VMs OFF and preserves existing live power; `./lab up --all` or `./lab up <vm>...` starts only the selection; graceful/explicit hard down, status and cleanup-aware destroy |
+| `lib/guest-inventory.py` | Read state VMX path, management MAC and DHCP leases; select the current lease on the management subnet; require the SSH host key generated and pinned in WSL by bootstrap before first boot (never learn it from the guest); write private inventory |
 | `lib/guest-proxy.sh`, `windows/tcp-relay.ps1` | Optional per-connection Windows TCP relay if WSL cannot reach the management subnet |
 | `lib/configure.sh`, Ansible playbook | Wait for SSH/cloud-init; install nginx; deploy fixed test page; enable service; assert HTTP 200 and expected content; support idempotent rerun |
 | Cleanup helper | After successful destroy, remove only the recorded clone seed ISO and verified empty clone directory; preserve base |
 
-Download Ubuntu cloud images only from the official Ubuntu cloud-image service. Verify SHA256 against the official manifest; verify the manifest signature when tooling permits. A checksum downloaded from an unrelated mirror is not evidence of provenance.
+Download supported Ubuntu images from the official Ubuntu cloud-image service and Debian 13 from the official Debian cloud-image service. Verify SHA256 against the official manifest; Ubuntu manifests require signature verification, while the Debian checksum list is unsigned. A checksum downloaded from an unrelated mirror is not evidence of provenance.
 
-Create an unencrypted SSH key only if appropriate for this local automation scope; protect its private file and directory permissions. Cloud-init must keep the image's default user (`users: [default]`), authorize the public key for it, disable root/password SSH as intended, and enable DHCP. For the guest NIC type, the tested older VMX used `e1000`; do not assume `e1000e` fits an incompatible virtual PCI layout.
-
-Prepare the base on Windows-accessible storage, register it through vmrest, boot it via the supported CLI, verify initialization completion and shut it down before cloning. Do not treat a fixed sleep as proof of cloud-init completion. Avoid embedding per-clone instance IDs in the reusable base. Record the base API ID and preserve it during later cleanup.
+Run `./lab network` first, then `bash lib/preflight.sh` and require exit 0. This host-only script warns about missing tools without invoking Terraform and prints text, not JSON; no public `./lab` host-only command exists. Run `./lab setup`, then full `./lab status` (which requires Terraform). Use `./lab setup` after the network inspection and host preflight; the repository handles the lab key, image verification, disk conversion, registration and unbooted base marker. It prepares one base per supported image in use. Do not boot or customize the base. Cloud-init creates the fixed `lab` guest account in each clone, with key login and passwordless sudo, and bootstrap generates/pins each clone's SSH host key before first boot. Do not substitute image-default users or learn host keys on first contact. Existing VM access uses its configured account; account/key changes need an explicit user request.
 
 For the tested provider schema, use `vmworkstation_virtual_machine`, `sourceid` and `denomination`, with a nonempty description. Validate the pinned schema instead of guessing names from another provider. Use a custom VMnet8/NAT mapping consistent with the discovered host to avoid the historical NIC recreation failure. Terraform may invoke bootstrap through `terraform_data` and `local-exec`; this remains a Terraform infrastructure step, not an Ansible call to Terraform.
 
@@ -248,14 +246,17 @@ Implement a cleanup trap before creating resources. Preserve any shared inventor
 Run the prepared project's commands, adapting filenames if implementation differs:
 
 ```bash
+./lab network
+./lab status
 ./lab up
+./lab up --all
 ./lab configure
 ./lab configure
-./lab down
-./lab destroy
+./lab down --all
+./lab destroy --confirm=<names>
 ```
 
-For an explicitly authorized disposable test, the wrapper can accept Terraform's `-auto-approve -input=false` destroy arguments. Review the state target first. Use bounded waits and report failures precisely.
+For an explicitly authorized disposable test, review `./lab destroy --dry-run`, then pass `--confirm=<names>` equal to the full state VM set (distinct comma-separated names). There is no prompt or Terraform flag passthrough. Use bounded waits and report failures precisely.
 
 Required evidence:
 
@@ -269,7 +270,7 @@ Required evidence:
 - Original inventory is restored if temporarily shared.
 - External SSH and WSL-to-vmrest access still work after the selected persistence test.
 
-The existing lab needed `ANSIBLE_TIMEOUT=60` after a default 12-second privilege-escalation prompt timeout. A clone may expose an inherited SSH key before cloud-init regenerates it; recreating the same clone path may also reuse the VM ID/IP and old known-host filename. Verify the intended clone via API path and management MAC/lease before removing only its stale known-host entry. Never solve this by globally disabling host verification. Distinguish a stale-entry problem from a guest that never started SSH.
+The existing lab needed `ANSIBLE_TIMEOUT=60` after a default 12-second privilege-escalation prompt timeout. Bootstrap generates and pins each clone’s SSH host key in WSL before first boot; inventory never learns it from the guest. On a mismatch, verify API VMX path, management MAC and DHCP lease against the intended clone and inspect bootstrap records. Keep the pin intact; do not delete or replace it to accept the responding host. Never disable host verification. Distinguish wrong identity from a guest that never started SSH.
 
 ## 9. Computer-use protocol and failure handling
 

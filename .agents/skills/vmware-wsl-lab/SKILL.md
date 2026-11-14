@@ -5,11 +5,34 @@ description: Sets up and operates a Windows + WSL2 + VMware Workstation lab wher
 
 # VMware Workstation + WSL lab
 
-**Purpose.** This lab is a base for building, testing and deploying systems with Terraform + Ansible on one Windows PC: Terraform creates the VMs listed in `vms.tfvars` (one or many), Ansible runs the user's own playbooks against them. The single Ubuntu VM with nginx (`ubuntu24-demo`, `ansible/configure-guest.yml`) is only the example and smoke test. Guests are Ubuntu cloud images; what runs on them is up to the user's playbooks.
+**Purpose.** This lab is a base for building, testing and deploying systems with Terraform + Ansible on one Windows PC: Terraform creates the VMs listed in `vms.tfvars` (one or many), Ansible runs the user's own playbooks against them. The single Ubuntu VM with nginx (`ubuntu24-demo`, `ansible/configure-guest.yml`) is only the example and smoke test. Guests use the supported Ubuntu or Debian cloud images; what runs on them is up to the user's playbooks.
 
 Host name, Windows user, WSL user, distro and repository location differ on every machine. Discover them; never reuse values from examples or earlier sessions.
 
-## 0. VMware networks first, then environment and preflight
+## 0. Read the result, choose recovery, then preflight
+
+Every `./lab` command emits one JSON envelope on stdout; logs and tool diagnostics go to stderr. `./lab describe --json` returns the command/error reference in `data`. Inspect `ok`, `error.code`, `error.hint` and `error.details` before choosing an action. `ok` is true exactly when `error` is null. `changed` means a mutation was attempted, possibly partial; never infer success from it. Warnings are `{code,message,vm}`. Keep stderr for diagnosis; do not assume it is secret-redacted.
+
+| Error code | Exit | Next action |
+|---|---|---|
+| `usage_error` | 2 | Fix the call from the message. |
+| `config_error` | 2 | Fix lab.env / vms.tfvars; ask the user if unclear. |
+| `unknown_vm` | 2 | Use one of the listed names. |
+| `secrets_missing` | 3 | Find an existing file by variable names only; else the user runs ./lab account. |
+| `vmrest_auth` | 3 | The user corrects credentials or runs ./lab account. |
+| `needs_user` | 3 | Hand the user the command requiring their terminal, sudo or elevated PowerShell. |
+| `lock_held` | 4 | Wait and retry; never delete the lock. |
+| `vmrest_unreachable` | 4 | Precheck only: ask the user to start vmrest and retry. |
+| `plan_destroy_refused` | 5 | Review the VM list; ask the user before --allow-destroy / --confirm. |
+| `config_change_requires_off` | 5 | Revert configuration edits, down the VM, then restore edits and up. |
+| `lan_vnet_mismatch` | 5 | Show desired and actual wiring; ask the user about offline VMX repair. |
+| `vm_power_unknown` | 5 | Run ./lab status; report; no automatic repair. |
+| `guest_not_ready` | 1 | Read the per-VM reason and reference/pitfalls.md; no automatic retry. |
+| `runtime_error` | 1 (SIGINT: 130; SIGTERM: 143) | Read stderr and ./lab status; ask the user about partly changed distributed systems. |
+
+Success exits 0. Unclassified failures become `runtime_error`. Interrupted runs also emit `runtime_error`, preserving exit 130 for SIGINT or 143 for SIGTERM. Retry only a safe precheck after resolving its cause; after a partial mutation inspect status and ask the user before recovery. Read [reference/pitfalls.md](reference/pitfalls.md) for stderr symptoms.
+
+### VMware networks first, then environment and preflight
 
 Before `./lab setup` or **any** `./lab up`, run `./lab network` read-only in each host's checkout. Read [reference/network.md](reference/network.md) for the evidence checklist and read-only PowerShell fallback when WSL/scripts cannot run. Record VMnet0/1/8 and every other VMnet: actual role evidence, subnet, host adapter, DHCP/NAT settings, NAT forwards, physical adapters and bridge bindings. A VMnet number does not prove its type. Bindings are candidates, not proof of the adapter Automatic selected. Never reset VMware networks.
 
@@ -28,31 +51,21 @@ If you are already in a WSL shell (for example over SSH), SSH works; do not spen
   find /mnt/c /mnt/d -maxdepth 3 -type f \( -name lab -o -name preflight.sh \) 2>/dev/null; } | sort -u \
   | while read -r f; do [ -f "$(dirname "$f")/lib/config.sh" ] && dirname "$f"; done | sort -u
 repo=<the one path printed>     # several printed: ask the user which one
-"$repo/lab" status
+bash "$repo/lib/preflight.sh"       # initial host-only check, including before Terraform exists
+# After successful host preflight: ./lab setup, then ./lab status
 ```
+
+No public `./lab` host-only subcommand exists. `bash lib/preflight.sh` prints text (not JSON), warns about missing tools without invoking Terraform, and must exit 0 before initial setup. Keep network inspection first, then host preflight, setup, and full `./lab status` (requires Terraform).
+
+Status is diagnostic and retains exit 0 for unknown VM power or LAN mismatches when host checks pass. Callers must inspect `data.vms` and `warnings`, not only `ok`; per-VM warning codes are `vm_power_unknown` and `lan_vnet_mismatch`.
 
 If nothing is printed, ask the user where the repository is, or whether to clone https://github.com/naelonambul/wsl-vmware-lab. Preflight reports the discovered repository, WSL user, distro, Windows profile, networking mode, which secrets file holds the vmrest account (values hidden) and whether other users can read it, tools and vmrest state. Exit code 0 means vmrest is reachable **and** the stored vmrest account is accepted. It does not test WSL SSH from another PC, the base VM or a clone lifecycle.
 
 vmrest has its own API account: a username and password set with `vmrest.exe -C`, kept by vmrest in `vmrest.cfg` in the Windows user profile, with the password not stored readably. It is separate from the Windows and Ubuntu logins. The scripts' copy of that account lives in a **secrets file in the Windows user folder**, `%USERPROFILE%\.env` by default (`LAB_SECRETS_FILE` to change it), as `VMWS_USERNAME=` (or `VMWS_USER=`) and `VMWS_PASSWORD=` lines. The file is parsed, never executed, so other tools may keep their own lines in it. It is readable at boot with nobody logged on; Windows Credential Manager was tried and is not (it stays locked without a logon). The user writes the file; when authentication fails, a mismatch between it and vmrest's account is the first suspect. Never read, print or guess the values.
 
-When preflight fails at vmrest:
+For vmrest connection failure, distinguish a stopped process from a running process with unreachable loopback; do not start a second vmrest. With user authorization, `./lab status --start-vmrest` starts the existing startup task. Missing/old tasks require the new-PC path. HTTP 404 suggests an endpoint missing `/api`; 401/403 suggests the stored account or Windows identity differs. Check variable names only, never secret values. ACL warnings can be handled by user-authorized `./lab account --lock`. Boot-task, sleep/lid and bridge warnings require an explicit user decision about Windows Install, not an automatic retry.
 
-| Preflight output | Meaning | Next step |
-|---|---|---|
-| `HTTP 000` and `process=False` | vmrest is not running | Ask the user, then `"$repo/lab" status --start-vmrest` (starts the `VMware vmrest API` startup task; if it is absent the user runs `windows\setup.cmd Install -AllowedRemoteAddress <LAN>` (elevated PowerShell)) |
-| `HTTP 000` but `process=True listener8697=True` | vmrest runs; WSL cannot reach it | Check `VMWS_ENDPOINT` and mirrored networking. Do not start a second vmrest |
-| `HTTP 404` | endpoint lacks `/api` | Fix `VMWS_ENDPOINT` |
-| `... .env not found` / `lacks VMWS_USERNAME` | no usable secrets file | Look for an existing copy first (another `.env`, an old `vmrest.env`; check variable **names** only). Then ask the user to run `./lab account` in their own terminal (vmrest `-C` + secrets file), or to point `LAB_SECRETS_FILE` at the existing file |
-| `secrets file also grants access to ...` warning | other accounts can read it | With the user's OK run `./lab account --lock` (your user, SYSTEM and Administrators only; also removes explicit entries that `icacls /inheritance:r` leaves) |
-| authenticated `HTTP 401` | secrets file does not match vmrest | The user corrects the file, or runs `./lab account` again (sets both and restarts vmrest). Also check vmrest runs as the same Windows user (another user has another `vmrest.cfg`) |
-| `no vmrest.cfg` warning | API account never set up for this Windows user | The user runs `./lab account` |
-| `task 'VMware vmrest API' absent` or `from an older setup` (Windows section of status) | vmrest or sshd will not come back at boot | Both must start at **boot, without logon**. Offer `windows\setup.cmd Install -AllowedRemoteAddress <LAN>` (elevated PowerShell): boot trigger, S4U, restart on failure; it also removes older tasks |
-| `other enabled task(s) also start vmrest` | two launchers (for example one made by another tool) | Ask the user, then disable the other task (do not delete it) so `VMware vmrest API` is the only launcher |
-| `power on AC still allows: sleep` (or hibernate / lid) | Windows will sleep and drop SSH, vmrest and the VMs | `setup.cmd Install` sets AC power to never sleep (with the user's OK; `-SkipPower` leaves it). Not a vmrest failure; status still exits 0 |
-| `power (on battery): ...` | only matters when unplugged | Tell the user; `-Action Apply -IncludeBattery` if the PC runs on battery |
-| `no interop` | WSL cannot run Windows programs | The user checks vmrest on Windows |
-
-Do not run Terraform until preflight exits 0.
+Do not run Terraform until status/preflight exits 0.
 
 ## 1. Choose the path
 
@@ -81,10 +94,10 @@ Terraform owns VM existence and power. Ansible owns guest software. They do not 
 
 All bash scripts source `lib/config.sh`, which reads optional settings from `lab.env` (gitignored; template `lab.env.example`) or the file named in `LAB_ENV_FILE`, and the vmrest account from the secrets file (`%USERPROFILE%\.env`).
 
-- **VM set.** Without `vms.tfvars`, one VM `LAB_CLONE_NAME` (group `demo`). With `vms.tfvars` in the repository root (template `vms.tfvars.example`, gitignored; `LAB_VMS_FILE` to move it): `vms = { "<name>" = { processors, memory_mb, groups, image } }` (`image` optional, default `LAB_IMAGE`; `lan = true` adds a bridged NIC `lan0` with a LAN DHCP address, `lan_ip = "a.b.c.d/nn"` makes it static, no default route or DNS on it; changing these rebuilds the VM). Each VM is `<LAB_VM_ROOT_WIN>\<name>\<name>.vmx` (default root `%USERPROFILE%\Documents\Virtual Machines`), its hostname and its Ansible host; `groups` become Ansible groups and every VM is also in `lab`. `./lab up` creates and bootstraps new entries off; existing VMs retain live power. `up --all` or `up <vm>...` starts the selection. It reads the plan first and refuses to delete or replace any VM unless run as `./lab up --allow-destroy` (which destroys plus cleans entries removed from the list); a missing or mistyped `vms.tfvars` therefore stops instead of deleting VMs. An explicitly set `LAB_VMS_FILE` that does not exist is an error, not the single-VM fallback. There is one base per image in use (`./lab setup` prepares them: `base/<image>/base.vmx`, VM `<image>-base`). Before `up`/`down`, `lib/check-base.py` requires for each exactly one registered VM with that display name at that VMX (the provider takes the first name match); a duplicate stops with no change, and a clone may not use a base name. A rebuilt base (`./lab setup --recreate`, or another vmrest id or path) or a changed `image` makes the plan replace those clones and their bootstrap (`terraform_data.vm_base`), so `up` refuses until `--allow-destroy`; clone contents are lost. Pass `--allow-destroy` only when the user asked to remove or rebuild those VMs.
-- **Playbooks.** `./lab configure [PLAYBOOK] [ansible-playbook options]` runs any playbook, also from the user's own project folder (`LAB_PLAYBOOK` sets the default). `ansible/check-lab.yml` checks every VM (SSH, cloud-init, sudo, OS). Keep the user's playbooks and `vms.tfvars` out of this repository's git history unless they ask.
+- **VM set.** Without `vms.tfvars`, one VM `LAB_CLONE_NAME` (group `demo`). With `vms.tfvars` in the repository root (template `vms.tfvars.example`, gitignored; `LAB_VMS_FILE` to move it): `vms = { "<name>" = { processors, memory_mb, groups, image } }` (`image` optional, default `LAB_IMAGE`; `lan = true` adds a LAN NIC `lan0` (bridged by default, or custom `LAB_LAN_VNET`) with a LAN DHCP address, `lan_ip = "a.b.c.d/nn"` makes it static, no default route or DNS on it; changing these rebuilds the VM). Each VM is `<LAB_VM_ROOT_WIN>\<name>\<name>.vmx` (default root `%USERPROFILE%\Documents\Virtual Machines`), its hostname and its Ansible host; `groups` become Ansible groups and every VM is also in `lab`. `./lab up` creates and bootstraps new entries off; existing VMs retain live power. `up --all` or `up <vm>...` starts the selection. It reads the plan first and refuses to delete or replace any VM unless run as `./lab up --allow-destroy` (which destroys plus cleans entries removed from the list); a missing or mistyped `vms.tfvars` therefore stops instead of deleting VMs. An explicitly set `LAB_VMS_FILE` that does not exist is an error, not the single-VM fallback. There is one base per image in use (`./lab setup` prepares them: `base/<image>/base.vmx`, VM `<image>-base`). Before `up`/`down`, `lib/check-base.py` requires for each exactly one registered VM with that display name at that VMX (the provider takes the first name match); a duplicate stops with no change, and a clone may not use a base name. A rebuilt base (`./lab setup --recreate`, or another vmrest id or path) or a changed `image` makes the plan replace those clones and their bootstrap (`terraform_data.vm_base`), so `up` refuses until `--allow-destroy`; clone contents are lost. Pass `--allow-destroy` only when the user asked to remove or rebuild those VMs.
+- **Playbooks.** `./lab configure [PLAYBOOK] [ansible-playbook options]` runs any playbook, also from the user's own project folder (`LAB_PLAYBOOK` sets the default). `ansible/check-lab.yml` checks every running VM (SSH, cloud-init, sudo, OS). Keep the user's playbooks and `vms.tfvars` out of this repository's git history unless they ask.
 - Guest image: `ubuntu-24.04`, `ubuntu-22.04` or `debian-13` (Debian's checksum list is not signed; say so), per VM with `image` in `vms.tfvars`, default `LAB_IMAGE` in `lab.env`. Guests need cloud-init, an SSH server, sudo and python3, not VMware Tools. Changing a VM's image rebuilds that VM with `./lab up --allow-destroy`: ask first. For an image not in the table, stop and ask the user; do not swap images silently.
-- Guest VM user (inside the VM) is fixed: cloud-init creates `lab` (lab key, passwordless sudo) in every clone, and the clone's SSH host key is generated in WSL and pinned before its first boot (`lib/cloud-config.sh`, `lib/bootstrap-guest.sh`). The base is never booted. The WSL user is separate: the account the user SSHes into this PC as (the `User` of their SSH config entry); scripts run as it and never set it.
+- Guest VM user (inside the VM) is fixed: cloud-init creates `lab` (lab key, passwordless sudo) in every clone, and the clone's SSH host key is generated in WSL and pinned before its first boot (`lib/cloud-config.sh`, `lib/bootstrap-guest.sh`). The base is never booted. Use the existing configured VM account; do not create/delete accounts or change SSH authorization without an explicit user request. The WSL user is separate: the account the user SSHes into this PC as (the `User` of their SSH config entry); scripts run as it and never set it.
 - Private files live in `~/.config/wsl-vmware-lab/` (`LAB_PRIVATE_DIR`).
 - Windows side: one script, `windows\setup.cmd Install|Status|Network|Remove` (runs `setup.ps1` past the default execution policy for that run only; `-AllowedRemoteAddress` defaults to the LAN of the default route) (`-AllowedRemoteAddress <LAN>`, `-Distro`, `-VmrestPath`, `-IncludeBattery`, `-SkipPower`). Its two boot tasks run `wsl.exe` and `vmrest.exe` directly, so nothing depends on the checkout path; re-run Install only to change its parameters. Mirrored networking only.
 - vmrest starts at Windows boot before any logon (`VMware vmrest API`: boot trigger, S4U, no time limit, restart 5 x 1 min). A logon-only start is not acceptable.
@@ -94,7 +107,7 @@ All bash scripts source `lib/config.sh`, which reads optional settings from `lab
 1. **User decides.** Propose options with trade-offs before changing a host, and run only what the user picks.
 2. **Secrets.** Never print, copy or commit `lab.env`, vmrest credentials, SSH private keys, Terraform state or generated `inventory.json`. Never type the vmrest password on the user's behalf: the user runs `./lab account` in their own terminal (it refuses to run without one). Do not enable `set -x` around config loading. New variables get a fake value in `lab.env.example`.
 3. **Preserve.** Never delete or re-prepare the base VM, reset WSL distributions, restore VMware network defaults, or overwrite an existing Terraform state unless the user explicitly asks.
-4. **Check before lifecycle commands.** `./lab status` (or `lib/preflight.sh`) must exit 0 in this session before any Terraform command (section 0). `lab` runs one command at a time per checkout (`flock` on `.lab.lock`); a second one stops at once.
+4. **Check before lifecycle commands.** Network inspection is allowed before preflight/setup and needs no vmrest. After setup, lifecycle operations require successful status. For initial setup, require `bash lib/preflight.sh` exit 0, then setup and full status; subsequent lifecycle work requires `./lab status` exit 0 in this session and inspection of VM rows/warnings (section 0). Setup, up, down, destroy, cleanup and configure take `.lab.lock`; a competing locked command fails. Status/network/describe/account do not lock.
 5. **One runner per state.** One checkout = one state, one VM set, one inventory. Serialize work, or use a fully isolated checkout with its own `lab.env`.
 6. **Destroy via the wrapper.** Use `./lab destroy --confirm=<names>` (exact state VM set; runs cleanup), never bare `terraform destroy`. `0 destroyed` with vmrest down is not success.
 7. **Never disable host key checking globally.** Clone host keys are generated in WSL and pinned before the first boot (`StrictHostKeyChecking=yes`); a mismatch means the address reached another VM.
@@ -109,36 +122,44 @@ All bash scripts source `lib/config.sh`, which reads optional settings from `lab
 
 ```bash
 cd "$repo"
-./lab status                     # must exit 0 first (host checks, vmrest, Terraform state; changes nothing)
-./lab setup                      # once: WSL tools, image, cloud-init seed, base VM (skips a prepared base)
+./lab network                    # network evidence first; no vmrest required
+bash lib/preflight.sh               # initial host-only check; require exit 0, no Terraform needed
+./lab setup                      # once: WSL tools, image, unbooted base VM (skips a prepared base)
+./lab status                     # full diagnostic check after setup; inspect data.vms and warnings
 ./lab up                         # create and bootstrap new/replacement VMs OFF; preserve existing power
 ./lab up --all                   # start all after preparation
 ./lab up <vm>...                 # start selection only; separate calls for ordered roles
-./lab configure ansible/check-lab.yml   # every VM ready?
+./lab configure ansible/check-lab.yml   # every running VM ready?
 ./lab configure                  # example: nginx + HTTP assertions on group demo; again: changed=0 failed=0
 ./lab configure ~/my-system/site.yml    # the user's own playbook
 ./lab down --all                 # graceful shutdown; success requires vmrest poweredOff
 ./lab down <vm>...               # graceful shutdown of selection (bare down is an error)
+./lab down <vm>... --hard --dry-run # review exact hard-stop selection/options first
 ./lab down <vm>... --hard        # hard stop only after asking the user
+./lab destroy --confirm=<names> --dry-run # review exact confirmation/options first
 ./lab destroy --confirm=<names>  # exact comma-separated state VM set; cleanup-aware
 ./lab cleanup                    # retry cleanup left by a failed or interrupted delete
 ./lab up --dry-run               # plan only; also down/destroy --dry-run
 ./lab describe --json            # command arguments, envelope and error codes
 ```
 
-Every command writes one JSON envelope to stdout; logs go to stderr. Inspect `ok`, `error`, `changed` and `data`; an interrupted mutation requires status inspection. Dry runs report pending cleanup/restoration without running them.
+Every `./lab` command writes one JSON envelope to stdout; logs go to stderr. The initial `bash lib/preflight.sh` helper prints text. Inspect `ok`, `error`, `changed` and `data`; an interrupted mutation requires status inspection. Dry runs report pending cleanup/restoration without running them. They use private scratch files and require initialized Terraform/providers and reachable vmrest; up/down require prepared bases. They do not apply, SSH to guests, write journals or restore state. Destroy dry-run needs no confirmation; a supplied confirmation must match. Real destroy requires distinct comma-separated names equal to the full state set (order independent); no interactive prompt or Terraform arguments. An empty state without confirmation is a successful no-op.
 
-Several VMs: `cp vms.tfvars.example vms.tfvars`, edit, then `./lab up`. Changing the list later: edit and run `up` again (removing entries: `./lab up --allow-destroy`, after the user confirms).
+Before destructive `up --allow-destroy`, `down --hard`, or `destroy --confirm=<names>`, require and review `--dry-run` with the exact same selection and options (including `--allow-destroy`, `--hard`, and confirmation); remove only `--dry-run` for the real call. For example, preview `./lab up --all --allow-destroy --dry-run` before `./lab up --all --allow-destroy`. Only up/down/destroy support dry-run; setup (including `setup --recreate`), cleanup, configure, account, status, network and describe have no dry-run. For `setup --recreate`, review base/clone impact and obtain authorization without claiming a preview exists.
+
+Several VMs: `cp vms.tfvars.example vms.tfvars`, edit, then `./lab up`. Changing the list later: edit and run `up` again (removing entries: review `./lab up --allow-destroy --dry-run`, then `./lab up --allow-destroy` after the user confirms).
+
+In-place VM edits beyond power require off (all attributes, not only CPU/memory). Revert edits, down the VM, restore edits, then up; settings are applied off before a separate start plan. Pure power changes remain allowed.
 
 Inventory and groups contain only powered-on VMs; project variables must define cluster topology. `configure --limit db` uses the default playbook and passes the limit unchanged; readiness is required for all powered-on VMs, with that set frozen across retries. If an apply fails after a partial start, run `./lab status` and ask the user before further changes. Graceful down waits up to `LAB_DOWN_WAIT_SECONDS` (120 by default), polling every 5 seconds. It ignores SSH poweroff return codes and trusts only vmrest; ask before `--hard`.
 
 `ANSIBLE_TIMEOUT=60` gives slow privilege escalation a one-minute budget, avoiding the known 12-second prompt timeout.
 
-## 6. Acceptance checklist (copy and tick)
+## 6. Acceptance checklist (selected VMs; record actual evidence)
 
 ```
 - [ ] ./lab status exit 0 (vmrest 401 unauthenticated, 200 authenticated)
-- [ ] every VM in the list appears in API inventory and is poweredOn (`./lab status`)
+- [ ] every expected VM exists; selected VMs are on, unselected live power is preserved (`./lab status`)
 - [ ] Ansible run 1: HTTP 200 + expected content, failed=0
 - [ ] Ansible run 2: changed=0 unreachable=0 failed=0
 - [ ] power-off confirmed by API, not only Terraform exit code
@@ -148,7 +169,9 @@ Inventory and groups contain only powered-on VMs; project variables must define 
 - [ ] (new or changed host) after a reboot with nobody logged on (`quser`: no users), ./lab status exits 0
 ```
 
-Verified end to end on the lab laptop (2026-11-09, `./lab` and `windows/setup.ps1`): setup → up → configure ×2 (`changed=0` the second time) → down → destroy with cleanup; base rebuild → clones replaced with `--allow-destroy`; reboot with nobody logged on → SSH and vmrest up from the boot tasks. Not verified: a PC without VMware yet, Windows firewall profiles enabled.
+Earlier host results predate this CLI. Current network/power/JSON, interruption and upgrade checks need fresh real-host evidence; no verification is implied by this documentation.
+
+Offline developer checks run on Linux only; see the repository `tests/README.md`. Never run them under Windows Git Bash/MSYS. Use process/time limits; fake tools must dispatch real utilities by absolute path and never form a `BASH_ENV` wrapper loop.
 
 ## 7. Report format
 

@@ -1,132 +1,138 @@
-# Operating an existing lab host (template)
+# Operating an existing lab host
 
-Use this when the lab is already installed and you are in a WSL shell on it (locally or over SSH). Host name, users, distro and paths differ per machine: take them from `lib/preflight.sh` output, not from this file.
-
-## Contents
-- Start here
-- Where things are (defaults; preflight shows the actual values)
-- Responsibilities and connectivity
-- Credentials and private artifacts
-- Routine commands
-- File guide
-- Isolation for multiple agents
-- Optional: multi-VM application deployment (example topology)
-- Known operational lessons
-- Evidence rules
+Use the existing configured WSL and guest accounts. Discover host-specific paths
+from status; never copy values from examples. Do not create/delete guest accounts
+or change SSH authorization unless the user explicitly requests that change.
 
 ## Start here
 
-1. Run preflight as described in SKILL.md section 0, and continue only when it exits 0.
-2. `./lab status`: inspect the current state and report only non-secret findings.
-3. Read the repository `README.md` if settings look unusual.
-4. Preserve the base VM and any existing clone unless the user explicitly authorizes changes.
+1. Read [network.md](network.md); run `./lab network` before setup or any up.
+   It needs no vmrest or credentials; with state present it uses Terraform
+   show JSON. Record role, subnet, DHCP/NAT/forward and bridge evidence privately.
+2. Run `./lab status` and require exit 0 before lifecycle work. Match errors
+   using [../SKILL.md](../SKILL.md), section 0, then [pitfalls.md](pitfalls.md).
+3. Preserve existing bases, clones, state and foreign host setup. Changes need
+   the user's authorization; network inspection does not authorize Windows Install.
+4. For distributed services, first write the version-specific procedure required
+   by [distributed-systems.md](distributed-systems.md). No record, no configure/start.
 
-The shell is Bash inside WSL2, not PowerShell. Run Windows commands through `/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe -NoProfile -Command ... </dev/null`, always by full path: an SSH session into WSL has no Windows folders on `PATH` (bare `powershell.exe` gives `command not found`, also in `bash -lic`). The same goes for other Windows programs (`"/mnt/c/Program Files/VMware/VMware Workstation/vmrun.exe"` by default, or `VMWARE_DIR` from `lab.env`; `/mnt/c/Windows/System32/cmd.exe`). `lib/preflight.sh` keeps the full path in `$PS`.
+Use Bash inside WSL, not Windows Git Bash/MSYS. Windows tools need absolute paths
+in remote WSL sessions: PowerShell is
+`/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe`; VMware tools
+are under `VMWARE_DIR`. Use `wslpath -w` for Windows arguments and `wslpath -u`
+for Windows paths read in WSL.
 
-## Where things are (defaults; preflight shows the actual values)
+## Defaults and responsibilities
 
-| Component | Default | Override |
-| --- | --- | --- |
-| Repository | wherever it was cloned; preflight prints it | n/a |
-| Windows user profile | detected through Windows interop | `LAB_VM_ROOT_WIN` |
-| VM list | `vms.tfvars` in the repository if present, else one VM `LAB_CLONE_NAME` | `LAB_VMS_FILE` |
-| Clone VMX (each VM) | `%USERPROFILE%\Documents\Virtual Machines\<name>\<name>.vmx` | `LAB_VM_ROOT_WIN` |
-| Base VMX | `base/<image>/base.vmx` in the repository, one per image in use (VM `<image>-base`) | `LAB_BASE_DIR` |
-| Workstation tools | `/mnt/c/Program Files/VMware/VMware Workstation/` | `VMWARE_DIR` |
-| Private directory | `~/.config/wsl-vmware-lab/` | `LAB_PRIVATE_DIR` |
-| Guest VM user | `lab`, created by cloud-init in every clone | none (fixed in `lib/config.sh`) |
-| DHCP leases | `/mnt/c/ProgramData/VMware/vmnetdhcp.leases` | `LAB_DHCP_LEASES` |
-| DHCP config (management subnet) | `/mnt/c/ProgramData/VMware/vmnetdhcp.conf` | `LAB_DHCP_CONF` |
+| Item | Default / configuration |
+|---|---|
+| VM list | Root `vms.tfvars` (`LAB_VMS_FILE`); absent implicit file falls back to `LAB_CLONE_NAME`. An explicit missing file fails. |
+| Clone VMX | `<LAB_VM_ROOT_WIN>\<name>\<name>.vmx`; root defaults to the Windows profile's Documents/Virtual Machines. |
+| Base | `base/<image>/base.vmx`, registered as `<image>-base`; `LAB_BASE_DIR` overrides the directory. Never boot it. |
+| Private files | `$HOME/.config/wsl-vmware-lab` (`LAB_PRIVATE_DIR`): key pair, inventory, pinned host keys and seeds. |
+| Guest login | Fixed `lab` account created by cloud-init; no configurable guest username. |
+| Networks | Default NAT VMnet8, management VMnet1, LAN bridged VMnet0; inspect actual roles first. |
+| Credentials | `%USERPROFILE%\.env` (`LAB_SECRETS_FILE`); `VMWS_USERNAME`/`VMWS_USER` and `VMWS_PASSWORD`, parsed without executing the file. |
 
-Use `wslpath -w` for arguments passed to Windows tools and `wslpath -u` for paths read from Terraform. VM disks and ISO files must be on a Windows drive.
+Terraform owns VM existence, hardware and power; bootstrap writes the powered-off
+clone's seed and NICs. Ansible runs the user's playbooks over the management NIC,
+directly or through `guest-proxy.sh` / `windows/tcp-relay.ps1`. LAN services
+between PCs use `lan0`, with DHCP or optional `lan_ip`; NAT remains the internet route.
 
-## Responsibilities and connectivity
+Never print/copy secrets, private keys, state or generated inventory into chat,
+logs or commits. Never enable `set -x` during configuration loading. The user
+runs `./lab account` in their terminal; agents never type the password.
 
-1. External agent → SSH → WSL.
-2. Linux Terraform → Windows vmrest `http://127.0.0.1:8697/api` (mirrored WSL networking).
-3. Terraform clones the registered base and controls CPU, memory, power and destruction.
-4. Terraform `local-exec` runs `lib/bootstrap-guest.sh` on the powered-off clone (cloud-init ISO + management NIC).
-5. Ansible connects to the running guest, installs nginx, deploys a page and checks HTTP.
+## Command results and routine operations
 
-VMnet8 = NAT (internet), VMnet1 = host-only management. If WSL cannot reach the management IP directly, inventory uses `lib/guest-proxy.sh` + `windows/tcp-relay.ps1` (per-connection stdio relay; no listening port).
-
-Preflight reports whether `.wslconfig` uses mirrored networking. Do not change `.wslconfig` merely to run the example.
-
-## Credentials and private artifacts
-
-- vmrest account: secrets file `%USERPROFILE%\.env` (`LAB_SECRETS_FILE`), lines `VMWS_USERNAME=`/`VMWS_USER=` and `VMWS_PASSWORD=`, parsed (not executed) by `lib/config.sh`. Environment variables or `lab.env` override it. Terraform receives `TF_VAR_vmrest_*` from `lib/config.sh`.
-- Private files: `lab_ed25519` key pair, `inventory.json`, `known_hosts-<vm-id>`, `seed-<vm-id>/` under `LAB_PRIVATE_DIR`.
-- Never print or copy credentials, keys, Terraform state or inventory into chat, logs, commits or docs. Never enable `set -x` around config loading.
-- Guest user: cloud-init creates `lab` (lab key, passwordless sudo) in every clone; `lib/bootstrap-guest.sh` also generates the clone's SSH host key in WSL, injects it through the seed and writes `known_hosts-<id>` before the first boot. `lib/guest-inventory.py` retries until SSH as `lab` succeeds against that pin for every VM; the inventory is written only once every VM checked out. No VMware Tools are needed in the guest.
-
-## Routine commands
+`./lab describe --json` returns the authoritative command/error reference in
+`data`. Every command emits one JSON envelope on stdout; diagnostics go to stderr.
+Status is diagnostic: exit 0 / `ok: true` can coexist with unknown power or LAN mismatches. Read `data.vms` and `warnings` (`vm_power_unknown`, `lan_vnet_mismatch`) to assess each VM.
+Read `ok` and `error`; `changed` means an attempted mutation, possibly partial.
 
 ```bash
+./lab network
 ./lab status
-./lab status
-./lab up
-./lab configure
-./lab down        # a Terraform apply; review state first
-./lab destroy    # interactive; runs lib/cleanup-guest.py afterwards
+./lab status --start-vmrest      # only when authorized to start the existing task
+./lab up --dry-run              # preview; needs initialized Terraform/providers
+./lab up                        # create/bootstrap new or replacement VMs off
+./lab up --all                  # start all; no ordering guarantee
+./lab up <vm>                   # one ordered step; preserve other live power
+./lab configure ansible/check-lab.yml
+./lab configure <project-playbook>
+./lab configure --limit db      # default playbook; readiness still covers running set
+./lab down <vm>                 # graceful ordered step
+./lab down --all                # graceful whole checkout
+./lab down <vm> --hard --dry-run # review exact selection/options first
+./lab down <vm> --hard          # explicit user-approved hard stop
+./lab destroy --confirm=<names> --dry-run # matching preview; confirmation optional only for preview
+./lab destroy --confirm=<names> # exact distinct comma-separated state VM set
+./lab cleanup                   # replay pending cleanup/record restoration
 ```
 
-`destroy` saves state metadata, runs Terraform destroy, then removes only the generated seed ISO and an empty clone directory after verifying VMX/VMDK are gone. Bare `terraform destroy` skips this. It also removes a leftover `<clone>.vmxf` that names the clone's VMX, then that clone id's `known_hosts-<id>` and `seed-<id>/` (only the generated cloud-init files) under `LAB_PRIVATE_DIR`; other files are left and reported.
+Before destructive `up --allow-destroy`, `down --hard`, or `destroy --confirm=<names>`, require and review `--dry-run` with the exact same selection and options (including `--allow-destroy`, `--hard`, and confirmation); remove only `--dry-run` for the real call. For example, preview `./lab up --all --allow-destroy --dry-run` before `./lab up --all --allow-destroy`. Only up/down/destroy support dry-run; setup (including `setup --recreate`), cleanup, configure, account, status, network and describe have no dry-run. For `setup --recreate`, review base/clone impact and obtain authorization without claiming a preview exists.
 
-## File guide
+Up/down also support `--dry-run`. No apply, guest SSH, journal writes, cleanup
+or state restoration occurs in a dry run; private scratch files are used.
+Up requires known power for every state VM; down requires it for the selection.
+All non-power VM in-place edits require power off: revert edits, down the VM,
+restore edits and up. Off configuration reconciliation precedes selected start.
+Removing/replacing VMs through up requires user-authorized `--allow-destroy`.
+An authorized replacement loses the old disk and stays off unless selected.
 
-| File | Behavior |
-| --- | --- |
-| `terraform/main.tf` | Pins `elsudano/vmworkstation` 2.0.1; data source for base `var.base_name`; `vmworkstation_virtual_machine.vm` and `terraform_data.guest_bootstrap` with `for_each = var.vms`; output `vms` (id, path, groups per name). Clone `description` must equal the base's (provider limitation) |
-| `terraform/variables.tf` | endpoint, credentials (sensitive), base name, `vm_root_win`, `vms` map (validated names/groups), validated `on`/`off` |
-| `vms.tfvars.example` | template for a multi-VM system (`web1` in `demo`+`web`, `db1` in `db`) |
-| `lib/lifecycle.sh` | loads config, API precheck, passes `vms.tfvars`; `on`/`off` first confirm the base with `lib/check-base.py` (exactly one VM with the base name, at the base VMX); `on` checks the plan (refuses VM delete/replace, including clones of a rebuilt base, without `--allow-destroy`) → creates new VMs off (targeted) → bootstrap → all ON; cleans VMs removed with `--allow-destroy`; `off` refuses a plan with anything but power changes; VMs about to be deleted are journaled in `terraform/cleanup-pending.json` and cleaned once gone (failed cleanup is retried by the next `on`/`destroy`/`cleanup`; `status` lists pending entries); cleanup-aware destroy |
-| `lib/bootstrap-guest.sh` | refuses a running clone; per-VM cloud-init seed (hostname = VM name); attaches ISO and management NIC |
-| `lib/guest-inventory.py` | per VM: VMX management MAC → current DHCP lease on the management subnet, SSH as `lab` against the host key pinned at bootstrap, direct or via proxy → private inventory with groups + `lab`, written atomically |
-| `lib/configure.sh` | `[PLAYBOOK] [ansible options]`; waits for the inventory (all VMs) up to `LAB_GUEST_WAIT_SECONDS` (default 300 s, each attempt limited to 120 s), then runs the playbook |
-| `ansible/configure-guest.yml` | example: wait SSH/cloud-init; nginx; page; service; HTTP 200 + content assertion (group `demo`) |
-| `ansible/check-lab.yml` | smoke test for group `lab`: SSH, cloud-init, sudo, OS facts |
-| `./lab status` | read-only: host checks (`lib/preflight.sh`), Windows section (`windows/setup.ps1 Status`), power state of every VM of this checkout; `--plan [on\|off]` runs `lib/diagnose.sh` |
-| `lib/register-vm.py` | idempotent `POST /api/vms/registration` (called by `./lab setup`) |
-| `lib/base.sh` (`./lab setup`) | one-time base preparation (signed image, disk converted to a temp file then renamed, VMX, registration, marker `base.prepared`; bases are never booted), one per image in use; a prepared base only re-registers; `--recreate` (bases off, user-approved) rebuilds them |
-| `lib/wsl-tools.sh` (sudo, run by `./lab setup` when a tool is missing) | installs Terraform (HashiCorp apt), Ansible, image tools |
+Graceful down uses a private best-effort inventory, requests poweroff on reachable
+guests and ignores SSH return codes; only vmrest confirms success. It polls every
+5 s, up to `LAB_DOWN_WAIT_SECONDS` (120). A timeout is `guest_not_ready`;
+ask before hard stop. Bare down is a usage error.
 
-Helper scripts read the Terraform output `vms`, not resource addresses. A state made by the older single-clone version (`vmworkstation_virtual_machine.ubuntu_demo`) is not migrated: destroy it with that version before upgrading, or the new version plans a second clone at the same path.
+Destroy is non-interactive; free Terraform arguments are rejected. Names must
+equal all state VM names (order independent, no duplicates). Empty state without
+confirmation succeeds as a no-op. It journals deletions and cleans generated
+files after VMX/disks disappear. Never use bare Terraform destroy.
 
-## Isolation for multiple agents
+Configure omits powered-off VMs, fails on unknown/API-error power and requires
+at least one running host. The first running set is frozen across retries;
+a later dropout remains unready. Groups contain running VMs only: define durable
+cluster topology in project variables, even when using `--limit`.
 
-One state, one VM set and one inventory per checkout. Serialize work, or for an authorized experiment use a separate checkout with its own `lab.env` (`LAB_VMS_FILE` or `LAB_CLONE_NAME`, `LAB_VM_ROOT_WIN`, `LAB_PRIVATE_DIR`, `LAB_INVENTORY`) and its own Terraform state. VM names must not collide with another checkout's VMs in the same `LAB_VM_ROOT_WIN`. Never copy an existing state into a new experiment.
+## Implementation guide
 
-## Optional: multi-VM application deployment (example topology)
+| Path | Current role |
+|---|---|
+| `lab` / `lib/runner-functions.sh` | JSON envelope ownership, argument dispatch, checkout lock, mutation process-group signals. |
+| `lib/config.sh` / `config-functions.sh` | Settings, credential loading, Terraform variables, structured result/error helpers. |
+| `lib/lifecycle.sh` | State-instance selection, live-power seeds, saved plans/guards, create-off bootstrap, selected power, shutdown and deletion/cleanup. |
+| `lib/power-map.py` / `plan-inspect.py` | State VM instances and live power; all-attribute VM update safety check. |
+| `lib/bootstrap-records.py` / `cleanup-guest.py` | Durable missing bootstrap-record restoration and cleanup journal. |
+| `lib/network.sh` / `network-inspect.py` | Windows/VMX evidence and LAN mismatch gate. |
+| `lib/describe.json` / `envelope.py` | Command/error contract, stdout result and mutation/action metadata. |
+| `lib/base.sh` / `bootstrap-guest.sh` | One unbooted base per image; powered-off clone seed/NICs and pinned host key; completed bootstrap cannot be repeated. |
+| `lib/guest-inventory.py` / `configure.sh` | Running-host readiness and private inventory; project/default playbook execution. |
+| `terraform/main.tf` / `variables.tf` | Per-image base lookup; per-name VM/bootstrap records; live-seeded `power_states` map defaults new VMs off. |
+| `lib/preflight.sh` / `windows/setup.ps1` | Host checks / Windows Install, Status, Network, Remove actions. |
 
-A lab can grow from the single demo clone into an application environment: list the VMs in `vms.tfvars` with groups such as `web`, `api`, `db`, and target those groups from the user's own playbooks (`lib/configure.sh <playbook>`). The NAT/host-only clones made here get DHCP addresses; the bridged layout below came from a hand-built deployment. Example layout (fill in your own addresses on `<LAN_SUBNET>`):
+Lifecycle power, LAN and confirmation checks use VM instances in Terraform show
+JSON, not possibly stale output `vms`. Configure guest inventory reads `terraform output -json vms`; the best-effort inventory used by down reads VM instances from `terraform show -json`.
 
-| Role | Address | Notes |
-| --- | --- | --- |
-| nginx (entry) | `<IP_NGINX>` | serves `/docs`, proxies to HAProxy |
-| HAProxy | `<IP_HAPROXY>` | balances API nodes; check alternating backend header |
-| API node 1/2 | `<IP_API_1>`, `<IP_API_2>` | app service under `/opt/<app>` |
-| MariaDB primary | `<IP_DB_PRIMARY>` | app account limited to `<app>.*` and `<LAN_SUBNET>` |
-| MariaDB replica | `<IP_DB_REPLICA>` | read-only; check both replication threads |
-| MongoDB | `<IP_MONGO>` | authorization enabled; firewall 27017 to `<LAN_SUBNET>` only |
+## Network changes and recovery
 
-Lessons from running such a deployment:
+`LAB_LAN_VNET` empty/VMnet0 means bridged; VMnet1–19 uses custom plus vnet.
+Effective LAN must differ from NAT/management. Changing it never triggers clone
+replacement; every up refuses existing LAN mismatches, even with
+`--allow-destroy`. Down/status/network/configure/destroy remain available.
+Follow [network.md](network.md) for user-chosen offline VMX repair; preserve the
+LAN MAC and never re-bootstrap an existing disk. Base NAT changes require
+user-approved base recreation plus rebuilt clones.
 
-- Bridged guests need explicit static network config (netplan) and cloud-init network regeneration disabled; the demo clone path creates NAT clones only.
-- Gracefully stop a VM before editing its VMX; back up the VMX and guest network files first.
-- A stale copy of the deployment env file with old addresses broke replica connections. Keep one private env file (symlink copies to it) and check addresses and inventory before each deploy. Never package private env files with installer sources.
-- After changing a DB password, update every consumer's env file and restart services; record only that it changed, never the value.
-- Verification should cover: HTTP 200 on health/docs through every hop, both API nodes in rotation, schema/migration parity on primary and replica, replica read-only. This does not prove automatic failover.
+## Isolation and evidence
 
-## Known operational lessons
+One checkout owns one state, VM set and inventory. Serialize runners or use fully
+isolated state/settings/private directories and noncolliding VM names. Never
+copy state for an experiment. Do not test destruction/reboots on an in-use host.
 
-- Host keys are not learned on first contact: `lib/bootstrap-guest.sh` generates each clone's SSH host key, injects it with cloud-init `ssh_keys` and writes `known_hosts-<id>` under the alias `wsl-vmware-lab-<id>` before the first boot; SSH runs with `StrictHostKeyChecking=yes`. A different key at the address (another VM got it) fails the connection instead of configuring the wrong VM.
-- Default Ansible privilege-escalation wait (12 s) intermittently timed out; `ANSIBLE_TIMEOUT=60` fixed it. Root cause of the latency was not confirmed.
-- After a reboot vmrest may be absent (HTTP 000). Start the `VMware vmrest API` task before retrying Terraform; `0 destroyed` with vmrest down is not success.
-- Both boot tasks (`WSL2 SSH Service Start`, `VMware vmrest API`) come from `windows\setup.cmd Install`; `./lab status` warns about tasks from an older setup. Do not restart WSL or re-register the SSH task during an active remote session without console access (re-registering does not stop the running sshd; a restart does).
-- A host that sleeps or hibernates drops every remote session; from outside it looks like an SSH timeout. `./lab status` shows the power values; `setup.cmd Install` sets them (the user's call).
-
-## Evidence rules
-
-Report a result only with the command and its output from this run. Earlier logs and blog results are history, not current evidence. State which reboot/persistence scenarios were actually tested.
-
-A command handed to the user (for example a one-line `ssh <user>@<host> '...'` to run a step that needs their approval) must be the exact form you ran and verified in this session, not a retyped or shortened version. A retyped command with bare `powershell.exe` failed this way.
+For partial starts/applies, inspect `./lab status`, report actual power and ask
+before recovery. Follow the documented order per host; multi-name calls have no
+ordering guarantee. After reboot verify status, LAN addresses, membership and
+a fresh write/read. Report only observed evidence; historical checks do not
+establish current behavior. See the repository `tests/README.md` for Linux-only
+offline verification and fixture safety.

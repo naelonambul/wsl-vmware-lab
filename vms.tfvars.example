@@ -5,8 +5,10 @@
 # Key = VM name (lowercase letters, digits, '-'): it becomes the Windows folder
 # <LAB_VM_ROOT_WIN>\<name>\<name>.vmx, the guest hostname and the Ansible host.
 # groups = Ansible groups for your playbooks. Every VM is also in group "lab".
-# lan = true adds a bridged NIC "lan0" with an address from your LAN router's
-# DHCP; lan_ip = "192.168.1.240/24" makes it static (outside the router's DHCP
+# Run ./lab network before setup/up; select LAB_LAN_VNET from host evidence.
+# lan = true adds "lan0" (default bridged VMnet0, or custom LAB_LAN_VNET) with LAN
+# DHCP; lan_ip = "192.0.2.240/24" is a documentation-only static example; replace it
+# with a free address on your discovered LAN (outside the router's DHCP
 # range). Internet traffic stays on NAT. Changing either rebuilds the VM.
 # image = guest cloud image: ubuntu-24.04, ubuntu-22.04 or debian-13; omitted
 # means LAB_IMAGE (default ubuntu-24.04). ./lab setup prepares one base per
@@ -17,6 +19,12 @@
 # powered off and leaves it off (existing power is preserved).
 # Start with `./lab up --all` or `./lab up web1`; stop with
 # `./lab down --all` or `./lab down web1` (graceful; --hard is explicit).
+# Preview with ./lab up --dry-run; inspect JSON stdout and diagnostics stderr.
+# All non-power in-place VM edits need the VM off. Revert edits, down that VM,
+# restore edits, then up; configuration is applied off before selected power-on.
+# Destroy the whole state set with ./lab destroy --confirm=web1,db1 (no prompt).
+# Distributed services need a version-specific documented order; use separate
+# up/down calls per ordered role and project variables for durable topology.
 # Removing an entry needs `./lab up --allow-destroy`,
 # which destroys that VM and cleans its files; plain `up` refuses to delete VMs.
 

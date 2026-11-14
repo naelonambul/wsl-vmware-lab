@@ -98,9 +98,17 @@ def main():
                 value = 'unknown'
             row = dict(name=vm['name'], power=value)
             if mode == 'status':
+                if value == 'unknown':
+                    envelope.record('warnings', [dict(code='vm_power_unknown',
+                        message='Cannot establish live power; inspect this VM before acting.',
+                        vm=vm['name'])])
                 lan = importlib.import_module('network-inspect').lan_evidence(vm)
                 row['lan'] = {k: lan[k] for k in ('desired', 'actual', 'mismatch')}
                 row['lan']['error'] = 'VMX unavailable or invalid' if lan['error'] else None
+                if lan['mismatch']:
+                    envelope.record('warnings', [dict(code='lan_vnet_mismatch',
+                        message='Desired and actual LAN wiring differ; review offline repair.',
+                        vm=vm['name'])])
             rows.append(row)
             print('[VM] {}: {}{}'.format(vm['name'], value,
                   ' (start: ./lab up ' + vm['name'] + ' or ./lab up --all)' if value == 'off' else ''))

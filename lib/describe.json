@@ -21,7 +21,7 @@
       "--dry-run"
     ],
     "destroy": [
-      "--confirm=<comma-separated state VM names> (required except dry-run)",
+      "--confirm=<comma-separated state VM names> (required except dry-run or empty-state no-op)",
       "--dry-run"
     ],
     "cleanup": [],
@@ -39,7 +39,9 @@
     "2": "usage/configuration",
     "3": "authentication/user required",
     "4": "safe precheck retry",
-    "5": "safety refusal"
+    "5": "safety refusal",
+    "130": "SIGINT interruption; runtime_error",
+    "143": "SIGTERM interruption; runtime_error"
   },
   "errors": {
     "usage_error": {
@@ -96,7 +98,11 @@
     },
     "runtime_error": {
       "exit": 1,
-      "next_action": "Read stderr and ./lab status; ask the user about partly changed distributed systems."
+      "next_action": "Read stderr and ./lab status; ask the user about partly changed distributed systems.",
+      "signal_exits": {
+        "SIGINT": 130,
+        "SIGTERM": 143
+      }
     }
   },
   "envelope": {
@@ -105,7 +111,7 @@
     "dry_run": "boolean",
     "changed": "boolean: mutation attempted, possibly partial",
     "data": "command metadata only",
-    "warnings": "[{code,message,vm}]",
+    "warnings": "[{code,message,vm}]; status emits vm_power_unknown / lan_vnet_mismatch per affected VM; inspect data.vms and warnings, not only ok",
     "error": "null | {code,message,hint,details}"
   }
 }

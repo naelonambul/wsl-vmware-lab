@@ -70,14 +70,20 @@ Codex alternative for the skill only (the repository is still needed, step 2): i
 
 A replaced skill is kept as `vmware-wsl-lab.bak.<time>`; tell the user, and delete it only if they ask.
 
-## 4. Check the lab with ./lab status
+## 4. Inspect networks, then check the lab
+
+Before any setup/up run `./lab network` in the selected checkout; read [the network reference](.claude/skills/vmware-wsl-lab/reference/network.md) (including its read-only Windows fallback). It does not need vmrest. VMnet numbers and bridge bindings do not prove Automatic's selected adapter; ask before enabling LAN when unresolved. `LAB_LAN_VNET` empty/VMnet0 uses bridging; VMnet1–19 uses a custom network distinct from NAT/management. Existing LAN mismatches block up and need a user-chosen offline repair.
+
+Every lab command emits one JSON envelope to stdout; logs go to stderr. `./lab describe --json` returns commands, error codes and next actions under `data`. `ok` is true exactly when `error` is null; `changed` indicates an attempted, possibly partial mutation.
+
+Then check status:
 
 ```bash
 "$repo/lab" status; echo "exit=$?"
 ```
 
 - `exit=0`: vmrest answers and the stored account is accepted. The API side is ready; preflight does not test SSH from another PC, the base VM or a clone lifecycle (the skill's verification checklist does).
-- Anything else: read the `[ERROR]`/`[WARN]` lines and use the failure table in the skill's `SKILL.md` section 0. Typical first-time results: the vmrest account file `%USERPROFILE%\.env` does not exist yet (the user runs `./lab account`; README, Installation step 2), vmrest is not running, or tools are missing (new-PC path). Ask before fixing anything.
+- Anything else: inspect the stdout JSON `error.code`, `hint` and `details`, then stderr diagnostics; use the error-code table in the skill's `SKILL.md` section 0. Typical first-time results: the vmrest account file `%USERPROFILE%\.env` does not exist yet (the user runs `./lab account`; README, Installation step 2), vmrest is not running, or tools are missing (new-PC path). Ask before fixing anything.
 
 Installing the skill is done even when preflight fails; report both results separately.
 
@@ -88,4 +94,10 @@ Report: where you run, the repository path, the skill path (and any `.bak` copy)
 - Claude Code watches existing skill folders and picks the new skill up in the running session. If the `skills` folder did not exist when the session started, run `/reload-skills` (or restart). It is invoked as `/vmware-wsl-lab`, or automatically when the request matches.
 - Codex detects new skills automatically; if it does not show up in `/skills`, restart Codex. It is invoked with `$vmware-wsl-lab`, or automatically when the request matches.
 - Update later: `git -C <repo> pull --ff-only`, then repeat step 3.
-- Remove: delete the skill folder from step 3 (ask first). The repository and any VMs are separate; remove VMs with `./lab destroy`, never by deleting folders.
+- Remove: delete the skill folder from step 3 (ask first). The repository and any VMs are separate; remove VMs with `./lab destroy --confirm=<names>` (the exact comma-separated state VM set), never by deleting folders.
+
+## Existing checkout behavior
+
+No state migration is required for this upgrade: resource addresses/replacement triggers and the formats of `lab.env` / `vms.tfvars` are unchanged; power variables are not stored. `./lab up` prepares new/replacement VMs off and preserves surviving live power; `./lab up --all` or `./lab up <vm>` starts a selection. `./lab down --all` or `./lab down <vm>` shuts down gracefully; `--hard` requires an explicit decision. Destroy uses `./lab destroy --confirm=<names>` with the exact distinct state VM set and no prompt or Terraform flags. Preview with `./lab up --dry-run`, `./lab down --all --dry-run` or `./lab destroy --dry-run`; initialized Terraform/providers and vmrest are required. Rollback is checkout of the pre-power-change revision `b97feef`; its old up starts every VM.
+
+`./lab configure [PLAYBOOK] [ansible-playbook options]` uses running VMs only; `configure --limit db` uses the default playbook but still waits for all powered-on VMs. Before configuring or starting distributed services, record the exact version's officially documented bootstrap/shutdown/restart order; follow [the distributed-systems reference](.claude/skills/vmware-wsl-lab/reference/distributed-systems.md). See [tests/README.md](tests/README.md) for Linux-only developer checks; never run these tests under Windows Git Bash/MSYS.
