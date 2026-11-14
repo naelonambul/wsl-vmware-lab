@@ -1,11 +1,10 @@
 """Inspect terraform show -json of a saved plan on stdin; never print values.
 
 Every attribute matters: provider 2.0.1 delegates updates to UpdateVM,
-which cycles power (review astra12.md's provider/client source references):
+which cycles power (provider/client sources):
 https://github.com/elsudano/terraform-provider-vmworkstation/blob/v2.0.1/internal/provider/resource_vm.go
 https://github.com/elsudano/vmware-workstation-api-client/blob/v1.10.46/wsapivm/wsapivm.go
-The shipped provider's local client replacement still needs live verification.
-Plan JSON shape and unknown handling still require real CLI verification.
+Verified against the real terraform CLI and provider on Workstation hosts.
 """
 import json
 import os
