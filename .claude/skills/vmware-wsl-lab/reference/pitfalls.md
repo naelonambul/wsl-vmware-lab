@@ -18,6 +18,7 @@ Merged from blog parts 1-3 and both runbooks. Match the symptom, confirm the cau
 | WSL cannot reach `127.0.0.1:8697` | WSL in NAT mode; vmrest bound to loopback | Use mirrored mode. Do not expose Basic-auth vmrest to the LAN |
 | VM missing from `/api/vms` | VMX/disk exist but not registered | `./lab setup` (registration is idempotent by path) |
 | base registration gets HTTP 500; VMware log shows a VMX syntax error | `lab.env` written from Windows with CRLF line endings put `\r` into the VM name (older checkouts) | `lib/config.sh` now strips CR when loading `lab.env` and preflight warns about CRLF; on an older checkout convert it with `sed -i 's/\r$//' lab.env`, regenerate the base VMX and register again |
+| `config_error`: `lab.env has a shell syntax error` | `lib/config.sh` syntax-checks `lab.env` (`bash -O extglob -n`, diagnostics discarded) before sourcing and deliberately omits the failing line because `lab.env` may hold credentials | run `bash -n lab.env` yourself to see the line and fix the syntax |
 | `vmrest -C` fails with piped password | requires interactive input | the user runs `./lab account` in a terminal (it refuses without one) |
 | `./lab status` still warns about other accounts on the secrets file after `icacls /inheritance:r /grant:r` | that removes inherited entries only; entries set directly on the file (e.g. `CodexSandboxUsers:(RX)`) stay | `./lab account --lock` (sets exactly your user, SYSTEM and Administrators) |
 | Unauthenticated 401 works, authenticated request also 401 (Terraform/provider auth errors) | secrets file (`%USERPROFILE%\.env` or `LAB_SECRETS_FILE`) differs from the vmrest API account (`vmrest.exe -C`, stored in `vmrest.cfg`; password not readable) | user corrects the file, or runs `./lab account` again. Never read or print the values |
@@ -90,6 +91,8 @@ Do not restart WSL or edit scheduled tasks during an active remote session witho
 | `Resource targeting is in effect` warning during `./lab up` | expected: new VMs are created powered off with `-target` so running VMs stay on | none; the following full apply converges everything |
 | Old `verify-lifecycle.sh` | uses bare destroy, predates cleanup flow | read its results; do not rerun as the preferred entry point |
 | `REMOTE HOST IDENTIFICATION HAS CHANGED` in Ansible after re-creating the clone | vmrest derives the VM id from the VMX path, so a clone re-created at the same path reuses the id and its old `known_hosts-<id>` | `lib/bootstrap-guest.sh` generates and pins a new key before every new disk’s first boot; verify API VMX identity, management MAC/lease and bootstrap records. Keep the pin intact; never delete it, learn a guest-reported replacement or disable host key checking |
+| `./lab destroy` or `./lab cleanup` reports `Other files remain; directory was left intact` | a manual file such as a `.vmx` backup (for example `<vm>.vmx.before-vmnet2` made when switching a NIC by hand) remains in the deleted VM's clone folder | confirm the file is not needed, delete it, then run `./lab cleanup`; prefer `LAB_LAN_VNET` over hand-editing VMX files |
+| Stale entries remain in the VMware Workstation library (`inventory.vmls`) after deleting VMs | Workstation keeps library entries for VMs whose folders were deleted outside the GUI | harmless; remove them while the Workstation GUI is closed |
 
 ## LAN and distributed systems
 
