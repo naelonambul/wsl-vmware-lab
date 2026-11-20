@@ -77,8 +77,8 @@ variable "vms" {
   }
 
   validation {
-    condition     = alltrue([for spec in values(var.vms) : spec.image == null || contains(["ubuntu-24.04", "ubuntu-22.04", "debian-13", "oraclelinux-8"], coalesce(spec.image, "-"))])
-    error_message = "image must be ubuntu-24.04, ubuntu-22.04, debian-13 or oraclelinux-8 (lib/base.sh)."
+    condition     = alltrue([for spec in values(var.vms) : spec.image == null || contains(["ubuntu-24.04", "ubuntu-22.04", "debian-13", "debian-12", "rocky-9", "almalinux-9", "oraclelinux-8"], coalesce(spec.image, "-"))])
+    error_message = "image must be ubuntu-24.04, ubuntu-22.04, debian-13, debian-12, rocky-9, almalinux-9 or oraclelinux-8 (lib/base.sh)."
   }
 
   validation {

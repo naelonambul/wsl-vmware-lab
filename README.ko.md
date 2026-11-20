@@ -25,6 +25,9 @@ WSL Ansible --SSH--> 실습 VM (VMnet1 host-only 관리망; VMnet8 NAT)
   | `ubuntu-24.04`(기본값) | `noble-server-cloudimg-amd64.ova` | Ubuntu가 서명한 `SHA256SUMS`(gpgv) |
   | `ubuntu-22.04` | `jammy-server-cloudimg-amd64.ova` | 위와 같음 |
   | `debian-13` | `debian-13-generic-amd64.qcow2` | HTTPS로 받은 `SHA512SUMS`만 확인(Debian은 클라우드 이미지에 서명하지 않음) |
+  | `debian-12` | `debian-12-generic-amd64.qcow2` | 위와 같음 |
+  | `rocky-9` | `Rocky-9-GenericCloud-Base.latest.x86_64.qcow2` | HTTPS로 받은 BSD 형식 SHA256 `*.CHECKSUM` 확인(서명 미검증) |
+  | `almalinux-9` | `AlmaLinux-9-GenericCloud-latest.x86_64.qcow2` | HTTPS로 받은 SHA256 `CHECKSUM` 확인(서명 미검증) |
   | `oraclelinux-8` | `OL8U10_x86_64-kvm-b287.qcow2` + `mods.iso` (`OL8MODS`) | HTTPS로 받은 고정 SHA256만 확인(서명 미검증); `mods.iso`에 `kernel-uek-modules` RPM을 담아 첫 부팅 시 오프라인으로 `vmxnet3` 설치 |
 
   `LAB_IMAGE`는 기본값이고, `vms.tfvars`에서 VM마다 `image`를 따로 줄 수 있어 한 시스템 안에서 섞어 쓸 수 있습니다(예: web은 Ubuntu, db는 Debian). `./lab setup`은 쓰이는 이미지마다 베이스를 하나씩 준비합니다(`base/<image>/`, VM 이름 `<image>-base`). VM의 이미지를 바꾸면 그 VM만 다시 만듭니다(`./lab up --allow-destroy`). 예제 nginx 플레이북은 apt를 씁니다.
@@ -185,7 +188,7 @@ cp vms.tfvars.example vms.tfvars           # VM 이름, CPU, memory_mb, Ansible 
 | `LAB_MGMT_VNET` | `VMnet1` | Host-only 관리용 가상 네트워크(`ethernet1`) |
 | `LAB_LAN_VNET` | 빈 값(실제 `VMnet0`) | LAN NIC: 빈 값/VMnet0 = 브리지, VMnet1–19 = 사용자 지정; NAT·관리 VMnet과 달라야 함 |
 | `LAB_BASE_DIR` | `<repo>/base` | 베이스마다 `<image>/` 폴더(`base.vmx`, `base.vmdk`, `base.prepared`)를 두는 폴더 |
-| `LAB_IMAGE` | `ubuntu-24.04` | `vms.tfvars`에 `image`가 없는 VM의 게스트 이미지: `ubuntu-24.04`, `ubuntu-22.04`, `debian-13`, `oraclelinux-8` |
+| `LAB_IMAGE` | `ubuntu-24.04` | `vms.tfvars`에 `image`가 없는 VM의 게스트 이미지: `ubuntu-24.04`, `ubuntu-22.04`, `debian-13`, `debian-12`, `rocky-9`, `almalinux-9`, `oraclelinux-8` |
 | `LAB_UBUNTU_IMAGE_URL` | `https://cloud-images.ubuntu.com/<noble 또는 jammy>/current` | 선택한 Ubuntu 이미지와 `SHA256SUMS`를 받을 폴더(미러) |
 | `LAB_VM_ROOT_WIN` | `%USERPROFILE%\Documents\Virtual Machines` | 클론을 두는 Windows 폴더(`<root>\<name>\<name>.vmx`). Workstation의 기본 VM 위치와 같아야 함 |
 | `LAB_VMS_FILE` | `<repo>/vms.tfvars` | 다중 VM 정의 파일. 없으면(명시적으로 지정하지 않은 경우) 아래 단일 데모 VM으로 대체 |

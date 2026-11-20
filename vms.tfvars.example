@@ -10,10 +10,10 @@
 # DHCP; lan_ip = "192.0.2.240/24" is a documentation-only static example; replace it
 # with a free address on your discovered LAN (outside the router's DHCP
 # range). Internet traffic stays on NAT. Changing either rebuilds the VM.
-# image = guest cloud image: ubuntu-24.04, ubuntu-22.04, debian-13 or
-# oraclelinux-8; omitted means LAB_IMAGE (default ubuntu-24.04). ./lab setup
-# prepares one base per image used here. Changing a VM's image rebuilds it
-# (./lab up --allow-destroy).
+# image = guest cloud image: ubuntu-24.04, ubuntu-22.04, debian-13, debian-12,
+# rocky-9, almalinux-9 or oraclelinux-8; omitted means LAB_IMAGE (default
+# ubuntu-24.04). ./lab setup prepares one base per image used here. Changing a
+# VM's image rebuilds it (./lab up --allow-destroy).
 # Omitted values default to 2 vCPU, 2048 MB and groups ["demo"].
 #
 # Adding an entry and running `./lab up` creates only the new VM

@@ -43,6 +43,24 @@ prepare_base() {
       img_url=https://cloud.debian.org/images/cloud/trixie/latest
       img_file=debian-13-generic-amd64.qcow2; img_disk=''
       sums=SHA512SUMS; img_sha256=''; guest_os=debian12-64; signed=0 ;;
+    debian-12)
+      # Debian publishes no signature for cloud images: the checksum list comes
+      # over HTTPS from cloud.debian.org only.
+      img_url=https://cloud.debian.org/images/cloud/bookworm/latest
+      img_file=debian-12-generic-amd64.qcow2; img_disk=''
+      sums=SHA512SUMS; img_sha256=''; guest_os=debian12-64; signed=0 ;;
+    rocky-9)
+      # Rocky Linux publishes BSD-style SHA256 CHECKSUM over HTTPS (not GPG-verified here).
+      img_url=https://dl.rockylinux.org/pub/rocky/9/images/x86_64
+      img_file=Rocky-9-GenericCloud-Base.latest.x86_64.qcow2; img_disk=''
+      sums=Rocky-9-GenericCloud-Base.latest.x86_64.qcow2.CHECKSUM; img_sha256=''
+      guest_os=rhel9-64; signed=0; disk_bus=sata; nic_dev=vmxnet3 ;;
+    almalinux-9)
+      # AlmaLinux publishes GNU-style SHA256 CHECKSUM over HTTPS (not GPG-verified here).
+      img_url=https://repo.almalinux.org/almalinux/9/cloud/x86_64/images
+      img_file=AlmaLinux-9-GenericCloud-latest.x86_64.qcow2; img_disk=''
+      sums=CHECKSUM; img_sha256=''
+      guest_os=rhel9-64; signed=0; disk_bus=sata; nic_dev=vmxnet3 ;;
     oraclelinux-8)
       # Oracle publishes SHA256 hashes on oracle-linux-templates.html (not signed)
       # and ships kernel-uek-core without VMware NIC modules; mods.iso carries
@@ -54,7 +72,7 @@ prepare_base() {
       mods_rpm_url=https://yum.oracle.com/repo/OracleLinux/OL8/UEKR7/x86_64/getPackage
       mods_rpm_file=kernel-uek-modules-5.15.0-320.202.8.5.el8uek.x86_64.rpm
       mods_rpm_sha256=c51b2181df065f85601a441fe9567831246ee206f9e2781d379657d2b5be500c ;;
-    *) lab_fail config_error "Unknown image: $image (supported: ubuntu-24.04, ubuntu-22.04, debian-13, oraclelinux-8)" ;;
+    *) lab_fail config_error "Unknown image: $image (supported: ubuntu-24.04, ubuntu-22.04, debian-13, debian-12, rocky-9, almalinux-9, oraclelinux-8)" ;;
   esac
   sumcmd=sha256sum; [[ $sums == SHA512SUMS ]] && sumcmd=sha512sum
   dir="$LAB_BASE_DIR/$image"
@@ -97,7 +115,7 @@ prepare_base() {
       curl -fsS -o "$sums.gpg" "$img_url/$sums.gpg"
       gpgv --keyring "$keyring" "$sums.gpg" "$sums"
     fi
-    grep -q " \*\?${img_file}\$" "$sums" || { echo "[ERROR] $img_file not listed in $sums" >&2; exit 1; }
+    grep -qE "( \*?${img_file}\$|^SHA(256|512) \(${img_file}\) = )" "$sums" || { echo "[ERROR] $img_file not listed in $sums" >&2; exit 1; }
     if ! { [[ -f "$img_file" ]] && $sumcmd --ignore-missing -c "$sums" 2>/dev/null | grep -q "^${img_file}: OK$"; }; then
       curl -fSL --retry 3 -o "$img_file.part" "$img_url/$img_file"
       mv -f "$img_file.part" "$img_file"
@@ -243,8 +261,8 @@ images=$(lab_used_images) || lab_fail config_error 'Cannot read the configured i
 [[ -n "$images" ]] || lab_fail config_error 'The configured image set is empty.'
 for image in $images; do
   case "$image" in
-    ubuntu-24.04|ubuntu-22.04|debian-13|oraclelinux-8) ;;
-    *) lab_fail config_error "Unknown image: $image (supported: ubuntu-24.04, ubuntu-22.04, debian-13, oraclelinux-8)" ;;
+    ubuntu-24.04|ubuntu-22.04|debian-13|debian-12|rocky-9|almalinux-9|oraclelinux-8) ;;
+    *) lab_fail config_error "Unknown image: $image (supported: ubuntu-24.04, ubuntu-22.04, debian-13, debian-12, rocky-9, almalinux-9, oraclelinux-8)" ;;
   esac
 done
 lab_require_credentials
