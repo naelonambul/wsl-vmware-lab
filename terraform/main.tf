@@ -98,10 +98,11 @@ resource "terraform_data" "guest_bootstrap" {
   provisioner "local-exec" {
     command = "bash ../lib/bootstrap-guest.sh"
     environment = {
-      VMX_WIN = vmworkstation_virtual_machine.vm[each.key].path
-      VM_ID   = vmworkstation_virtual_machine.vm[each.key].id
-      VM_NAME = each.key
-      VM_LAN  = each.value.lan
+      VMX_WIN  = vmworkstation_virtual_machine.vm[each.key].path
+      VM_ID    = vmworkstation_virtual_machine.vm[each.key].id
+      VM_NAME  = each.key
+      VM_IMAGE = each.value.image
+      VM_LAN   = each.value.lan
     }
   }
 }

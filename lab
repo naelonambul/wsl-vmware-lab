@@ -64,7 +64,7 @@ case "$cmd" in
     lock
     [[ $# -eq 0 || "$*" == --recreate ]] || usage
     missing=()
-    for tool in terraform ansible-playbook qemu-img cloud-localds gpgv; do
+    for tool in terraform ansible-playbook qemu-img cloud-localds genisoimage gpgv; do
       command -v "$tool" >/dev/null || missing+=("$tool")
     done
     [[ -f /usr/share/keyrings/ubuntu-cloudimage-keyring.gpg ]] || missing+=(ubuntu-cloudimage-keyring)
