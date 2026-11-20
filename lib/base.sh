@@ -61,6 +61,14 @@ prepare_base() {
       img_file=AlmaLinux-9-GenericCloud-latest.x86_64.qcow2; img_disk=''
       sums=CHECKSUM; img_sha256=''
       guest_os=rhel9-64; signed=0; disk_bus=sata; nic_dev=vmxnet3 ;;
+    oraclelinux-9)
+      # Oracle publishes SHA256 hashes on oracle-linux-templates.html (not signed).
+      # Unlike OL8, OL9's pre-installed kernel-uek-modules-core already ships
+      # vmxnet3.ko.xz and ahci.ko.xz, so no mods.iso is needed.
+      img_url=https://yum.oracle.com/templates/OracleLinux/OL9/u8/x86_64
+      img_file=OL9U8_x86_64-kvm-b293.qcow2; img_disk=''
+      sums=''; img_sha256=b12103391327abee8090686759c0d62dac9a7af2bf0f45fdf6b0d085a0fbb52b
+      guest_os=oraclelinux9-64; signed=0; disk_bus=sata; nic_dev=vmxnet3 ;;
     oraclelinux-8)
       # Oracle publishes SHA256 hashes on oracle-linux-templates.html (not signed)
       # and ships kernel-uek-core without VMware NIC modules; mods.iso carries
@@ -72,7 +80,7 @@ prepare_base() {
       mods_rpm_url=https://yum.oracle.com/repo/OracleLinux/OL8/UEKR7/x86_64/getPackage
       mods_rpm_file=kernel-uek-modules-5.15.0-320.202.8.5.el8uek.x86_64.rpm
       mods_rpm_sha256=c51b2181df065f85601a441fe9567831246ee206f9e2781d379657d2b5be500c ;;
-    *) lab_fail config_error "Unknown image: $image (supported: ubuntu-24.04, ubuntu-22.04, debian-13, debian-12, rocky-9, almalinux-9, oraclelinux-8)" ;;
+    *) lab_fail config_error "Unknown image: $image (supported: ubuntu-24.04, ubuntu-22.04, debian-13, debian-12, rocky-9, almalinux-9, oraclelinux-9, oraclelinux-8)" ;;
   esac
   sumcmd=sha256sum; [[ $sums == SHA512SUMS ]] && sumcmd=sha512sum
   dir="$LAB_BASE_DIR/$image"
@@ -261,8 +269,8 @@ images=$(lab_used_images) || lab_fail config_error 'Cannot read the configured i
 [[ -n "$images" ]] || lab_fail config_error 'The configured image set is empty.'
 for image in $images; do
   case "$image" in
-    ubuntu-24.04|ubuntu-22.04|debian-13|debian-12|rocky-9|almalinux-9|oraclelinux-8) ;;
-    *) lab_fail config_error "Unknown image: $image (supported: ubuntu-24.04, ubuntu-22.04, debian-13, debian-12, rocky-9, almalinux-9, oraclelinux-8)" ;;
+    ubuntu-24.04|ubuntu-22.04|debian-13|debian-12|rocky-9|almalinux-9|oraclelinux-9|oraclelinux-8) ;;
+    *) lab_fail config_error "Unknown image: $image (supported: ubuntu-24.04, ubuntu-22.04, debian-13, debian-12, rocky-9, almalinux-9, oraclelinux-9, oraclelinux-8)" ;;
   esac
 done
 lab_require_credentials

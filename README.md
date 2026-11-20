@@ -28,6 +28,7 @@ Background posts (the repository has evolved since publication; where they diffe
   | `debian-12` | `debian-12-generic-amd64.qcow2` | same |
   | `rocky-9` | `Rocky-9-GenericCloud-Base.latest.x86_64.qcow2` | BSD-style SHA256 `*.CHECKSUM` over HTTPS only (not GPG-verified here) |
   | `almalinux-9` | `AlmaLinux-9-GenericCloud-latest.x86_64.qcow2` | SHA256 `CHECKSUM` over HTTPS only (not GPG-verified here) |
+  | `oraclelinux-9` | `OL9U8_x86_64-kvm-b293.qcow2` | Pinned SHA256 over HTTPS only (not GPG-verified here); `vmxnet3` included in `kernel-uek-modules-core` |
   | `oraclelinux-8` | `OL8U10_x86_64-kvm-b287.qcow2` + `mods.iso` (`OL8MODS`) | Pinned SHA256 over HTTPS only (Oracle templates/RPMs are not GPG-verified here); `mods.iso` carries `kernel-uek-modules` for offline first-boot `vmxnet3` install |
 
   `LAB_IMAGE` is the default; each VM in `vms.tfvars` may name its own `image`, so one system can mix them (for example web on Ubuntu, db on Debian). `./lab setup` prepares one base per image in use (`base/<image>/`, VM `<image>-base`). Changing a VM's image rebuilds that VM (`./lab up --allow-destroy`). The example nginx playbook uses apt.
@@ -188,7 +189,7 @@ Copy `lab.env.example` to `lab.env` only when overriding defaults (`cp lab.env.e
 | `LAB_MGMT_VNET` | `VMnet1` | Host-only management virtual network (`ethernet1`) |
 | `LAB_LAN_VNET` | empty (effective `VMnet0`) | LAN NIC: empty/VMnet0 = bridged; VMnet1–19 = custom; must differ from NAT and management |
 | `LAB_BASE_DIR` | `<repo>/base` | Directory holding one `<image>/` folder per base (`base.vmx`, `base.vmdk`, `base.prepared`) |
-| `LAB_IMAGE` | `ubuntu-24.04` | Guest image of VMs without `image` in `vms.tfvars`: `ubuntu-24.04`, `ubuntu-22.04`, `debian-13`, `debian-12`, `rocky-9`, `almalinux-9` or `oraclelinux-8` |
+| `LAB_IMAGE` | `ubuntu-24.04` | Guest image of VMs without `image` in `vms.tfvars`: `ubuntu-24.04`, `ubuntu-22.04`, `debian-13`, `debian-12`, `rocky-9`, `almalinux-9`, `oraclelinux-9` or `oraclelinux-8` |
 | `LAB_UBUNTU_IMAGE_URL` | `https://cloud-images.ubuntu.com/<noble or jammy>/current` | Download directory (mirror) for the chosen Ubuntu image and its `SHA256SUMS` |
 | `LAB_VM_ROOT_WIN` | `%USERPROFILE%\Documents\Virtual Machines` | Windows directory for clones (`<root>\<name>\<name>.vmx`); must match Workstation's default VM location |
 | `LAB_VMS_FILE` | `<repo>/vms.tfvars` | Multi-VM definition file; if absent (and not set explicitly), falls back to the single demo VM below |

@@ -56,7 +56,7 @@ printf 'instance-id: %s\nlocal-hostname: %s\n' "$VM_ID" "${VM_NAME:-$LAB_CLONE_N
 # on e1000-based images, match them by driver instead of name: on first boot the
 # vmxnet3 LAN NIC is still en* until it is renamed lan0, and would otherwise take
 # a DHCP lease and default route. Images using vmxnet3 for all NICs match en*.
-if [[ "$lan" == none || "$image" == oraclelinux-8 || "$image" == rocky-9 || "$image" == almalinux-9 ]]; then
+if [[ "$lan" == none || "$image" == oraclelinux-8 || "$image" == oraclelinux-9 || "$image" == rocky-9 || "$image" == almalinux-9 ]]; then
   nic_match='name: "en*"'
 else
   nic_match='driver: e1000'
@@ -127,7 +127,7 @@ from pathlib import Path
 p=Path(os.environ['VMX_LINUX'])
 s=p.read_text()
 ol8 = os.environ.get('VM_IMAGE') == 'oraclelinux-8'
-vmxnet3_nics = os.environ.get('VM_IMAGE') in ('oraclelinux-8', 'rocky-9', 'almalinux-9')
+vmxnet3_nics = os.environ.get('VM_IMAGE') in ('oraclelinux-8', 'oraclelinux-9', 'rocky-9', 'almalinux-9')
 settings={
  'ide1:0.fileName': os.environ['SEED_WIN'],
  'ide1:0.present':'TRUE', 'ide1:0.startConnected':'TRUE',

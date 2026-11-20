@@ -24,15 +24,15 @@ class CloudImageTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
 
-    def _run_base(self, image, img_file, checksum_body):
+    def _run_base(self, image, img_file, checksum_body, extra_bin=None):
         proj = self.root / f'repo-{image}'
         (proj / 'lib').mkdir(parents=True)
         for name in ('base.sh', 'config.sh', 'config-functions.sh', 'envelope.py'):
             shutil.copyfile(ROOT / 'lib' / name, proj / 'lib' / name)
         (proj / 'lib/register-vm.py').write_text('pass\n')
 
-        bin_dir = self.root / f'bin-{image}'
-        bin_dir.mkdir()
+        bin_dir = extra_bin or (self.root / f'bin-{image}')
+        bin_dir.mkdir(exist_ok=True)
         (bin_dir / 'curl').write_text(
             '#!/bin/bash\n'
             'out=""\n'
@@ -117,6 +117,21 @@ class CloudImageTests(unittest.TestCase):
         self.assertIn('pciBridge4.virtualDev = "pcieRootPort"', alma_vmx)
         self.assertIn('ethernet0.virtualDev = "vmxnet3"', alma_vmx)
 
+        ol9_bin = self.root / 'bin-oraclelinux-9'
+        ol9_bin.mkdir()
+        (ol9_bin / 'sha256sum').write_text('#!/bin/bash\nexit 0\n')
+        (ol9_bin / 'sha256sum').chmod(0o700)
+        ol9_vmx = self._run_base(
+            'oraclelinux-9',
+            'OL9U8_x86_64-kvm-b293.qcow2',
+            '',
+            extra_bin=ol9_bin,
+        )
+        self.assertIn('guestOS = "oraclelinux9-64"', ol9_vmx)
+        self.assertIn('sata0:0.fileName = "base.vmdk"', ol9_vmx)
+        self.assertIn('pciBridge4.virtualDev = "pcieRootPort"', ol9_vmx)
+        self.assertIn('ethernet0.virtualDev = "vmxnet3"', ol9_vmx)
+
     def test_bootstrap_rhel9_uses_vmxnet3_and_en_match_without_mods_iso(self):
         proj = self.root / 'repo-boot'
         (proj / 'lib').mkdir(parents=True)
@@ -136,7 +151,7 @@ class CloudImageTests(unittest.TestCase):
         private.mkdir(mode=0o700)
         (private / 'lab_ed25519.pub').write_text('ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIFakeLabKey lab\n')
 
-        for image, vm_id in (('rocky-9', 'R9VM01'), ('almalinux-9', 'A9VM01')):
+        for image, vm_id in (('rocky-9', 'R9VM01'), ('almalinux-9', 'A9VM01'), ('oraclelinux-9', 'O9VM01')):
             with self.subTest(image=image):
                 clone_dir = self.root / 'clones' / image
                 clone_dir.mkdir(parents=True)
