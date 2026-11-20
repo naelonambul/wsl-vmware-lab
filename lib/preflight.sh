@@ -107,7 +107,7 @@ lab_check_vm_folder
 ok "private dir: $LAB_PRIVATE_DIR$([[ -d "$LAB_PRIVATE_DIR" ]] || echo ' (not created yet)')"
 
 echo '== Tools'
-for tool in terraform ansible-playbook python3 qemu-img cloud-localds curl; do
+for tool in terraform ansible-playbook python3 qemu-img cloud-localds genisoimage curl; do
   if command -v "$tool" >/dev/null 2>&1; then ok "$tool"; else warn "$tool missing (./lab setup installs it)"; fi
 done
 for exe in vmrun.exe vmrest.exe; do

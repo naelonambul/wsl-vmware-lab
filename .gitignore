@@ -23,6 +23,7 @@ base/
 cloud-init/
 *.ova
 *.qcow2
+*.rpm
 *.ovf
 *.vmdk
 *.vmx

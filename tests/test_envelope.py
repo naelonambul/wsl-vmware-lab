@@ -28,7 +28,7 @@ class EnvelopeFixture:
             '"$FIXTURE_NATIVE/ubuntu-cloudimage-keyring.gpg"'), newline='\n')
         # LifecycleTests supplies a closed PATH of absolute utility symlinks.
         # Optional lab tools cannot fall through to installed host tools.
-        self.setup_tools = ('terraform', 'ansible-playbook', 'qemu-img', 'cloud-localds', 'gpgv')
+        self.setup_tools = ('terraform', 'ansible-playbook', 'qemu-img', 'cloud-localds', 'genisoimage', 'gpgv')
         for tool in self.setup_tools:
             path = self.bin/tool
             path.write_text('#!/bin/bash\necho "Unexpected fixture tool execution: $0" >&2\nexit 99\n', newline='\n')
