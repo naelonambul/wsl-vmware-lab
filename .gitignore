@@ -34,6 +34,8 @@ cloud-init/
 *.log
 SHA256SUMS*
 SHA512SUMS*
+CHECKSUM*
+*.CHECKSUM
 
 # Test/verification output
 verification-*/

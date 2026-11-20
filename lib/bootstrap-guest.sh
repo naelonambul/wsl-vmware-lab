@@ -52,10 +52,15 @@ printf 'instance-id: %s\nlocal-hostname: %s\n' "$VM_ID" "${VM_NAME:-$LAB_CLONE_N
 # on a LAN shared by several lab PCs whose clones may have the same id. Renamed
 # lan0, it no longer matches en* above. No default route or DNS from it:
 # internet traffic stays on the NAT NIC.
-# The NAT and management NICs (e1000) get DHCP. With a LAN NIC, match them by
-# driver instead of name: on first boot the vmxnet3 LAN NIC is still en* until
-# it is renamed lan0, and would otherwise take a DHCP lease and default route.
-if [[ "$lan" == none ]]; then nic_match='name: "en*"'; else nic_match='driver: e1000'; fi
+# The NAT and management NICs (e1000 on Ubuntu/Debian) get DHCP. With a LAN NIC
+# on e1000-based images, match them by driver instead of name: on first boot the
+# vmxnet3 LAN NIC is still en* until it is renamed lan0, and would otherwise take
+# a DHCP lease and default route. Images using vmxnet3 for all NICs match en*.
+if [[ "$lan" == none || "$image" == oraclelinux-8 || "$image" == oraclelinux-9 || "$image" == rocky-9 || "$image" == almalinux-9 ]]; then
+  nic_match='name: "en*"'
+else
+  nic_match='driver: e1000'
+fi
 cat > "$seed_dir/network-config" <<CFG
 version: 2
 ethernets:
@@ -122,24 +127,26 @@ from pathlib import Path
 p=Path(os.environ['VMX_LINUX'])
 s=p.read_text()
 ol8 = os.environ.get('VM_IMAGE') == 'oraclelinux-8'
+vmxnet3_nics = os.environ.get('VM_IMAGE') in ('oraclelinux-8', 'oraclelinux-9', 'rocky-9', 'almalinux-9')
 settings={
  'ide1:0.fileName': os.environ['SEED_WIN'],
  'ide1:0.present':'TRUE', 'ide1:0.startConnected':'TRUE',
  'ide1:0.deviceType':'cdrom-image', 'ethernet0.startConnected':'TRUE',
  'ethernet1.present':'TRUE', 'ethernet1.startConnected':'TRUE',
  'ethernet1.connectionType':'custom', 'ethernet1.vnet':os.environ['LAB_MGMT_VNET'],
- 'ethernet1.virtualDev':'vmxnet3' if ol8 else 'e1000', 'ethernet1.addressType':'generated',
+ 'ethernet1.virtualDev':'vmxnet3' if vmxnet3_nics else 'e1000', 'ethernet1.addressType':'generated',
  # vmrest copies the base VMX verbatim: drop its BIOS UUID and NIC MACs so this
  # clone gets its own on first power-on (otherwise several clones share the
  # base's NAT MAC and receive the same DHCP address).
  'uuid.action':'create',
 }
+if vmxnet3_nics:
+    settings.update({'pciBridge0.present':'TRUE', 'pciBridge4.present':'TRUE',
+                     'pciBridge4.virtualDev':'pcieRootPort', 'pciBridge4.functions':'8'})
 if ol8:
     settings.update({'ide1:1.fileName': os.environ['MODS_WIN'],
                      'ide1:1.present':'TRUE', 'ide1:1.startConnected':'TRUE',
-                     'ide1:1.deviceType':'cdrom-image',
-                     'pciBridge0.present':'TRUE', 'pciBridge4.present':'TRUE',
-                     'pciBridge4.virtualDev':'pcieRootPort', 'pciBridge4.functions':'8'})
+                     'ide1:1.deviceType':'cdrom-image'})
 if os.environ['VM_LAN'] != 'none':
     # LAN uses implicit VMnet0 bridging or the configured custom VMnet.
     # vmxnet3 sits on PCIe, so the
